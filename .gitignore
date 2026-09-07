@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# 本機環境與機密（環境變數檔、金鑰、憑證）
+.env
+.env.*
+!.env.example
+*.local
+*.key
+*.pem
+!certs/corp-root.pem
+secrets/
+
+# POC 執行產物與真實持股
+data/
+output/
+*.sqlite
+*.sqlite3
+*.db
+input/holdings.csv
+!input/holdings.example.csv
+
+# 編輯器 / OS
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
