@@ -1,0 +1,18 @@
+Step 5 Finnhub live validation (redacted)
+Date: 2026-09-08 UTC
+Environment: python:3.14.7-slim-trixie, linux/amd64, company CA, VERIFY_X509_STRICT removed only for Finnhub
+Secret handling: FINNHUB_API_KEY present via Docker --env-file; value was never printed or persisted
+
+Full anonymous quote run: 67f9e605-5df9-44aa-ae9c-dbccbff40c75
+AAPL: status=success, positive price, quote_time=2026-09-04T20:00:00Z
+VOO: status=success, positive price, quote_time=2026-09-04T20:00:00Z
+BRK.B: requested_symbol=BRK.B, status=success, positive price, quote_time=2026-09-04T20:00:00Z
+VOO Yahoo/Finnhub: aligned=true, equal=true, difference=0.00
+AAPL Yahoo/Finnhub: aligned=false; equal price but timestamps differ by one second
+
+Rate-limit response headers from one additional AAPL request:
+HTTP status: 200
+x-ratelimit-limit: 60
+x-ratelimit-remaining: 59
+x-ratelimit-reset: 1788848337 (2026-09-08T06:18:57Z; approximately 22 seconds after observation)
+The response did not state the window unit; no per-minute contract is inferred from these headers alone.

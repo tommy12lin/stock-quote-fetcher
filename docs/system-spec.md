@@ -1,6 +1,6 @@
 # 系統規格
 
-版本：v0.1；日期：2026-09-07；狀態：需求基線與設計草案，待 POC 實測。
+版本：v0.3；日期：2026-09-08；狀態：CSV、資料模型、估值核心、PostgreSQL 與官方標的映射已實作；報價整合與 POC 觀測待執行。
 
 ## 1. 目的與範圍
 
@@ -12,7 +12,7 @@
 |---|---|
 | R01 | 以 Python 開發；語言與套件追求最新且受維護的版本，LTS 解讀見架構文件 |
 | R02 | 部署至 Linux Docker Container，POC 實作交付 Dockerfile 與 Docker Compose |
-| R03 | CSV 輸入 ticker、每股買入價、持有股數，採 CLI 操作 |
+| R03 | CSV 輸入 ticker、每股買入價、持有股數，採 CLI 操作；數字開頭視為台股、英文字母開頭視為美股，不需 market 欄位或台股來源後綴 |
 | R04 | 台股以 TWD、美股以 USD 計價，分別計算市值小計，不跨幣別相加 |
 | R05 | 盤中可更新，可接受約 15–20 分鐘的來源延遲；免費優先，可申請免費 API Key |
 | R06 | 買入價保存於輸入與持股資料，本次不計算損益 |
@@ -34,9 +34,9 @@ UTF-8，接受 BOM；固定三欄，欄名如下。範例買入價為虛構測�
 
 ```csv
 ticker,buy_price,quantity
-2330.TW,900,100
-0050.TW,50,200
-6488.TWO,1000,10
+2330,900,100
+0050,50,200
+6488,1000,10
 AAPL,180,2.5
 VOO,400,1
 ```
@@ -47,27 +47,44 @@ VOO,400,1
 | buy_price | 每股買入價，依市場使用 TWD 或 USD；有限且大於零的十進位數 |
 | quantity | 持有股數，有限且大於零；台股必須為整數，美股可為小數 |
 
-台股需包含 `.TW` 或 `.TWO` 以辨識市場；美股使用美國市場 ticker。特殊美股代碼（例如不同股別）由市場清單與來源映射處理，不以任意字串替換猜測代碼。
+市場自動判斷規則（2026-09-08 確認）：
+
+- 去除首尾空白並轉為大寫後，首字元為 ASCII 數字 `0–9` 視為台股，為英文字母 `A–Z` 視為美股；其他首字元拒絕。
+- 台股輸入原始代碼，例如 `2330`、`0050`、`6488`、`00400A`；保留前導零與代碼內的英文字母，不需要輸入 `.TW`／`.TWO`，也不增加 market 欄位。
+- 首字元只決定台美市場，不證明標的存在或受支援。抓價前以標的清單確認上市／上櫃、商品類型與幣別，再產生來源代碼，例如 Yahoo 的 `2330.TW`／`6488.TWO`；不得依碼數猜測上市／上櫃或輪流試抓兩種後綴。
+- 美股使用美國市場 ticker。特殊美股代碼（例如不同股別）由市場清單與來源映射處理，不以任意字串替換猜測代碼。
+- `validate` 僅離線驗證格式及依首字元套用股數規則；標的存在性與來源映射於 `quote`／`monitor` 抓價前確認。查無、映射不唯一或清單取得失敗須明確回報，不猜測來源代碼。
 
 - 必填欄位遺漏、未知額外欄位、空值、非數字、NaN、Infinity、負值或零值皆拒絕。
 - 本版拒絕同一標準化 ticker 重複列，回報行號；避免暗自推算平均成本。
 - 空檔與只有標頭的檔案拒絕。
+- 離線解析細節：三個欄名可調整順序，但名稱必須精確且各出現一次；空白資料列也拒絕。数值去除首尾空白後接受 ASCII 十進位與科學記號（例如 1.8e2），不接受底線分隔或全形數字。ticker 僅將 ASCII 英文字母轉大寫，不將其他 Unicode 字元轉成英文字母。
+- 錯誤行號以 CSV 記錄起始的實體行為準，結構解析失敗則使用解析器回報行；任何錯誤不回傳部分持股。無法讀取檔案、UTF-8 編碼錯誤及驗證失敗均退出 2。
 - CSV 結構或欄位驗證失敗時，整份輸入不生效、不開始抓價。
 - 格式合法但查無標的、來源不支援、幣別不符，列為該標的錯誤；其他標的仍可完成抓價。
 - 買入價與股數不傳給外部報價服務，只傳查詢所需的標的代碼。
 
 ## 3. 預定 CLI
 
-以下是待實作的契約，不是目前可執行的程式。
+`validate`、`db-check`、`migrate`、`instruments-refresh`、`resolve` 與 `quote` 已可執行；`monitor`／`report` 保留預定參數，目前回報尚未實作並退出 1。
 
 ```text
 stock-poc validate --input /input/holdings.csv
+stock-poc db-check --config /input/config.toml --connection-only
+stock-poc migrate --config /input/config.toml
+stock-poc db-check --config /input/config.toml
+stock-poc instruments-refresh --config /input/config.toml
+stock-poc resolve --input /input/holdings.csv --config /input/config.toml
 stock-poc quote --input /input/holdings.csv --config /input/config.toml --output /output
 stock-poc monitor --input /input/holdings.csv --config /input/config.toml --output /output
 stock-poc report --run-id <run-id> --output /output
 ```
 
 - `validate`：離線驗證 CSV，不連外。
+- `db-check`：驗證資料庫連線、專用帳號、schema 版本與讀寫權限；--connection-only 僅檢查連線及 migration 所需 schema 權限。
+- `migrate`：以專用帳號套用版本化 SQL，與收集程序互斥；不建立 database／schema，也不清除既有資料。先停止 monitor。
+- `instruments-refresh`：從固定官方來源更新完整標的 generation；任一來源失敗不發布新版本。
+- `resolve`：使用最新未過期清單驗證標的及顯示交易所、商品類型與 Yahoo 代碼；不抓行情。查無、不支援或歧義退出 3。
 - `quote`：執行一次抓取、保存紀錄，輸出持股表與分幣別摘要。
 - `monitor`：持續抓取並保存；收到停止訊號時完成或中止本輪、記錄狀態並安全退出。
 - `report`：從持久化紀錄產生指定觀測執行的可靠性報告，不重新抓價。
@@ -96,10 +113,11 @@ stock-poc report --run-id <run-id> --output /output
 - 價格必須有限且大於零；不以 0 或買入價補缺價。
 - 驗證 market、currency、symbol 與輸入對應；幣別錯誤的資料不參與市值。
 - 來源時間超過取得時間 5 秒以上時標示 future_time，保留證據但不採用該報價；5 秒為建議時鐘容許差，實作前核對主機校時。
-- last_trade 為目標；若來源只能提供分鐘 K 線，記錄 bar_close 與區間時間，不假裝是逐筆成交價；是否可接受列入實測結論。
+- last_trade 為目標；若來源只能提供分鐘 K 線，記錄 bar_close 與區間時間，不假裝是逐筆成交價；是否可接受列入實測結論。2026-09-07 實測補註：yfinance 對台股與美股皆提供最新成交價與秒級來源時間，本輪不需啟用 bar_close 路徑；此規則保留給其他來源與退化情況。
 - 不以還原股價乘目前持股，應使用未還原的一般交易時段價格。
 - 保存 UTC 時間，顯示時附台灣／紐約當地時區；美股夏令時間、假日、提早收盤由交易日曆處理。
-- 來源延遲 20 分鐘與 60 秒輪詢分開記錄，可能產生約 21 分鐘加網路處理時間的端到端資料年齡；不直接宣稱總延遲小於 20 分鐘。
+- 離線模型另以 pre_market／post_market 表示來源的盤前後資料，估值排除；未知 session 或時間以降級狀態呈現。bar_close 在來源接受政策確認前列為 price_kind_mismatch，不納入估值。
+- 來源延遲 20 分鐘與 60 秒輪詢分開記錄，可能產生約 21 分鐘加網路處理時間的端到端資料年齡；不直接宣稱總延遲小於 20 分鐘。2026-09-07 實測補註：yfinance 宣告台股 20 分鐘、美股 0；此為來源宣告值，未經盤中觀測驗證，美股的端到端上限與門檻需另行討論確認。
 - 低成交量標的的最後成交時間較舊不必然表示供應商故障；無法判斷時標示不確定，不計入已證明新鮮的資料。
 - 開盤前與開盤後來源延遲尚未經過的期間，辨識前一交易日價格，避免誤判成當日盤中行情。
 
@@ -126,6 +144,10 @@ stock-poc report --run-id <run-id> --output /output
 
 若先前有經驗證的報價，本次失敗可顯示該價格與原始時間，標記 cached／stale；不可把快取更新成「剛取得的新行情」。每筆來源的失敗紀錄仍保留。
 
+步驟 2 的 `value_holdings` 為離線函式：接收持股及以原始 ticker 索引的已選用 Quote；不查價、不挑選或驗證快取來源、不根據日曆推算 stale。來源映射、快取驗證、日曆與新鮮度標記於步驟 4／5 串接。函式另檢查價格、標的／市場／幣別、未來時間與價格種類；5 秒未來時間容許值為可傳入的測試預設，未代替實際主機校時驗證。
+
+`ValuationReport.to_dict()` 提供 JSON 可序列化資料：精確數值為十進位字串，顯示值另以 `_display` 欄位提供，缺少完整總額時兩者皆為 null。CSV／JSON 檔案匯出及 run-id／cycle-id 命名於單次 quote 整合時完成。
+
 ## 6. 需求驗證追蹤
 
 | 需求 | 驗證案例 |
@@ -136,3 +158,9 @@ stock-poc report --run-id <run-id> --output /output
 | R05 | V05、V06、V07、V08、V10 |
 
 案例內容與建議門檻見 [POC 驗收計畫](poc-validation.md)。
+
+### 步驟 5 實作補充（2026-09-08）
+
+quote 已串起 CSV、映射、來源、品質、DB 與匯出。新增品質值 freshness_unknown，表示有來源時間但延遲未确认；time_unknown 仍表示時間缺少或僅日期。兩者均降級。比較來源 finnhub／twse／tpex 不替換 Yahoo；已啟用來源最終失敗亦退出 3。不同 alias 對應同一 instrument 時退出 2，要求合併持股。
+
+輸出為 output/<run-id>/summary.json 與 <cycle-id>/holdings.csv，含來源嘗試、比較與當地時間。時間未對齊的比較不算價格吻合。[步驟 5 證據](step-5-evidence.md) 記錄完整規則與未測項目。
