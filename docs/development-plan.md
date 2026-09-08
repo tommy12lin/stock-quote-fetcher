@@ -1,6 +1,6 @@
 # POC 開發執行計畫
 
-日期：2026-09-08；狀態：步驟 0–6 已完成，步驟 7–10 待執行。
+日期：2026-09-08；狀態：步驟 0–7 已完成，步驟 8–10 待執行。
 
 本文件記錄開發順序、相依條件、交付物與測試對照。功能規格及測試細節以既有文件為主，不在此另訂一套驗收標準。勾選項目代表完成該項交付並具備驗證證據；設計步驟完成不代表程式或整合測試通過。
 
@@ -116,10 +116,12 @@
 
 ### 步驟 7：完成容器部署與整合驗證
 
-- [ ] 完成固定映像版本、frozen 安裝、非 root 執行的 Dockerfile 與 `.dockerignore`。
-- [ ] 完成 App Compose、輸入唯讀掛載、輸出目錄、環境變數、公司 CA 掛載及既有 PostgreSQL 連線設定；實際驗證容器網路路徑。
-- [ ] 交付 build、validate、quote、monitor、停止、重啟、migration 與報告操作說明，記錄 Engine／Compose／PostgreSQL 實測版本。
-- [ ] 在目標環境驗證設定解析、建置、單次指令、持續執行、停止／重啟、資料保留與第二收集程序被拒絕；資料庫故障測試使用隔離環境。
+- [x] 完成固定映像版本、frozen 安裝、非 root 執行的 Dockerfile 與 `.dockerignore`。
+- [x] 完成 App Compose、輸入唯讀掛載、輸出目錄、環境變數、公司 CA 掛載及既有 PostgreSQL 連線設定；實際驗證容器網路路徑。
+- [x] 交付 build、validate、quote、monitor、停止、重啟、migration 與報告操作說明，記錄 Engine／Compose／PostgreSQL 實測版本。
+- [x] 在目標環境驗證設定解析、建置、單次指令、持續執行、停止／重啟、資料保留與第二收集程序被拒絕；資料庫故障測試使用隔離環境。
+
+2026-09-08 完成：Dockerfile、compose.yaml、.dockerignore 已交付；Engine 29.6.1、Compose v5.2.0、既有 PostgreSQL 17.10 實測。容器經 infrastructure_default 連線成功，validate／db-check／migrate／instruments-refresh／quote、monitor 持續執行、`docker compose stop` 安全停止、SIGKILL 後恢復、down 後資料保留及四種收集程序互斥全部通過；172 項測試與資料庫故障案例於隔離環境完成。start_run 的 image_id 已改為實際映像。見 [步驟 7 證據](step-7-evidence.md)。`report` 屬步驟 8，未列為通過案例；盤中連續觀測屬步驟 9。
 
 參考：更新後的架構第 2、4–6 節。測試對照：V01、V09，並在容器執行相關功能整合案例。
 

@@ -12,7 +12,7 @@ import psycopg
 from psycopg import sql
 import pytest
 
-from stock_quote_fetcher.config import DatabaseConfig, ConfigurationError, load_database_config
+from stock_quote_fetcher.config import DatabaseConfig, ConfigurationError, load_database_config, runtime_image_id
 from stock_quote_fetcher.models import FetchResult, FetchStatus, Quote
 from stock_quote_fetcher.storage import Storage, StorageError, configuration_snapshot, lock_key
 
@@ -34,6 +34,15 @@ def test_configuration_rejects_secret_and_invalid_values(tmp_path):
     config = load_database_config(path, {'DB_PASSWORD': 'secret', 'DB_HOST': 'db', 'DB_PORT': '5433'})
     assert config.host == 'db' and config.port == 5433
     assert 'secret' not in repr(config)
+
+
+def test_runtime_image_id_prefers_injected_id_then_base_image():
+    long_id = 'x' * 500
+    assert runtime_image_id({}) == 'runtime-unspecified'
+    assert runtime_image_id({'APP_IMAGE_ID': '   '}) == 'runtime-unspecified'
+    assert runtime_image_id({'APP_BASE_IMAGE': ' python@sha256:abc '}) == 'base:python@sha256:abc'
+    assert runtime_image_id({'APP_IMAGE_ID': ' sha256:dead ', 'APP_BASE_IMAGE': 'python@sha256:abc'}) == 'sha256:dead'
+    assert len(runtime_image_id({'APP_IMAGE_ID': long_id})) == 200
 
 
 def test_snapshot_hash_is_order_independent_and_secrets_rejected():

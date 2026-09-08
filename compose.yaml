@@ -1,0 +1,86 @@
+# App Compose：只定義 app 與外部網路，不定義 PostgreSQL service 或其 volume（架構第 5 節）。
+# 使用現行 Compose Specification，不寫已淘汰的頂層 version 欄位。
+name: stock-quote-fetcher
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: stock-quote-fetcher:0.1.0
+    # 預設持續模式；一次性命令用 docker compose run --rm app <command> ... 覆寫。
+    command:
+      - monitor
+      - --input
+      - /input/holdings.csv
+      - --config
+      - /input/config.toml
+      - --output
+      - /output
+    environment:
+      # 一般設定：可由執行環境覆寫，預設值即架構第 5 節的契約。
+      DB_HOST: ${DB_HOST:-postgres}
+      DB_PORT: ${DB_PORT:-5432}
+      DB_NAME: ${DB_NAME:-stock_quote_fetcher}
+      DB_SCHEMA: ${DB_SCHEMA:-app}
+      DB_USER: ${DB_USER:-stock_quote_app}
+      # 容器時區固定 UTC；開盤判斷一律由程式依市場時區計算，不依賴 TZ。
+      TZ: UTC
+      # 執行環境注入實際映像 ID；留空時 run 記錄退回映像內建的 APP_BASE_IMAGE。
+      # export APP_IMAGE_ID=$(docker image inspect stock-quote-fetcher:0.1.0 --format '{{.Id}}')
+      APP_IMAGE_ID: ${APP_IMAGE_ID:-}
+    # 秘密只從執行環境注入：DB_PASSWORD、FINNHUB_API_KEY、APP_IMAGE_ID。
+    # .env 不進版本控制、不進映像；缺少時 app 會在連線階段明確失敗，不靜默降級。
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      # 輸入唯讀：holdings.csv 與 config.toml 由 INPUT_DIR 提供。
+      - type: bind
+        source: ${INPUT_DIR:-./input}
+        target: /input
+        read_only: true
+      # 輸出可寫：summary.json 與各 cycle 的 holdings.csv。
+      - type: bind
+        source: ${OUTPUT_DIR:-./output}
+        target: /output
+      # 公司根憑證唯讀掛載，不烘進映像層；只有 config.toml 明列的來源會載入它（架構第 6 節）。
+      - type: bind
+        source: ${COMPANY_CA_FILE:-./secrets/company-root-ca.crt}
+        target: /run/secrets/company-root-ca.crt
+        read_only: true
+    networks:
+      - database
+    # 持續模式使用 unless-stopped；docker compose run 的一次性命令不套用此策略。
+    restart: unless-stopped
+    # 允許 monitor 完成本輪狀態與 flush；逾時中止仍可在下次啟動辨識未完成輪次。
+    stop_grace_period: 90s
+    # 檢查 monitor 心跳與儲存可用性；市場休市期間也會更新心跳，不會被誤判為故障。
+    healthcheck:
+      test:
+        - CMD
+        - /app/.venv/bin/stock-poc
+        - healthcheck
+        - --config
+        - /input/config.toml
+        - --max-heartbeat-age-seconds
+        - "180"
+      interval: 60s
+      timeout: 20s
+      retries: 3
+      start_period: 120s
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "5"
+
+networks:
+  # 既有基礎設施網路；以 postgres DNS 連線，不固定 IP，也不由本專案建立或接管。
+  database:
+    external: true
+    name: ${DB_NETWORK:-infrastructure_default}

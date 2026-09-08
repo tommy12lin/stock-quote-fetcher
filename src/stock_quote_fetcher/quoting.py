@@ -8,7 +8,7 @@ import random
 import time
 from uuid import uuid4
 
-from stock_quote_fetcher.config import load_database_config, load_quote_config, load_instrument_catalog_config
+from stock_quote_fetcher.config import load_database_config, load_quote_config, load_instrument_catalog_config, runtime_image_id
 from stock_quote_fetcher.input import parse_holdings
 from stock_quote_fetcher.instruments import resolve_holdings
 from stock_quote_fetcher.models import Instrument, QualityFlag as F
@@ -241,7 +241,7 @@ def execute(input_path, config_path, output_path):
             from stock_quote_fetcher.quality import timezone
             bounds(holding.market,datetime.now(UTC).astimezone(timezone(holding.market)).date())
         storage.recover_incomplete()
-        storage.start_run(run_id,input_text=text,config=public_config(database,config,catalog),image_id='runtime-unspecified')
+        storage.start_run(run_id,input_text=text,config=public_config(database,config,catalog),image_id=runtime_image_id())
         runner = QuoteRunner(storage,config)
         reports, comparisons = runner.run(run_id,holdings,resolved,issues)
     # All database commits succeeded. Output cannot claim uncommitted values.

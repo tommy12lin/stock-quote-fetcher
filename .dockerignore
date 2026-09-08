@@ -1,0 +1,17 @@
+# 允許清單：只有建置 venv 需要的檔案進入 build context。
+# 先排除全部，再逐項放行，避免本機環境、金鑰、憑證、真實持股與輸出被意外送入映像。
+*
+
+!pyproject.toml
+!uv.lock
+!README.md
+!src
+
+# 即使 src 被放行，仍明確排除快取與編譯產物。
+**/__pycache__
+**/*.py[cod]
+**/*.egg-info
+
+# 以下項目已被上面的 * 排除，明列以表明設計意圖（架構第 5、6 節）：
+# .env、.env.*、config.toml、secrets/、*.pem、*.crt、*.key、*.p12、*.pfx
+# input/、output/、dist/、build/、.venv/、docs/、tests/、examples/、.git/

@@ -134,7 +134,7 @@ report 使用 REPEATABLE READ READ ONLY 一致快照。資料庫不可用時以�
 
 ## 5. Docker Compose 契約
 
-POC 實作交付下列檔案，這一版僅定義內容：
+POC 實作交付下列檔案；步驟 7 已全部交付並實測，本節保留為契約定義：
 
 - Dockerfile：固定基礎映像、鎖定安裝、非 root 執行、Python CLI entrypoint；在 TLS 受攔截的網路需注入公司根憑證，見第 6 節。
 - compose.yaml：單一 app service，預設 monitor，無需開放 port。
@@ -159,7 +159,7 @@ POC 實作交付下列檔案，這一版僅定義內容：
 
 healthcheck 失敗本身不代表 Docker 會自動重啟；restart policy 針對程序退出。排程等待休市期間也更新心跳，避免把休市判成程序故障。
 
-預定操作（實作後才可執行）：
+操作（步驟 7 已實測，`report` 除外）：
 
 ```text
 docker compose build
@@ -176,6 +176,16 @@ docker compose down
 2026-09-08 唯讀確認：postgres 容器執行檔 17.10，映像 postgres:17-alpine；網路 infrastructure_default；infrastructure_postgres_data 掛載 /var/lib/postgresql/data。配置已確認，app 實際連線／權限與重啟資料保留仍未測。見 [步驟 0 證據](step-0-evidence.md)。
 
 Compose 使用現行 Compose Specification，不寫過時的頂層 version 欄位；實作時驗證 compose config、build、啟動、停止與資料保存。[Docker 文件](https://docs.docker.com/compose/intro/compose-application-model/)
+
+2026-09-08 步驟 7 實測補充：Engine 29.6.1、Compose v5.2.0、buildx v0.35.0-desktop.2、既有 PostgreSQL 17.10。compose config、build、一次性指令、`up -d`、`stop`、`down` 與資料保留全部通過，詳見 [步驟 7 紀錄](step-7-evidence.md)。實作與本節設計的差異與補充如下：
+
+- 映像分為 builder、test 與 runtime 三個 stage。runtime 只複製 builder 產生的 venv，不含 uv、不含 build context；執行帳號為 uid／gid 10001 的 app，venv 由 root 擁有且對該帳號唯讀。ENTRYPOINT 採 exec form，CLI 即 PID 1。
+- .dockerignore 採允許清單：只放行 pyproject.toml、uv.lock、README.md 與 src。
+- 公司根憑證以唯讀單檔掛載，未執行 `update-ca-certificates`。第 6.1 節的兩個途徑中，本實作只採 `SSL_CERT_FILE` 等效的每 provider `load_verify_locations`，由 config.toml 的 `tls.relaxed_providers`／`relaxed_sources` 決定載入範圍，未修改容器 OS 信任存放區。
+- runs.image_id 由執行環境的 `APP_IMAGE_ID` 注入（建議填 `docker image inspect --format '{{.Id}}'`）；未注入時退回映像內建的 `APP_BASE_IMAGE` 基礎映像參照。本 POC 不推送 registry，因此記錄的是本機映像 Id，非 registry digest。
+- restart policy 的實際邊界：`unless-stopped` 只在程序自行結束時生效；手動 `docker stop`／`docker kill` 依 Docker 設計不套用 restart policy，healthcheck 失敗本身同樣不觸發重啟。
+- 根檔案系統未設 `read_only`：yfinance／curl_cffi 會寫入自己的家目錄快取。容器強化範圍為非 root、cap_drop ALL、no-new-privileges 與唯讀 venv。
+- 一次性 quote／migration 前停止 monitor 的要求已實測：monitor 持鎖期間 quote、monitor、migrate 與 instruments-refresh 四種路徑都會被收集鎖拒絕並退出 1。
 
 ## 6. TLS 與 CA 設計
 

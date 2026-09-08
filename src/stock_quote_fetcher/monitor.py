@@ -16,6 +16,7 @@ from stock_quote_fetcher.config import (
     load_database_config,
     load_instrument_catalog_config,
     load_quote_config,
+    runtime_image_id,
 )
 from stock_quote_fetcher.input import parse_holdings
 from stock_quote_fetcher.instruments import resolve_holdings
@@ -181,7 +182,7 @@ def execute(input_path, config_path, output_path, *, campaign_id=None, stop_even
                 raise ConfigurationError("指定的 campaign 未在可續跑期間內。")
             document["campaign_created"] = False
         try:
-            storage.start_run(run_id, input_text=text, config=public, image_id="runtime-unspecified",
+            storage.start_run(run_id, input_text=text, config=public, image_id=runtime_image_id(),
                               campaign_id=campaign_id)
         except ValueError as exc:
             raise ConfigurationError("指定 campaign 的輸入或公開設定不一致。") from exc

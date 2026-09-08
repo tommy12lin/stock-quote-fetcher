@@ -34,6 +34,17 @@ class DatabaseConfig:
             raise ConfigurationError("資料庫連線設定不完整；請由 DB_PASSWORD 注入密碼。")
 
 
+def runtime_image_id(environ=None) -> str:
+    """Record the running image. APP_IMAGE_ID is injected per deployment; the build bakes
+    APP_BASE_IMAGE so a run always names at least its exact base image."""
+    env = os.environ if environ is None else environ
+    explicit = (env.get("APP_IMAGE_ID") or "").strip()
+    if explicit:
+        return explicit[:200]
+    base = (env.get("APP_BASE_IMAGE") or "").strip()
+    return f"base:{base[:200]}" if base else "runtime-unspecified"
+
+
 def _load_document(path: Path) -> dict:
     try:
         with path.open("rb") as source:
