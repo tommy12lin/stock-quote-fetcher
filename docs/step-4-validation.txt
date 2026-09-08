@@ -1,0 +1,10 @@
+........................................................................ [ 51%]
+.....................................................................    [100%]
+141 passed in 8.77s
+Building source distribution...
+Building wheel from source distribution...
+Successfully built stock_quote_fetcher-0.1.0.tar.gz
+Successfully built stock_quote_fetcher-0.1.0-py3-none-any.whl
+Installed wheel contains 0002_instrument_catalog.sql
+Production migration: applied 1, second run applied 0
+PostgreSQL 17.10 schema/checksum/permissions: passed
