@@ -1,6 +1,6 @@
 # 架構與 Docker 部署設計
 
-版本：v0.4；日期：2026-09-08；狀態：步驟 0–5 完成；PostgreSQL、官方標的清單與單次 quote 已通過，其餘模組依後續步驟實作。
+版本：v0.5；日期：2026-09-08；狀態：步驟 0–8 完成；PostgreSQL、官方標的清單、quote、monitor、容器部署與 report 已通過，盤中連續觀測依步驟 9 執行。
 
 ## 1. 架構
 
@@ -30,7 +30,7 @@ flowchart LR
 | quality | 價格、時間、時段、來源延遲與品質標記 |
 | valuation | Decimal 運算、分幣別小計、完整性判斷 |
 | storage | PostgreSQL 交易、migration、執行識別、設定快照與報價歷程 |
-| reporting | 終端表格、CSV／JSON 輸出與可靠性統計 |
+| reporting | 唯讀快照統計、終端摘要與可靠性報告 JSON／Markdown 輸出 |
 
 2026-09-08 輸入契約更新：CSV 保持三欄，台股使用不含來源後綴的原始代碼。input 離線按首字元分類（數字為台股、英文字母為美股）；instruments 在抓價前查標的清單，台股依上市／上櫃映射為 Yahoo 的 `.TW`／`.TWO`。保留輸入 ticker 與 provider_symbol 的區別；清單不可用、查無或映射不唯一時回報明確錯誤，不以逐個嘗試後綴代替市場識別。
 
@@ -96,7 +96,7 @@ Adapter 接受一組 Instrument，回傳每個標的的 FetchResult，包含成�
 
 2026-09-08 步驟 3 已完成：上述專用帳號連線／權限與初始 migration 實際套用通過。新增 db-check／migrate CLI；完整 120 項測試通過。操作與隔離測試證據見 [步驟 3 紀錄](step-3-evidence.md)。前述「尚待驗證」保留為設計基線歷史狀態。
 
-實作補充：storage.finish_cycle 每輪處理單一市場，從持久化 holding／選定 quote-id 重新估值；引用其他輪次 quote 時保留原始紀錄並在 valuation 加 cached，亦可接收上游品質旗標。非法價格改存 attempt 的 invalid_payload／精簡證據，不進入 positive NUMERIC domain。read_run／read_campaign 必須在 report_snapshot 中使用；完整報告指標與 CLI 待步驟 8。response_evidence 暫存正規化摘要與雜湊，Provider 可重現解析的原始欄位與版本在步驟 5 補足。
+實作補充：storage.finish_cycle 每輪處理單一市場，從持久化 holding／選定 quote-id 重新估值；引用其他輪次 quote 時保留原始紀錄並在 valuation 加 cached，亦可接收上游品質旗標。非法價格改存 attempt 的 invalid_payload／精簡證據，不進入 positive NUMERIC domain。read_run／read_campaign／read_schedule 必須在 report_snapshot 中使用；read_schedule 只讀預定輪次，供 run 範圍報告在不讀其他 run 的情況下重建分母。response_evidence 暫存正規化摘要與雜湊，Provider 可重現解析的原始欄位與版本在步驟 5 補足。
 
 ### 4.1 型別與關聯
 
@@ -159,7 +159,7 @@ POC 實作交付下列檔案；步驟 7 已全部交付並實測，本節保留�
 
 healthcheck 失敗本身不代表 Docker 會自動重啟；restart policy 針對程序退出。排程等待休市期間也更新心跳，避免把休市判成程序故障。
 
-操作（步驟 7 已實測，`report` 除外）：
+操作（步驟 7、8 已實測）：
 
 ```text
 docker compose build
@@ -167,7 +167,8 @@ docker compose run --rm app validate --input /input/holdings.csv
 docker compose run --rm app quote --input /input/holdings.csv --config /input/config.toml --output /output
 docker compose up -d
 docker compose logs -f app
-docker compose run --rm app report --run-id <run-id> --output /output
+docker compose run --rm app report --config /input/config.toml --run-id <run-id> --output /output
+docker compose run --rm app report --config /input/config.toml --campaign-id <campaign-id> --output /output
 docker compose down
 ```
 
@@ -218,3 +219,11 @@ providers／provider_worker／quality／quoting 已交付單次 quote。每市�
 SDK 由可終止的子程序執行，10 秒含啟動／內部等待；每市場網路預算 50 秒，DB timeout 另計。統計為 Adapter 操作數，不是 SDK 底層 HTTP 次數。來源冷卻於本次 quote 跨標的沿用；monitor 啟動時另以各來源最後一筆 rate_limited 嘗試的 completed_at 與 effective_cooldown_seconds 重算剩餘秒數載入，使冷卻跨輪次與重啟延續，且仍為來源獨立。
 
 來源原始時間保留在 Adapter evidence，輸出另存當地時間。快取重新驗證並保留原 quote-id／時間，估值端加 cached／stale。freshness_unknown 區分未知延遲與未知時間。真實驗證與限制見 [步驟 5 證據](step-5-evidence.md)。Dockerfile／Compose 仍待步驟 7。
+
+## 步驟 8 實作補充（2026-09-08）
+
+reporting 為純讀模組：storage 只新增唯讀的 read_schedule，無新 migration，也不取收集鎖，因此可在 monitor 執行中產生報告。指標函式接收 read_run／read_campaign 的資料列，可用固定觀測紀錄離線測試；`build_run` 與 `build_campaign` 分別產生 run 與 campaign 範圍，campaign 另附各 run 摘要。
+
+分母規則：一個抓取機會為（輪次、來源、標的），重試留在同一機會內；只有 response_evidence 記錄 executed 的操作進入首次與重試成功率分母。排程覆蓋率與時效分母來自 campaign 的 scheduled_cycles 左外接，缺紀錄的機會留在分母並重建為停機窗口；已被認領的機會不受時鐘影響一律視為到期。報告同時輸出含與排除預定維護窗口的統計。
+
+輸出寫入 `<output>/reports/<scope>-<id>/<產生時間>/`，每次新目錄，不覆寫既有報告。報告含持股代碼與股數，移交前需依驗收第 7 節處理。實測與界線見 [步驟 8 證據](step-8-evidence.md)。

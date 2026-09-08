@@ -1,4 +1,4 @@
-"""CLI contract; functional commands are implemented in later plan steps."""
+"""CLI entry point: argument contract and exit codes; each command delegates to its module."""
 
 import argparse
 from importlib.metadata import version
@@ -11,7 +11,7 @@ from stock_quote_fetcher.input import InputValidationError, load_holdings
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="stock-poc",
-        description="台美股報價 POC：CSV 驗證、標的映射與單次報價。",
+        description="台美股報價 POC：CSV 驗證、標的映射、報價、持續觀測與可靠性報告。",
     )
     parser.add_argument(
         "--version", action="version", version=f"%(prog)s {version('stock-quote-fetcher')}"
@@ -34,7 +34,7 @@ def build_parser() -> argparse.ArgumentParser:
     resolve.add_argument('--config', type=Path, required=True)
     for name, help_text in (
         ("quote", "單次報價並保存估值與來源證據"),
-        ("monitor", "持續觀測（步驟 6 待實作）"),
+        ("monitor", "依交易日曆持續觀測並保存證據"),
     ):
         command = commands.add_parser(name, help=help_text)
         command.add_argument("--input", type=Path, required=True)
@@ -42,14 +42,46 @@ def build_parser() -> argparse.ArgumentParser:
         command.add_argument("--output", type=Path, required=True)
         if name == "monitor":
             command.add_argument("--campaign-id", help="明確續跑指定 campaign UUID；省略時自動續接相同設定")
-    report = commands.add_parser("report", help="產生報告（步驟 8 待實作）")
-    report.add_argument("--run-id", required=True)
+    report = commands.add_parser("report", help="從持久化紀錄產生可靠性報告（不重新抓價）")
+    report.add_argument("--config", type=Path, required=True)
+    scope = report.add_mutually_exclusive_group(required=True)
+    scope.add_argument("--run-id", help="單一觀測執行")
+    scope.add_argument("--campaign-id", help="同一 campaign 的跨 run 彙整")
     report.add_argument("--output", type=Path, required=True)
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if args.command == 'report':
+        from stock_quote_fetcher.config import ConfigurationError
+        from stock_quote_fetcher.reporting import execute
+        from stock_quote_fetcher.storage import StorageError
+        try:
+            code, directory, document = execute(args.config, args.output,
+                                                run_id=args.run_id, campaign_id=args.campaign_id)
+            body = document['report']
+            print(f"報告完成（{document['scope']} {document['identity']}）；輸出：{directory}")
+            for label, key in (('名單涵蓋率','catalog_coverage'),('首次取得成功率','first_attempt_success'),
+                               ('重試後成功率','retry_success'),('排程覆蓋率','schedule_coverage'),
+                               ('時效達標率','freshness_rate')):
+                metric = body['metrics'][key]
+                rate = None if metric is None else metric['rate']
+                print(f"{label}：" + ('無資料' if rate is None else f"{metric['numerator']}/{metric['denominator']}（{rate*100:.2f}%）"))
+            for finding in body['conclusions']['classification']:
+                print(f"{finding['case']}：{finding['result']}")
+            for item in body['conclusions']['open_cases']:
+                print(f'未完成或待確認：{item}', file=sys.stderr)
+            return code
+        except ConfigurationError as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
+        except (OSError, UnicodeError):
+            print('報告寫入失敗；請核對輸出路徑與權限。', file=sys.stderr)
+            return 1
+        except StorageError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
     if args.command == 'monitor':
         from threading import Event
         from stock_quote_fetcher.config import ConfigurationError
@@ -94,7 +126,7 @@ def main(argv: list[str] | None = None) -> int:
             print(str(exc),file=sys.stderr)
             return 2
         except (OSError,UnicodeError):
-            print('執行或輸出寫入失敗；資料库可能已有本次紀錄，請核對路徑與權限。',file=sys.stderr)
+            print('執行或輸出寫入失敗；資料庫可能已有本次紀錄，請核對路徑與權限。',file=sys.stderr)
             return 1
         except StorageError as exc:
             print(str(exc),file=sys.stderr)
@@ -182,5 +214,6 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         print(f"驗證成功：{len(holdings)} 筆持股（僅格式驗證，未確認標的存在性）。")
         return 0
-    print(f"{args.command} 尚未實作；目前僅提供 CLI 骨架。", file=sys.stderr)
+    # Unreachable for the documented commands; a new subcommand must not exit 0 by default.
+    print(f"{args.command} 尚未實作。", file=sys.stderr)
     return 1

@@ -4,6 +4,8 @@
 
 ## 目前狀態
 
+- 2026-09-08：完成步驟 8 `report` 與證據輸出；run 與 campaign 兩種範圍、依預定輪次重建的分母、來源／市場／標的指標、停機重建、價格比對、小計人工核對與結論分類已實作，輸出 JSON／Markdown，185 項測試通過，不需新 migration。已對既有專案資料庫的真實 run 與 campaign 實跑，並在 monitor 持鎖時確認 report 不需收集鎖。見 [步驟 8 證據](docs/step-8-evidence.md)。盤中連續觀測與交叉比對屬步驟 9。
+
 - 2026-09-08：完成步驟 7 容器部署與整合驗證；Dockerfile、compose.yaml 與 .dockerignore 已交付，並在 Docker Engine 29.6.1／Compose v5.2.0／既有 PostgreSQL 17.10 完成連線、單次指令、持續執行、停止／重啟、資料保留與收集程序互斥驗證，172 項測試及資料庫故障案例於隔離環境通過。見 [步驟 7 證據](docs/step-7-evidence.md)。`report` 屬步驟 8，盤中連續觀測屬步驟 9。
 
 - 2026-09-08：完成步驟 6 monitor 排程與停止／恢復；campaign 續接、遲到跳過、冷卻沿用、SIGTERM 安全停止、心跳與 healthcheck 已實作，171 項測試通過，不需新 migration。真實 provider 的連續觀測屬步驟 9。見 [步驟 6 證據](docs/step-6-evidence.md)。
@@ -20,7 +22,7 @@
 - 2026-09-08：ticker 自動判斷及標的映射已實作：數字開頭為台股、英文字母開頭為美股；台股原始代碼依官方清單映射 `.TW`／`.TWO`。
 - 2026-09-07：需求討論後建立 v0.1 規格與架構文件，同日完成第一輪來源與依賴實測，資料來源評估與架構文件更新至 v0.2。
 - 已確認：CSV／CLI、Python、Docker Compose、免費來源優先、可接受約 15–20 分鐘延遲、分幣別小計。
-- CLI 已提供 help／version、validate、db-check、migrate、instruments-refresh 、resolve、quote、monitor 與 healthcheck；report 尚未實作，會明確回報並退出 1。Dockerfile 與 compose.yaml 已交付並在目標環境驗證。
+- CLI 已提供 help／version、validate、db-check、migrate、instruments-refresh、resolve、quote、monitor、healthcheck 與 report。Dockerfile 與 compose.yaml 已交付並在目標環境驗證。
 - 文件中的建議驗收門檻與技術選型均有標示；它們不代表已取得的測試成績。
 
 ### 第一輪實測已確認（2026-09-07，以一次性探針取樣）
@@ -51,7 +53,7 @@
 
 ## 執行順序
 
-1. 依 [開發計畫](docs/development-plan.md) 推進；步驟 0–7 已完成，下一步為步驟 8 的 `report` 與證據輸出。
+1. 依 [開發計畫](docs/development-plan.md) 推進；步驟 0–8 已完成，下一步為步驟 9 的盤中觀測與價格交叉比對。
 2. 依規格實作 POC，交付版本鎖定、Dockerfile、compose.yaml、範例設定與操作說明。
 3. 在目標 Docker 環境完成功能測試與台美股交易時段觀測。
 4. 以實測結果決定來源是否符合需求，更新文件並共同確認 POC。
@@ -59,7 +61,7 @@
 
 本次不包含多帳戶、現金、手續費、損益、外匯換算、券商持股同步或交易下單。
 
-持久化使用既有 PostgreSQL，CSV／JSON／Markdown 為輸入及匯出格式。App 不建立或接管資料庫容器，不掛載資料庫 volume。一次性 quote 或 migration 前停止同 database／schema 的 monitor；report 使用唯讀交易。停止 app 使用其專案的 Compose，不操作基礎設施 Compose。資料庫 migration／儲存 API、monitor CLI 與 Compose 操作已實作並驗證；`report` 待步驟 8。
+持久化使用既有 PostgreSQL，CSV／JSON／Markdown 為輸入及匯出格式。App 不建立或接管資料庫容器，不掛載資料庫 volume。一次性 quote 或 migration 前停止同 database／schema 的 monitor；report 使用唯讀交易。停止 app 使用其專案的 Compose，不操作基礎設施 Compose。資料庫 migration／儲存 API、monitor CLI、Compose 操作與 `report` 已實作並驗證；`report` 使用唯讀快照、不取收集鎖，可在 monitor 執行中產生。
 
 ## 開發環境與離線驗證
 
@@ -130,6 +132,9 @@ docker compose logs -f app
 docker compose exec app stock-poc healthcheck --config /input/config.toml
 docker compose stop app
 docker compose down
+
+docker compose run --rm app report --config /input/config.toml --run-id <run-id> --output /output
+docker compose run --rm app report --config /input/config.toml --campaign-id <campaign-id> --output /output
 ```
 
 秘密只從執行環境注入：專案根目錄的 `.env`（已忽略）提供 DB_PASSWORD 與 FINNHUB_API_KEY，由 compose 的 env_file 傳入容器。`APP_IMAGE_ID` 只影響 runs.image_id 的記錄值，省略時退回映像內建的基礎映像參照。可覆寫的一般設定為 `INPUT_DIR`、`OUTPUT_DIR`、`COMPANY_CA_FILE`、`DB_NETWORK` 與 `DB_HOST`／`DB_PORT`／`DB_NAME`／`DB_SCHEMA`／`DB_USER`。
@@ -140,4 +145,4 @@ docker compose down
 
 在 Git Bash 執行時要設 `MSYS_NO_PATHCONV=1`，否則 `/input/config.toml` 這類容器路徑會被改寫成 Windows 路徑，症狀是誤報「無法讀取設定檔或 TOML 格式錯誤」。PowerShell 無此問題。
 
-`report` 尚未實作，因此架構文件「預定操作」中的 report 指令目前會退出 1。實測版本、映像檢查、隔離資料庫故障案例與界線見 [步驟 7 證據](docs/step-7-evidence.md)。
+`report` 讀取持久化紀錄產生可靠性報告，不重新抓價也不取收集鎖，`--run-id` 與 `--campaign-id` 互斥且需指定其一；輸出寫入 `<output>/reports/<scope>-<id>/<產生時間>/report.json` 與 `report.md`，每次產生新目錄。報告含持股代碼與股數，移交前依驗收第 7 節處理。實測版本、映像檢查、隔離資料庫故障案例與界線見 [步驟 7 證據](docs/step-7-evidence.md) 與 [步驟 8 證據](docs/step-8-evidence.md)。

@@ -509,7 +509,8 @@ class Storage:
         result['quotes'] = self.conn.execute(sql.SQL('SELECT q.* FROM {} q WHERE q.attempt_id IN (SELECT id FROM {} WHERE run_id=%s) OR q.id IN (SELECT quote_id FROM {} WHERE run_id=%s)').format(self.table('quotes'),self.table('fetch_attempts'),self.table('valuations')), (run_id,run_id)).fetchall()
         return result
 
-    def read_campaign(self, campaign_id, *, as_of):
+    def read_schedule(self, campaign_id, *, as_of):
+        """The plan alone: a run-scoped report needs it without reading every sibling run."""
         if not self.reading:
             raise StorageError('報告查詢必須在 report_snapshot 中執行。')
         campaign = self._one('campaigns', campaign_id)
@@ -518,5 +519,9 @@ class Storage:
             (s.scheduled_at <= %s) AS due FROM {} s LEFT JOIN {} c ON c.scheduled_cycle_id=s.id
             WHERE s.campaign_id=%s ORDER BY s.scheduled_at,s.market''').format(self.table('scheduled_cycles'),self.table('cycles')),
             (utc_timestamp(as_of),campaign_id)).fetchall()
+        return campaign, schedule
+
+    def read_campaign(self, campaign_id, *, as_of):
+        campaign, schedule = self.read_schedule(campaign_id, as_of=as_of)
         runs = self.conn.execute(sql.SQL('SELECT id FROM {} WHERE campaign_id=%s ORDER BY started_at,id').format(self.table('runs')), (campaign_id,)).fetchall()
         return {'campaign':campaign,'scheduled_cycles':schedule,'runs':[self.read_run(row['id']) for row in runs]}

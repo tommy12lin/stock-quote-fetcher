@@ -31,20 +31,20 @@ def test_usage_errors(args):
     assert run_cli(*args).returncode == 2
 
 
-@pytest.mark.parametrize("command", ["report"])
-def test_unimplemented_commands_cannot_report_success(command, tmp_path):
-    missing_input = tmp_path / "missing.csv"
+def test_report_requires_exactly_one_scope_and_a_config(tmp_path):
     output = tmp_path / "output"
-    if command == "report":
-        args = ["--run-id", "example", "--output", str(output)]
-    else:
-        args = ["--input", str(missing_input)]
-        if command != "validate":
-            args += ["--config", str(tmp_path / "missing.toml"), "--output", str(output)]
-    result = run_cli(command, *args)
-    assert result.returncode == 1
-    assert "尚未實作" in result.stderr
-    assert not result.stdout
+    both = run_cli("report", "--config", str(tmp_path / "missing.toml"), "--run-id", "a",
+                   "--campaign-id", "b", "--output", str(output))
+    assert both.returncode == 2 and "not allowed with" in both.stderr
+    neither = run_cli("report", "--config", str(tmp_path / "missing.toml"), "--output", str(output))
+    assert neither.returncode == 2
+    invalid = run_cli("report", "--config", str(tmp_path / "missing.toml"), "--run-id", "not-a-uuid",
+                      "--output", str(output))
+    assert invalid.returncode == 2 and "UUID" in invalid.stderr
+    missing_config = run_cli("report", "--config", str(tmp_path / "missing.toml"),
+                             "--run-id", "3f1a1f1e-0000-4000-8000-000000000000", "--output", str(output))
+    assert missing_config.returncode == 2 and "尚未實作" not in missing_config.stderr
+    assert not missing_config.stdout
     assert not output.exists()
 
 

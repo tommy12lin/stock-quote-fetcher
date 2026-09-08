@@ -1,6 +1,6 @@
 # 系統規格
 
-版本：v0.3；日期：2026-09-08；狀態：CSV、資料模型、估值核心、PostgreSQL 與官方標的映射已實作；報價整合與 POC 觀測待執行。
+版本：v0.4；日期：2026-09-08；狀態：CSV、資料模型、估值核心、PostgreSQL、官方標的映射、報價、monitor 排程、容器部署與 report 已實作；盤中連續觀測與交叉比對待執行。
 
 ## 1. 目的與範圍
 
@@ -66,7 +66,7 @@ VOO,400,1
 
 ## 3. 預定 CLI
 
-`validate`、`db-check`、`migrate`、`instruments-refresh`、`resolve`、`quote`、`monitor` 與 `healthcheck` 已可執行；`report` 保留預定參數，目前回報尚未實作並退出 1。
+`validate`、`db-check`、`migrate`、`instruments-refresh`、`resolve`、`quote`、`monitor`、`healthcheck` 與 `report` 已可執行。
 
 ```text
 stock-poc validate --input /input/holdings.csv
@@ -78,7 +78,8 @@ stock-poc resolve --input /input/holdings.csv --config /input/config.toml
 stock-poc quote --input /input/holdings.csv --config /input/config.toml --output /output
 stock-poc monitor --input /input/holdings.csv --config /input/config.toml --output /output [--campaign-id <campaign-id>]
 stock-poc healthcheck --config /input/config.toml [--max-heartbeat-age-seconds <seconds>]
-stock-poc report --run-id <run-id> --output /output
+stock-poc report --config /input/config.toml --run-id <run-id> --output /output
+stock-poc report --config /input/config.toml --campaign-id <campaign-id> --output /output
 ```
 
 - `validate`：離線驗證 CSV，不連外。
@@ -89,9 +90,9 @@ stock-poc report --run-id <run-id> --output /output
 - `quote`：執行一次抓取、保存紀錄，輸出持股表與分幣別摘要。
 - `monitor`：依交易日曆排定的輪次持續抓取並保存；收到停止訊號時完成或中止本輪、記錄狀態並安全退出。省略 `--campaign-id` 時自動續接輸入與公開設定相同且仍在期間內的 campaign，找到多個相符者則拒絕執行並要求明確指定。
 - `healthcheck`：檢查資料庫可用性與收集程序心跳；分別回報心跳逾期與沒有進行中的 run，不抓價也不取收集鎖。`--max-heartbeat-age-seconds` 預設 120。
-- `report`：從持久化紀錄產生指定觀測執行的可靠性報告，不重新抓價。
+- `report`：從持久化紀錄產生可靠性報告，不重新抓價、不取收集鎖，可在 monitor 執行中產生。`--run-id` 與 `--campaign-id` 互斥且必須指定其一：run 範圍統計單一執行，campaign 範圍彙整同一 campaign 的所有 run 並附各 run 摘要。需要 `--config` 取得資料庫連線；預定機會、排程覆蓋率與時效分母來自 campaign 的預定輪次，單次 quote 的 run 沒有 campaign 時該類指標回報無資料。
 - monitor 啟動時讀取並記錄 CSV 與設定的雜湊；CSV 修改後需重新啟動，新執行使用新的 run-id。續跑沿用原 campaign 及其已展開的預定輪次，只認領尚未執行的機會，不補抓過去缺口；落後排定時間達一個輪詢間隔者記為 skipped／scheduler_lag。
-- 預定退出碼：0＝成功；2＝輸入／設定錯誤；3＝quote 有缺價、降級或品質無法確認；1＝不可恢復的執行錯誤。monitor 對單筆抓價失敗持續運行並記錄，不因此整個退出。
+- 預定退出碼：0＝成功；2＝輸入／設定錯誤；3＝quote 有缺價、降級或品質無法確認；1＝不可恢復的執行錯誤。monitor 對單筆抓價失敗持續運行並記錄，不因此整個退出。`report` 只在成功產生報告時回 0；報告內的證據不足或未達建議門檻寫在報告與 stderr，不改變退出碼。
 
 ## 4. 報價契約與品質
 
@@ -137,6 +138,10 @@ stock-poc report --run-id <run-id> --output /output
 | 幣別摘要 | currency、known_subtotal、total、持股列數、已估值列數、缺價數、降級數、completeness |
 | 可靠性摘要 | 觀測期間、預期／實際輪數、請求成功率、缺漏、延遲分布與未能判定的項目 |
 
+`report` 輸出寫入 `<output>/reports/<scope>-<id>/<產生時間>/report.json` 與 `report.md`，每次產生新目錄，不覆寫既有報告。JSON 為權威資料、Markdown 為同一份內容的可讀版本，內容依驗收計畫第 6 節分為觀測範圍與版本、規模、每來源／市場／標的指標、失敗與停機、價格比對、小計人工核對、結論與未完成項目七節。
+
+指標定義依驗收計畫第 4 節：一個抓取機會為一組（輪次、來源、標的），重試留在同一機會內；只有 Adapter 實際執行的操作進入首次與重試成功率分母，冷卻、輪次預算耗盡與查無標的不進入；只有 completed 的輪次計為已執行機會，停機、跳過與中斷仍留在排程覆蓋率分母；時效只採一般交易時段窗口，開盤延遲與收盤後延長觀測排除並公開樣本數；耗時取最近排名 p50／p95／最大值，不做內插。門檻為建議值且標記 `proposed_unconfirmed`，報告只回報是否達到建議值。無法從紀錄判定者一律輸出證據不足，包含無法獨立判斷是否因無成交而變舊的逾時效樣本，以及缺少標的類型而無法判定最小報價單位的台股價格比對。
+
 `completeness`：
 
 - complete：所有該幣別持股可估值且符合當前市場狀態的品質規則。
@@ -166,3 +171,9 @@ stock-poc report --run-id <run-id> --output /output
 quote 已串起 CSV、映射、來源、品質、DB 與匯出。新增品質值 freshness_unknown，表示有來源時間但延遲未确认；time_unknown 仍表示時間缺少或僅日期。兩者均降級。比較來源 finnhub／twse／tpex 不替換 Yahoo；已啟用來源最終失敗亦退出 3。不同 alias 對應同一 instrument 時退出 2，要求合併持股。
 
 輸出為 output/<run-id>/summary.json 與 <cycle-id>/holdings.csv，含來源嘗試、比較與當地時間。時間未對齊的比較不算價格吻合。[步驟 5 證據](step-5-evidence.md) 記錄完整規則與未測項目。
+
+### 步驟 8 實作補充（2026-09-08）
+
+`report` 以 REPEATABLE READ READ ONLY 快照讀取，不取收集鎖，可在 monitor 執行中產生報告。CLI 補 `--config` 與互斥的 `--run-id`／`--campaign-id`；run 範圍的排程覆蓋率只採該 run 起訖內的預定機會，已被該 run 認領的機會不受時鐘影響一律列入分母，campaign 範圍採整份預定輪次並附各 run 摘要。
+
+報告不判定未由紀錄支持的項目：V04 依重算一致性判定，V09 依中斷與恢復紀錄判定為部分符合，V10 需可對齊比對樣本與每市場三個完整交易日，其餘 V01–V03、V05–V08 明列為不由報告判定。台股最小報價單位需要標的類型，目前 quotes 未保存，因此台股比對只輸出精確差異並列為無法判定。[步驟 8 證據](step-8-evidence.md) 記錄實測與界線。
