@@ -142,6 +142,7 @@ def test_429_cooldown_is_source_specific_and_budget_recorded():
     runner.collect(uuid4(),US,'twse',0)
     assert calls == ['yahoo','finnhub']
     assert db.results[1][0].error == 'source_cooldown'
+    assert db.results[1][1]['provider_evidence']['effective_cooldown_seconds'] > 0
     assert db.results[-1][0].error == 'cycle_budget_exhausted'
     assert db.results[-1][1]['provider_evidence']['executed'] is False
 

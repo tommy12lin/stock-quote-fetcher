@@ -18,13 +18,25 @@ from stock_quote_fetcher.storage import Storage
 from stock_quote_fetcher.valuation import value_holdings
 
 
+class CollectionInterrupted(RuntimeError):
+    """A cooperative stop request observed between bounded provider operations."""
+
+
 class QuoteRunner:
-    def __init__(self, storage, config, *, fetch=None, monotonic=time.monotonic, sleep=time.sleep):
+    def __init__(self, storage, config, *, fetch=None, monotonic=time.monotonic, sleep=time.sleep,
+                 stop_requested=lambda: False):
         self.storage, self.config, self.fetch = storage, config, fetch or fetch_one
         self.monotonic, self.sleep = monotonic, sleep
+        self.stop_requested = stop_requested
         self.cooldown = {}
         self.next_operation = {}
         self.events = []
+
+    def restore_cooldowns(self, remaining_seconds):
+        point = self.monotonic()
+        for provider, remaining in remaining_seconds.items():
+            if remaining > 0:
+                self.cooldown[provider] = point + remaining
 
     def collect(self, cycle, instrument, provider, deadline):
         for number in range(1,self.config.max_retries+2):
@@ -35,7 +47,9 @@ class QuoteRunner:
             remaining = deadline - start
             until = self.cooldown.get(provider,0)
             executed = False
-            if remaining <= 0:
+            if self.stop_requested():
+                op = failure(instrument,provider,'interrupted','shutdown_requested')
+            elif remaining <= 0:
                 op = failure(instrument,provider,'timeout','cycle_budget_exhausted')
             elif until > start:
                 op = failure(instrument,provider,'rate_limited','source_cooldown')
@@ -52,7 +66,11 @@ class QuoteRunner:
                     op = self.fetch(instrument,provider,self.config,min(remaining,self.config.operation_timeout_seconds))
             elapsed = max(0,int((self.monotonic()-start)*1000))
             result = op.result
-            evidence = {**op.evidence,'executed':executed,'retry_after_seconds':op.retry_after}
+            wait = op.retry_after
+            if result.status.value == 'rate_limited' and wait is None:
+                wait = max(1, until-self.monotonic()) if not executed and until > self.monotonic() else 60
+            evidence = {**op.evidence,'executed':executed,'retry_after_seconds':op.retry_after,
+                        'effective_cooldown_seconds':wait}
             saved = self.storage.finish_attempt(attempt,result,elapsed_ms=elapsed,
                                                 quote_id=quote_id,provider_evidence=evidence)
             self.events.append({'attempt_id':str(attempt),'provider':provider,'ticker':instrument.ticker,
@@ -62,9 +80,6 @@ class QuoteRunner:
                 return saved,result.quote
             if not executed:
                 break
-            wait = op.retry_after
-            if result.status.value == 'rate_limited' and wait is None:
-                wait = 60
             if wait is not None:
                 self.cooldown[provider] = self.monotonic()+wait
             if result.status.value not in {'timeout','network_error','rate_limited'} or number > self.config.max_retries:
@@ -89,58 +104,70 @@ class QuoteRunner:
             return identity,checked
         return None,None
 
-    def run(self, run_id, holdings, resolved, issues):
+    def run_cycle(self, run_id, holdings, resolved, issues, *, market, scheduled_at,
+                  scheduled_cycle_id=None):
         self.holdings = holdings
-        reports, comparisons, cycles = [], [], []
+        cycle = uuid4()
+        event_start = len(self.events)
+        self.storage.start_cycle(cycle,run_id,market=market.value,scheduled_at=scheduled_at,
+                                 scheduled_cycle_id=scheduled_cycle_id)
+        selected, flags, fetched, comparisons = {}, {}, {}, []
+        deadline = self.monotonic()+self.config.cycle_budget_seconds
+        group = [h for h in holdings if h.market == market]
+        try:
+            # Complete valuation source first; comparison requests cannot consume its budget.
+            for provider in (self.config.valuation,*self.config.comparison):
+                for holding in group:
+                    if self.stop_requested():
+                        raise CollectionInterrupted('shutdown requested')
+                    instrument = resolved.get(holding.ticker)
+                    if instrument is None:
+                        if provider != self.config.valuation:
+                            continue
+                        instrument = Instrument(f'unresolved:{market}:{holding.ticker}',holding.ticker,market,holding.currency)
+                        attempt = uuid4()
+                        self.storage.start_attempt(attempt,cycle,provider=provider,instrument_id=instrument.instrument_id,
+                                                   ticker=holding.ticker,attempt_number=1)
+                        reason = next(i.reason for i in issues if i.ticker == holding.ticker)
+                        op = failure(instrument,provider,'unsupported_symbol',reason)
+                        self.storage.finish_attempt(attempt,op.result,elapsed_ms=0,provider_evidence={**op.evidence,'executed':False})
+                        self.events.append({'provider':provider,'ticker':holding.ticker,'status':'unsupported_symbol',
+                                            'reason':reason,'executed':False,'attempt_id':str(attempt)})
+                        continue
+                    if not applicable(instrument,provider):
+                        continue
+                    identity, quote = self.collect(cycle,instrument,provider,deadline)
+                    if self.stop_requested():
+                        raise CollectionInterrupted('shutdown requested')
+                    if quote:
+                        fetched[(holding.ticker,provider)] = quote
+                    if provider == self.config.valuation:
+                        if quote is None:
+                            identity,quote = self.choose_cache(instrument)
+                        if quote is not None:
+                            selected[holding.ticker] = identity
+                            flags[holding.ticker] = quote.quality_flags
+            report = self.storage.finish_cycle(cycle,selected_quotes=selected,quality_flags=flags)
+            for holding in group:
+                main = fetched.get((holding.ticker,self.config.valuation))
+                instrument = resolved.get(holding.ticker)
+                for provider in self.config.comparison:
+                    if instrument and applicable(instrument,provider):
+                        comparisons.append(compare(main,fetched.get((holding.ticker,provider)),holding.ticker,provider))
+            return cycle, report, comparisons, self.events[event_start:]
+        except BaseException:
+            if not self.storage.failed:
+                self.storage.stop_cycle(cycle,status='interrupted',reason='quote_interrupted')
+            raise
+
+    def run(self, run_id, holdings, resolved, issues):
+        reports, comparisons = [], []
         # One independent budget for each market cycle, shared by all its sources.
         for market in sorted({h.market for h in holdings}):
-            cycle = uuid4()
-            cycles.append(str(cycle))
-            self.storage.start_cycle(cycle,run_id,market=market.value,scheduled_at=datetime.now(UTC))
-            selected, flags, fetched = {}, {}, {}
-            deadline = self.monotonic()+self.config.cycle_budget_seconds
-            group = [h for h in holdings if h.market == market]
-            try:
-                # Complete valuation source first; comparison requests cannot consume its budget.
-                for provider in (self.config.valuation,*self.config.comparison):
-                    for holding in group:
-                        instrument = resolved.get(holding.ticker)
-                        if instrument is None:
-                            if provider != self.config.valuation:
-                                continue
-                            instrument = Instrument(f'unresolved:{market}:{holding.ticker}',holding.ticker,market,holding.currency)
-                            attempt = uuid4()
-                            self.storage.start_attempt(attempt,cycle,provider=provider,instrument_id=instrument.instrument_id,
-                                                       ticker=holding.ticker,attempt_number=1)
-                            reason = next(i.reason for i in issues if i.ticker == holding.ticker)
-                            op = failure(instrument,provider,'unsupported_symbol',reason)
-                            self.storage.finish_attempt(attempt,op.result,elapsed_ms=0,provider_evidence={**op.evidence,'executed':False})
-                            self.events.append({'provider':provider,'ticker':holding.ticker,'status':'unsupported_symbol',
-                                                'reason':reason,'executed':False,'attempt_id':str(attempt)})
-                            continue
-                        if not applicable(instrument,provider):
-                            continue
-                        identity, quote = self.collect(cycle,instrument,provider,deadline)
-                        if quote:
-                            fetched[(holding.ticker,provider)] = quote
-                        if provider == self.config.valuation:
-                            if quote is None:
-                                identity,quote = self.choose_cache(instrument)
-                            if quote is not None:
-                                selected[holding.ticker] = identity
-                                flags[holding.ticker] = quote.quality_flags
-                report = self.storage.finish_cycle(cycle,selected_quotes=selected,quality_flags=flags)
-                reports.append((cycle,report))
-                for holding in group:
-                    main = fetched.get((holding.ticker,self.config.valuation))
-                    instrument = resolved.get(holding.ticker)
-                    for provider in self.config.comparison:
-                        if instrument and applicable(instrument,provider):
-                            comparisons.append(compare(main,fetched.get((holding.ticker,provider)),holding.ticker,provider))
-            except BaseException:
-                if not self.storage.failed:
-                    self.storage.stop_cycle(cycle,status='interrupted',reason='quote_interrupted')
-                raise
+            cycle, report, compared, _ = self.run_cycle(
+                run_id, holdings, resolved, issues, market=market, scheduled_at=datetime.now(UTC))
+            reports.append((cycle,report))
+            comparisons.extend(compared)
         self.storage.finish_run(run_id)
         return reports, comparisons
 
@@ -178,7 +205,8 @@ def compare(main, other, ticker, provider):
 def public_config(database, quote, catalog):
     db = {key:value for key,value in asdict(database).items() if key != 'password'}
     return {'database':db,'providers':{'valuation':quote.valuation,'comparison':list(quote.comparison)},
-            'scheduler':{k:getattr(quote,k) for k in ('operation_timeout_seconds','cycle_budget_seconds','max_retries','poll_interval_seconds')},
+            'scheduler':{k:getattr(quote,k) for k in ('operation_timeout_seconds','cycle_budget_seconds','max_retries','poll_interval_seconds',
+                                                      'campaign_duration_days','post_close_observation_minutes','heartbeat_interval_seconds')},
             'tls':{'company_ca_file':quote.company_ca_file,'relaxed_providers':list(quote.relaxed_providers),
                    'relaxed_sources':list(catalog.relaxed_sources)},
             'instruments':{'max_age_hours':catalog.max_age_hours,'operation_timeout_seconds':catalog.operation_timeout_seconds}}

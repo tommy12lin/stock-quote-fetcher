@@ -24,6 +24,9 @@ def build_parser() -> argparse.ArgumentParser:
         command.add_argument("--config", type=Path, required=True)
         if name == "db-check":
             command.add_argument("--connection-only", action="store_true", help="只檢查連線與 migration 所需 schema 權限")
+    health = commands.add_parser("healthcheck", help="檢查 monitor 的資料庫連線與心跳")
+    health.add_argument("--config", type=Path, required=True)
+    health.add_argument("--max-heartbeat-age-seconds", type=int, default=120)
     refresh = commands.add_parser('instruments-refresh', help='更新官方標的清單')
     refresh.add_argument('--config', type=Path, required=True)
     resolve = commands.add_parser('resolve', help='驗證標的並顯示來源代碼')
@@ -37,6 +40,8 @@ def build_parser() -> argparse.ArgumentParser:
         command.add_argument("--input", type=Path, required=True)
         command.add_argument("--config", type=Path, required=True)
         command.add_argument("--output", type=Path, required=True)
+        if name == "monitor":
+            command.add_argument("--campaign-id", help="明確續跑指定 campaign UUID；省略時自動續接相同設定")
     report = commands.add_parser("report", help="產生報告（步驟 8 待實作）")
     report.add_argument("--run-id", required=True)
     report.add_argument("--output", type=Path, required=True)
@@ -45,6 +50,29 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if args.command == 'monitor':
+        from threading import Event
+        from stock_quote_fetcher.config import ConfigurationError
+        from stock_quote_fetcher.monitor import execute, stop_signals
+        from stock_quote_fetcher.storage import StorageError
+        event = Event()
+        try:
+            with stop_signals(event):
+                code, directory, document = execute(
+                    args.input, args.config, args.output,
+                    campaign_id=args.campaign_id, stop_event=event)
+            state = '安全停止，可續跑' if document['status'] == 'interrupted' else '觀測完成'
+            print(f"campaign-id {document['campaign_id']}；run-id {document['run_id']}；{state}；輸出：{directory}")
+            return code
+        except (ConfigurationError, InputValidationError) as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
+        except (OSError, UnicodeError):
+            print('monitor 輸出寫入失敗；資料庫可能已有本次紀錄，請核對路徑與權限。', file=sys.stderr)
+            return 1
+        except StorageError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
     if args.command == 'quote':
         from stock_quote_fetcher.config import ConfigurationError
         from stock_quote_fetcher.storage import StorageError
@@ -74,12 +102,17 @@ def main(argv: list[str] | None = None) -> int:
         except KeyboardInterrupt:
             print('報價已中止；保留已提交的執行紀錄。',file=sys.stderr)
             return 1
-    if args.command in {"db-check", "migrate"}:
+    if args.command in {"db-check", "migrate", "healthcheck"}:
         from stock_quote_fetcher.config import ConfigurationError, load_database_config
         from stock_quote_fetcher.storage import Storage, StorageError
         try:
             config = load_database_config(args.config)
             with Storage(config) as storage:
+                if args.command == "healthcheck":
+                    storage.check_schema()
+                    info = storage.check_monitor_health(max_age_seconds=args.max_heartbeat_age_seconds)
+                    print(f"monitor 正常：run-id {info['run_id']}；心跳年齡 {info['age_seconds']:.1f} 秒。")
+                    return 0
                 info = storage.check_permissions(migration=True)
                 if args.command == "migrate":
                     applied = storage.migrate()

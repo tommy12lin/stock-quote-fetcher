@@ -1,5 +1,4 @@
-# Database, instruments, providers and quote limits are implemented.
-# monitor scheduling is implemented in step 6; quote uses the limits below.
+# Database, instruments, providers, quote limits and monitor scheduling are implemented.
 # Copy to ignored config.toml for local customization.
 
 [database]
@@ -19,6 +18,9 @@ poll_interval_seconds = 60
 operation_timeout_seconds = 10
 cycle_budget_seconds = 50
 max_retries = 2
+campaign_duration_days = 7 # New campaigns; matching active campaigns resume automatically.
+post_close_observation_minutes = 30 # Cap used when a provider delay/publication time is unknown.
+heartbeat_interval_seconds = 30
 
 [instruments]
 max_age_hours = 24

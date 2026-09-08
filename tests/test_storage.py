@@ -314,6 +314,43 @@ def test_campaign_gaps_keep_future_and_restart_history(db):
             assert rows[1]['cycle_id'] is None and rows[2]['cycle_id'] is None
 
 
+def test_monitor_campaign_selection_health_and_completion(db):
+    cfg, _ = db
+    current = datetime.now(UTC)
+    with collector(cfg) as s:
+        campaign = uuid4()
+        schedule = [dict(id=uuid4(),market='US',scheduled_at=current+timedelta(minutes=i),window_type='regular') for i in range(3)]
+        s.create_campaign(campaign,input_text=CSV,config={},planned_start=current-timedelta(seconds=1),
+            planned_end=current+timedelta(hours=1),scheduled_cycles=schedule,source_instruments=[],
+            calendar_version='v1',schedule_version='v1',threshold_version='v1',maintenance_windows=[])
+        assert s.find_matching_campaign(input_text=CSV,config={},as_of=current)['id'] == campaign
+        assert s.find_matching_campaign(input_text=CSV.replace('2.5','3'),config={},as_of=current) is None
+        assert [row['id'] for row in s.scheduled_cycles(campaign,not_before=current+timedelta(seconds=1))] == [row['id'] for row in schedule[1:]]
+        run = uuid4()
+        s.start_run(run,input_text=CSV,config={},image_id='test',campaign_id=campaign)
+        health = s.check_monitor_health(max_age_seconds=10)
+        assert health['run_id'] == run and health['age_seconds'] >= 0
+        s.interrupt_run(run)
+        second = uuid4()
+        s.start_run(second,input_text=CSV,config={},image_id='test',campaign_id=campaign)
+        s.finish_run(second)
+        s.finish_campaign(campaign)
+        assert s.get_campaign(campaign)['status'] == 'completed'
+
+
+def test_provider_cooldown_survives_runner_restart(db):
+    cfg, _ = db
+    with collector(cfg) as s:
+        _, cycle = started(s)
+        attempt = uuid4()
+        s.start_attempt(attempt,cycle,provider='yahoo',instrument_id='us-aapl',ticker='AAPL',attempt_number=1)
+        failed = FetchResult('us-aapl','yahoo','rate_limited',error='http_429')
+        s.finish_attempt(attempt,failed,elapsed_ms=5,
+                         provider_evidence={'effective_cooldown_seconds':60,'executed':True})
+        remaining = s.provider_cooldowns(as_of=datetime.now(UTC))
+        assert 0 < remaining['yahoo'] <= 60
+
+
 def test_attempt_result_transaction_rolls_back_and_unfinished_blocks_completion(db):
     cfg, admin = db
     with collector(cfg) as s:

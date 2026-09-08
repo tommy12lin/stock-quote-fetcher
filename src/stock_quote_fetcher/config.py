@@ -108,6 +108,9 @@ class QuoteConfig:
     cycle_budget_seconds: int = 50
     max_retries: int = 2
     poll_interval_seconds: int = 60
+    campaign_duration_days: int = 7
+    post_close_observation_minutes: int = 30
+    heartbeat_interval_seconds: int = 30
     company_ca_file: str = ''
     relaxed_providers: tuple[str, ...] = ()
 
@@ -118,7 +121,10 @@ class QuoteConfig:
                 or len(set(self.comparison)) != len(self.comparison)):
             raise ConfigurationError('providers.comparison 必須是 finnhub／twse／tpex 的不重複陣列。')
         for name, lower, upper in (('operation_timeout_seconds',1,120),('cycle_budget_seconds',1,300),
-                                   ('max_retries',0,2),('poll_interval_seconds',60,3600)):
+                                   ('max_retries',0,2),('poll_interval_seconds',60,3600),
+                                   ('campaign_duration_days',1,31),
+                                   ('post_close_observation_minutes',1,120),
+                                   ('heartbeat_interval_seconds',5,300)):
             if type(getattr(self,name)) is not int or not lower <= getattr(self,name) <= upper:
                 raise ConfigurationError(f'{name} 超出允許範圍。')
         if (not isinstance(self.company_ca_file,str) or not isinstance(self.relaxed_providers,tuple)
@@ -131,7 +137,8 @@ def load_quote_config(path: Path) -> QuoteConfig:
     doc = _load_document(path)
     providers, scheduler, tls = (doc.get(key,{}) for key in ('providers','scheduler','tls'))
     for raw, allowed in ((providers, {'valuation','comparison'}),
-                         (scheduler, {'operation_timeout_seconds','cycle_budget_seconds','max_retries','poll_interval_seconds'}),
+                         (scheduler, {'operation_timeout_seconds','cycle_budget_seconds','max_retries','poll_interval_seconds',
+                                      'campaign_duration_days','post_close_observation_minutes','heartbeat_interval_seconds'}),
                          (tls, {'company_ca_file','relaxed_sources','relaxed_providers'})):
         if not isinstance(raw,dict) or set(raw) - allowed:
             raise ConfigurationError('報價設定包含不支援的欄位；秘密只能透過環境注入。')

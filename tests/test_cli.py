@@ -16,7 +16,7 @@ def run_cli(*args: str) -> subprocess.CompletedProcess[str]:
 def test_help_lists_commands():
     result = run_cli("--help")
     assert result.returncode == 0
-    for command in ("validate", "db-check", "migrate", "instruments-refresh", "resolve", "quote", "monitor", "report"):
+    for command in ("validate", "db-check", "migrate", "healthcheck", "instruments-refresh", "resolve", "quote", "monitor", "report"):
         assert command in result.stdout
 
 
@@ -31,7 +31,7 @@ def test_usage_errors(args):
     assert run_cli(*args).returncode == 2
 
 
-@pytest.mark.parametrize("command", ["monitor", "report"])
+@pytest.mark.parametrize("command", ["report"])
 def test_unimplemented_commands_cannot_report_success(command, tmp_path):
     missing_input = tmp_path / "missing.csv"
     output = tmp_path / "output"
@@ -46,6 +46,21 @@ def test_unimplemented_commands_cannot_report_success(command, tmp_path):
     assert "尚未實作" in result.stderr
     assert not result.stdout
     assert not output.exists()
+
+
+def test_monitor_missing_input_is_a_usage_data_error(tmp_path):
+    result = run_cli("monitor", "--input", str(tmp_path / "missing.csv"),
+                     "--config", str(tmp_path / "missing.toml"),
+                     "--output", str(tmp_path / "output"))
+    assert result.returncode == 2
+    assert "尚未實作" not in result.stderr
+    assert not (tmp_path / "output").exists()
+
+
+def test_healthcheck_reports_configuration_errors_without_claiming_success(tmp_path):
+    result = run_cli("healthcheck", "--config", str(tmp_path / "missing.toml"))
+    assert result.returncode == 2
+    assert not result.stdout
 
 
 def test_module_entrypoint():

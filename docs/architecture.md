@@ -75,7 +75,7 @@ Adapter 接受一組 Instrument，回傳每個標的的 FetchResult，包含成�
 
 若 Retry-After 超過本輪預算，記錄來源冷卻狀態並延後該來源；每一預定機會仍計入覆蓋率，不因退避而消失。不同來源獨立限流。Finnhub 單次實測回應 limit 60，但窗口單位未由回應明示；步驟 6 不配置高於現有每 60 秒一輪的頻率，實際 429 與長時間額度行為於持續觀測記錄。
 
-各市場依一般交易時段排程；收盤後延長「已知來源延遲＋兩輪輪詢」的觀測，讓延遲來源有機會回傳收盤資料，再停止該市場定期查詢。延遲未知時先保留最多 30 分鐘的觀測窗口並記錄不確定性。跨市場獨立排程，避免因台股休市而停止美股。單次 quote 可於任何時間執行，但保留真實市場狀態。
+各市場依一般交易時段排程；收盤後延長「已知來源延遲＋兩輪輪詢」的觀測，讓延遲來源有機會回傳收盤資料，再停止該市場定期查詢。延遲未知時改用 post_close_observation_minutes（預設 30 分鐘）作為上限並記錄不確定性；台股啟用 TWSE／TPEx 或美股啟用 Finnhub 時即視為發布時間未確認。台股開盤後 20 分鐘的輪次另標 opening_delay，與 regular、post_close 分開保存。跨市場獨立排程，避免因台股休市而停止美股。單次 quote 可於任何時間執行，但保留真實市場狀態。
 
 若來源資料只提供 K 線，必須明確映射時間為區間開始或結束；不使用不完整區間冒充成交快照。精度不足時標示品質未確定。
 
@@ -126,7 +126,7 @@ report 使用 REPEATABLE READ READ ONLY 一致快照。資料庫不可用時以�
 
 ### 4.4 Campaign 與停機缺口
 
-首次抓價前原子保存 campaign 不可變快照及整段 scheduled_cycles；來源／標的配對用於展開預定抓取機會。冷卻或停機不刪除預定輪次。重啟建立新 run 並明確連結原 campaign；輸入、來源、排程或門檻改變則另建 campaign。步驟 6 實作前補入 campaign 選擇的 CLI 契約。
+首次抓價前原子保存 campaign 不可變快照及整段 scheduled_cycles；來源／標的配對用於展開預定抓取機會。冷卻或停機不刪除預定輪次。重啟建立新 run 並明確連結原 campaign；輸入、來源、排程或門檻改變則另建 campaign。monitor 以 input_hash 與 config_hash 尋找仍在期間內的進行中 campaign 自動續接，找到多個相符者拒絕執行並要求 `--campaign-id`；明確指定時僅接受進行中且在預定起訖之內者。待辦機會以尚未被 cycle 認領且不早於本次啟動時間者為準，cycles.scheduled_cycle_id 的唯一約束確保同一機會不被重複認領。
 
 報告依預定輪次左連接實際 cycle，計算截至報告時間已到期缺口，不將未來輪次算失敗。提前停止不縮短原預定分母；維護窗口同時提供包含／排除統計。不補抓錯過輪次、不覆寫舊 run。CSV／JSON／Markdown 保留作輸入及匯出，持久化資料以 PostgreSQL 為準。
 
@@ -205,6 +205,6 @@ Compose 使用現行 Compose Specification，不寫過時的頂層 version 欄�
 
 providers／provider_worker／quality／quoting 已交付單次 quote。每市場一個 cycle，Yahoo 先行，比較來源獨立保存；started attempt 提交後才呼叫 Adapter，白名單解析欄位／parser_version 存入 response_evidence，無新 migration。
 
-SDK 由可終止的子程序執行，10 秒含啟動／內部等待；每市場網路預算 50 秒，DB timeout 另計。統計為 Adapter 操作數，不是 SDK 底層 HTTP 次數。來源冷卻於本次 quote 跨標的沿用；跨 monitor 輪次／重啟屬步驟 6。
+SDK 由可終止的子程序執行，10 秒含啟動／內部等待；每市場網路預算 50 秒，DB timeout 另計。統計為 Adapter 操作數，不是 SDK 底層 HTTP 次數。來源冷卻於本次 quote 跨標的沿用；monitor 啟動時另以各來源最後一筆 rate_limited 嘗試的 completed_at 與 effective_cooldown_seconds 重算剩餘秒數載入，使冷卻跨輪次與重啟延續，且仍為來源獨立。
 
 來源原始時間保留在 Adapter evidence，輸出另存當地時間。快取重新驗證並保留原 quote-id／時間，估值端加 cached／stale。freshness_unknown 區分未知延遲與未知時間。真實驗證與限制見 [步驟 5 證據](step-5-evidence.md)。Dockerfile／Compose 仍待步驟 7。

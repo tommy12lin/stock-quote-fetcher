@@ -46,7 +46,8 @@ def configuration_snapshot(config: dict) -> tuple[dict, str]:
     allowed = {
         'database': {'host','port','name','schema','user','connect_timeout','statement_timeout_ms','lock_timeout_ms'},
         'providers': {'valuation','comparison'},
-        'scheduler': {'poll_interval_seconds','operation_timeout_seconds','cycle_budget_seconds','max_retries'},
+        'scheduler': {'poll_interval_seconds','operation_timeout_seconds','cycle_budget_seconds','max_retries',
+                      'campaign_duration_days','post_close_observation_minutes','heartbeat_interval_seconds'},
         'tls': {'company_ca_file','relaxed_providers','relaxed_sources'},
         'instruments': {'max_age_hours','operation_timeout_seconds'},
     }
@@ -212,6 +213,54 @@ class Storage:
                     raise ValueError('Scheduled cycle lies outside campaign.')
                 self._insert('scheduled_cycles', dict(id=cycle['id'], campaign_id=identity, market=cycle['market'], scheduled_at=stamp, window_type=cycle['window_type']))
 
+    def find_matching_campaign(self, *, input_text, config, as_of):
+        """Return the sole active campaign with the same immutable inputs."""
+        _, config_hash = configuration_snapshot(config)
+        input_hash = digest(input_text.encode())
+        stamp = utc_timestamp(as_of)
+        with self.transaction(writer=False, readonly=True):
+            rows = self.conn.execute(sql.SQL('''SELECT * FROM {} WHERE status='running'
+                AND planned_start<=%s AND planned_end>%s AND input_hash=%s AND config_hash=%s
+                ORDER BY planned_start DESC,id''').format(self.table('campaigns')),
+                (stamp, stamp, input_hash, config_hash)).fetchall()
+        if len(rows) > 1:
+            raise StorageError('找到多個相同設定的進行中 campaign；請用 --campaign-id 明確指定。')
+        return rows[0] if rows else None
+
+    def get_campaign(self, identity):
+        with self.transaction(writer=False, readonly=True):
+            return self._one('campaigns', identity)
+
+    def scheduled_cycles(self, campaign_id, *, not_before):
+        """Load unclaimed opportunities from this process start onward; older gaps stay absent."""
+        stamp = utc_timestamp(not_before)
+        with self.transaction(writer=False, readonly=True):
+            return self.conn.execute(sql.SQL('''SELECT s.* FROM {} s LEFT JOIN {} c ON c.scheduled_cycle_id=s.id
+                WHERE s.campaign_id=%s AND s.scheduled_at>=%s AND c.id IS NULL
+                ORDER BY s.scheduled_at,s.market,s.id''').format(self.table('scheduled_cycles'), self.table('cycles')),
+                (campaign_id, stamp)).fetchall()
+
+    def provider_cooldowns(self, *, as_of):
+        """Rebuild active source cooldowns from the latest persisted attempt per provider."""
+        stamp = utc_timestamp(as_of)
+        with self.transaction(writer=False, readonly=True):
+            rows = self.conn.execute(sql.SQL('''SELECT DISTINCT ON (provider) provider,status,completed_at,response_evidence
+                FROM {} WHERE completed_at IS NOT NULL ORDER BY provider,completed_at DESC,id DESC''').format(
+                self.table('fetch_attempts'))).fetchall()
+        result = {}
+        for row in rows:
+            if row['status'] != 'rate_limited':
+                continue
+            evidence = row['response_evidence'] or {}
+            adapter = evidence.get('adapter') if isinstance(evidence, dict) else None
+            seconds = adapter.get('effective_cooldown_seconds') if isinstance(adapter, dict) else None
+            if type(seconds) not in (int, float) or seconds <= 0:
+                continue
+            remaining = (row['completed_at'] + timedelta(seconds=seconds) - stamp).total_seconds()
+            if remaining > 0:
+                result[row['provider']] = remaining
+        return result
+
     def start_run(self, identity, *, input_text, config, image_id, campaign_id=None):
         if not self.locked:
             raise StorageError('寫入前必須取得收集程序鎖。')
@@ -345,6 +394,19 @@ class Storage:
             self._running('runs', run_id)
             self.conn.execute(sql.SQL('UPDATE {} SET heartbeat_at=%s WHERE id=%s').format(self.table('runs')), (now(),run_id))
 
+    def check_monitor_health(self, *, max_age_seconds):
+        if type(max_age_seconds) is not int or max_age_seconds < 1:
+            raise ValueError('max_age_seconds must be a positive integer.')
+        with self.transaction(writer=False, readonly=True):
+            row = self.conn.execute(sql.SQL("SELECT id,heartbeat_at,clock_timestamp() AS checked_at FROM {} WHERE status='running' ORDER BY started_at DESC LIMIT 1").format(
+                self.table('runs'))).fetchone()
+        if row is None:
+            raise StorageError('monitor healthcheck 失敗：沒有進行中的 run。')
+        age = (row['checked_at'] - row['heartbeat_at']).total_seconds()
+        if age > max_age_seconds:
+            raise StorageError('monitor healthcheck 失敗：心跳已逾期。')
+        return {'run_id': row['id'], 'heartbeat_at': row['heartbeat_at'], 'age_seconds': age}
+
     def stop_cycle(self, identity, *, status, reason):
         if status not in {'interrupted','skipped'} or not reason or not reason.replace('_','').isalnum():
             raise ValueError('Use interrupted/skipped and a non-secret reason code.')
@@ -360,6 +422,20 @@ class Storage:
             if self.conn.execute(sql.SQL("SELECT 1 FROM {} WHERE run_id=%s AND status='running' LIMIT 1").format(self.table('cycles')), (run_id,)).fetchone():
                 raise ValueError('Run contains unfinished cycles.')
             self.conn.execute(sql.SQL("UPDATE {} SET status='completed',ended_at=%s WHERE id=%s").format(self.table('runs')), (now(),run_id))
+
+    def interrupt_run(self, run_id):
+        with self.transaction():
+            self._running('runs', run_id)
+            if self.conn.execute(sql.SQL("SELECT 1 FROM {} WHERE run_id=%s AND status='running' LIMIT 1").format(self.table('cycles')), (run_id,)).fetchone():
+                raise ValueError('Run contains unfinished cycles.')
+            self.conn.execute(sql.SQL("UPDATE {} SET status='interrupted',ended_at=%s WHERE id=%s").format(self.table('runs')), (now(),run_id))
+
+    def finish_campaign(self, campaign_id):
+        with self.transaction():
+            self._running('campaigns', campaign_id)
+            if self.conn.execute(sql.SQL("SELECT 1 FROM {} WHERE campaign_id=%s AND status='running' LIMIT 1").format(self.table('runs')), (campaign_id,)).fetchone():
+                raise ValueError('Campaign contains a running run.')
+            self.conn.execute(sql.SQL("UPDATE {} SET status='completed',ended_at=%s WHERE id=%s").format(self.table('campaigns')), (now(),campaign_id))
 
     def recover_incomplete(self):
         """Only call after acquiring the shared lock, before creating the new run."""

@@ -4,6 +4,8 @@
 
 ## 目前狀態
 
+- 2026-09-08：完成步驟 6 monitor 排程與停止／恢復；campaign 續接、遲到跳過、冷卻沿用、SIGTERM 安全停止、心跳與 healthcheck 已實作，171 項測試通過，不需新 migration。真實 provider 的連續觀測屬步驟 9。見 [步驟 6 證據](docs/step-6-evidence.md)。
+
 - 2026-09-08：完成步驟 5 單次 quote、四個 Provider、品質檢查、重試／冷卻、快取與 CSV／JSON 輸出；Yahoo、Finnhub、TWSE 與 TPEx 均通過真實容器驗證。見 [步驟 5 證據](docs/step-5-evidence.md)。
 
 - 2026-09-08：完成步驟 4 官方標的解析、映射、快取與 migration；141 項測試通過，容器正式保存 13,343 筆五來源 generation，匿名範例全數 resolve 成功。見 [步驟 4 證據](docs/step-4-evidence.md)。
@@ -16,7 +18,7 @@
 - 2026-09-08：ticker 自動判斷及標的映射已實作：數字開頭為台股、英文字母開頭為美股；台股原始代碼依官方清單映射 `.TW`／`.TWO`。
 - 2026-09-07：需求討論後建立 v0.1 規格與架構文件，同日完成第一輪來源與依賴實測，資料來源評估與架構文件更新至 v0.2。
 - 已確認：CSV／CLI、Python、Docker Compose、免費來源優先、可接受約 15–20 分鐘延遲、分幣別小計。
-- CLI 已提供 help／version、validate、db-check、migrate、instruments-refresh 、resolve 與 quote；monitor／report 尚未實作，會明確回報並退出 1。Dockerfile 與 compose.yaml 待步驟 7。
+- CLI 已提供 help／version、validate、db-check、migrate、instruments-refresh 、resolve、quote、monitor 與 healthcheck；report 尚未實作，會明確回報並退出 1。Dockerfile 與 compose.yaml 待步驟 7。
 - 文件中的建議驗收門檻與技術選型均有標示；它們不代表已取得的測試成績。
 
 ### 第一輪實測已確認（2026-09-07，以一次性探針取樣）
@@ -71,7 +73,7 @@ uv run --frozen pytest -q
 
 uv 版本由 pyproject.toml 強制核對，Python 修補版由 .python-version 選定；uv.lock 保存傳遞依賴與下載雜湊。更新依賴時才重新產生鎖定檔，日常使用 frozen 安裝。此輪已驗證 Linux amd64；Windows 原生環境尚未測試。本機無 Python／uv 時可用 [固定 Docker 映像驗證命令](docs/step-1-evidence.md)。
 
-匿名範例位於 examples/holdings.csv。config.example.toml 的 database 區段供 db-check／migrate 使用，providers、scheduler 限制與 TLS 已供 quote 使用，monitor 排程仍待步驟 6，可複製為已忽略的 config.toml；一般設定與秘密值分離，DB_PASSWORD／FINNHUB_API_KEY 僅示於 .env.example 空欄。db-check／migrate 讀取 database 設定；CLI 不自動載入 .env，可由 Docker --env-file 注入。實際持股、憑證與秘密值不得放入範例檔。
+匿名範例位於 examples/holdings.csv。config.example.toml 的 database 區段供 db-check／migrate 使用，providers、scheduler 限制與 TLS 已供 quote 與 monitor 使用，可複製為已忽略的 config.toml；一般設定與秘密值分離，DB_PASSWORD／FINNHUB_API_KEY 僅示於 .env.example 空欄。db-check／migrate 讀取 database 設定；CLI 不自動載入 .env，可由 Docker --env-file 注入。實際持股、憑證與秘密值不得放入範例檔。
 
 `validate` 不需資料庫、設定檔或 API Key，只驗證 CSV 格式及股數規則，不確認股票是否存在。成功列出持股筆數並退出 0；任一列錯誤整份拒絕，stderr 顯示行號並退出 2。估值核心已串入 quote；固定估值案例與斷網驗證方式見步驟 2 證據。
 
@@ -87,3 +89,14 @@ uv run --frozen stock-poc quote --input examples/holdings.csv --config config.to
 DB_PASSWORD／FINNHUB_API_KEY 必須由執行環境注入；CLI 不自動讀取 .env。Docker 可使用 --env-file .env。本機 config.toml 已啟用 Finnhub／TWSE／TPEx 比較；未填金鑰時 Finnhub 明確失敗，Yahoo 仍可完成。執行環境須可讀取設定中的公司 CA 路徑。
 
 每個 run 輸出 summary.json，及按 cycle 分隔的 holdings.csv。缺價／降級或已啟用來源最終失敗退出 3；純粹價格比對時間不一致保留證據，不宣稱已驗證吻合。詳見 [步驟 5 操作與限制](docs/step-5-evidence.md)。
+
+## 持續觀測
+
+`monitor` 依交易日曆為台美股各自排定輪次，逐輪執行與 quote 相同的抓價、品質判斷與保存。休市不排輪次；排定時間展開後即固定，供報告重建停機缺口。
+
+```text
+uv run --frozen stock-poc monitor --input examples/holdings.csv --config config.toml --output output
+uv run --frozen stock-poc healthcheck --config config.toml --max-heartbeat-age-seconds 120
+```
+
+省略 --campaign-id 時自動續接輸入與公開設定相同、且仍在期間內的 campaign；沒有相符者才建立新的。SIGTERM（容器 `docker stop`）或 Ctrl+C 為安全停止，退出 0 並提示可續跑；重新啟動使用新的 run-id 並掛回同一 campaign，只取尚未認領的輪次，不補抓過去的缺口。落後排定時間達一個輪詢間隔的輪次記為 skipped／scheduler_lag。healthcheck 分別回報心跳逾期與沒有進行中的 run。monitor 與 quote、migrate 共用收集鎖，不能同時執行。詳見 [步驟 6 操作與界線](docs/step-6-evidence.md)。

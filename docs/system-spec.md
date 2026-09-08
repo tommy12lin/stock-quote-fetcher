@@ -66,7 +66,7 @@ VOO,400,1
 
 ## 3. 預定 CLI
 
-`validate`、`db-check`、`migrate`、`instruments-refresh`、`resolve` 與 `quote` 已可執行；`monitor`／`report` 保留預定參數，目前回報尚未實作並退出 1。
+`validate`、`db-check`、`migrate`、`instruments-refresh`、`resolve`、`quote`、`monitor` 與 `healthcheck` 已可執行；`report` 保留預定參數，目前回報尚未實作並退出 1。
 
 ```text
 stock-poc validate --input /input/holdings.csv
@@ -76,7 +76,8 @@ stock-poc db-check --config /input/config.toml
 stock-poc instruments-refresh --config /input/config.toml
 stock-poc resolve --input /input/holdings.csv --config /input/config.toml
 stock-poc quote --input /input/holdings.csv --config /input/config.toml --output /output
-stock-poc monitor --input /input/holdings.csv --config /input/config.toml --output /output
+stock-poc monitor --input /input/holdings.csv --config /input/config.toml --output /output [--campaign-id <campaign-id>]
+stock-poc healthcheck --config /input/config.toml [--max-heartbeat-age-seconds <seconds>]
 stock-poc report --run-id <run-id> --output /output
 ```
 
@@ -86,9 +87,10 @@ stock-poc report --run-id <run-id> --output /output
 - `instruments-refresh`：從固定官方來源更新完整標的 generation；任一來源失敗不發布新版本。
 - `resolve`：使用最新未過期清單驗證標的及顯示交易所、商品類型與 Yahoo 代碼；不抓行情。查無、不支援或歧義退出 3。
 - `quote`：執行一次抓取、保存紀錄，輸出持股表與分幣別摘要。
-- `monitor`：持續抓取並保存；收到停止訊號時完成或中止本輪、記錄狀態並安全退出。
+- `monitor`：依交易日曆排定的輪次持續抓取並保存；收到停止訊號時完成或中止本輪、記錄狀態並安全退出。省略 `--campaign-id` 時自動續接輸入與公開設定相同且仍在期間內的 campaign，找到多個相符者則拒絕執行並要求明確指定。
+- `healthcheck`：檢查資料庫可用性與收集程序心跳；分別回報心跳逾期與沒有進行中的 run，不抓價也不取收集鎖。`--max-heartbeat-age-seconds` 預設 120。
 - `report`：從持久化紀錄產生指定觀測執行的可靠性報告，不重新抓價。
-- monitor 啟動時讀取並記錄 CSV 與設定的雜湊；CSV 修改後需重新啟動，新執行使用新的 run-id。
+- monitor 啟動時讀取並記錄 CSV 與設定的雜湊；CSV 修改後需重新啟動，新執行使用新的 run-id。續跑沿用原 campaign 及其已展開的預定輪次，只認領尚未執行的機會，不補抓過去缺口；落後排定時間達一個輪詢間隔者記為 skipped／scheduler_lag。
 - 預定退出碼：0＝成功；2＝輸入／設定錯誤；3＝quote 有缺價、降級或品質無法確認；1＝不可恢復的執行錯誤。monitor 對單筆抓價失敗持續運行並記錄，不因此整個退出。
 
 ## 4. 報價契約與品質
