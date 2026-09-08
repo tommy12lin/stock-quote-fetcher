@@ -1,0 +1,31 @@
+# Database, instruments, providers and quote limits are implemented.
+# monitor scheduling is implemented in step 6; quote uses the limits below.
+# Copy to ignored config.toml for local customization.
+
+[database]
+host = "postgres" # For an app container on infrastructure_default; host CLI: localhost.
+port = 5432
+name = "stock_quote_fetcher"
+schema = "app"
+user = "stock_quote_app"
+# Password is injected via DB_PASSWORD; never store it here.
+
+[providers]
+valuation = "yahoo" # Initial implementation only; final US source remains undecided.
+comparison = ["twse", "tpex"] # Add "finnhub" after injecting FINNHUB_API_KEY.
+
+[scheduler]
+poll_interval_seconds = 60
+operation_timeout_seconds = 10
+cycle_budget_seconds = 50
+max_retries = 2
+
+[instruments]
+max_age_hours = 24
+operation_timeout_seconds = 30
+
+[tls]
+company_ca_file = ""
+relaxed_providers = [] # Company network: ["finnhub", "twse", "tpex"] with company_ca_file.
+relaxed_sources = [] # Example in the company network: ["twse_companies", "twse_funds", "tpex_isin"]
+

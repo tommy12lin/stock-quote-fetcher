@@ -1,0 +1,30 @@
+[build-system]
+requires = ["uv_build==0.12.10"]
+build-backend = "uv_build"
+
+[project]
+name = "stock-quote-fetcher"
+version = "0.1.0"
+description = "Taiwan and US stock quote validation POC"
+readme = "README.md"
+requires-python = ">=3.14.7,<3.15"
+dependencies = [
+    "exchange-calendars==4.13.2",
+    "httpx==0.28.1",
+    "psycopg[binary]==3.3.5",
+    "tzdata==2026.3",
+    "yfinance==1.7.0",
+]
+
+[project.scripts]
+stock-poc = "stock_quote_fetcher.cli:main"
+
+[dependency-groups]
+dev = ["pytest==9.1.1"]
+
+[tool.uv]
+required-version = "==0.12.10"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"

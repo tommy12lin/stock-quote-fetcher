@@ -1,32 +1,44 @@
-# Python
-__pycache__/
-*.py[cod]
+# Python and build output
 .venv/
 venv/
-*.egg-info/
-.pytest_cache/
+.uv-cache/
 .ruff_cache/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+.coverage
+htmlcov/
 
-# 本機環境與機密（環境變數檔、金鑰、憑證）
+# Local secrets, certificates and configuration
 .env
 .env.*
 !.env.example
+config.toml
 *.local
-*.key
-*.pem
-!certs/corp-root.pem
 secrets/
+*.pem
+*.crt
+*.key
+*.p12
+*.pfx
 
-# POC 執行產物與真實持股
+# Real holdings and generated data (only anonymous examples are tracked)
+*.csv
+!examples/*.csv
+input/*
+!input/holdings.example.csv
 data/
 output/
+reports/
+*.log
 *.sqlite
 *.sqlite3
 *.db
-input/holdings.csv
-!input/holdings.example.csv
 
-# 編輯器 / OS
+# Editors / OS
 .vscode/
 .idea/
 Thumbs.db
