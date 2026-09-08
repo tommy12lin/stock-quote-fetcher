@@ -1,0 +1,8 @@
+Processing ./workspace/dist/stock_quote_fetcher-0.1.0-py3-none-any.whl
+Installing collected packages: stock-quote-fetcher
+Successfully installed stock-quote-fetcher-0.1.0
+WARNING: Running pip as the 'root' user can result in broken permissions and conflicting behaviour with the system package manager, possibly rendering your system unusable. It is recommended to use a virtual environment instead: https://pip.pypa.io/warnings/venv. Use the --root-user-action option if you know what you are doing and want to suppress this warning.
+驗證成功：5 筆持股（僅格式驗證，未確認標的存在性）。
+No database/provider libraries installed; Docker network=none.
+第 3 行：台股 quantity 必須為整數股
+Invalid input: exit=2, no success output; all-or-nothing rejection confirmed.
