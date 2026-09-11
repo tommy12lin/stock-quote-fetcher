@@ -12,19 +12,25 @@ ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
     UV_NO_CACHE=1 \
     UV_PYTHON_DOWNLOADS=never \
     UV_COMPILE_BYTECODE=1
-RUN pip install --no-cache-dir "uv==${UV_VERSION}"
+RUN --mount=type=secret,id=company_ca \
+    if [ -f /run/secrets/company_ca ]; then export PIP_CERT=/run/secrets/company_ca; fi; \
+    pip install --no-cache-dir "uv==${UV_VERSION}"
 WORKDIR /app
 COPY pyproject.toml uv.lock README.md ./
 COPY src ./src
 # frozen：uv.lock 為權威，與 pyproject.toml 不符即失敗，不在建置時重新解析依賴。
-RUN uv sync --frozen --no-dev --no-editable \
+RUN --mount=type=secret,id=company_ca \
+    if [ -f /run/secrets/company_ca ]; then cat /etc/ssl/certs/ca-certificates.crt /run/secrets/company_ca > /tmp/build-ca.pem; export SSL_CERT_FILE=/tmp/build-ca.pem UV_SYSTEM_CERTS=true; fi; \
+    uv sync --frozen --no-dev --no-editable \
  && /app/.venv/bin/python -c "import exchange_calendars, httpx, psycopg, yfinance, zoneinfo; zoneinfo.ZoneInfo('Asia/Taipei'); zoneinfo.ZoneInfo('America/New_York')" \
- && /app/.venv/bin/stock-poc --version
+ && /app/.venv/bin/stock-poc --version && rm -f /tmp/build-ca.pem
 
 # 只用於驗證：與 runtime 相同的鎖定依賴，另含 dev group 的 pytest。
 # 不是交付映像；測試檔在執行時掛載，不進入任何 build context。
 FROM builder AS test
-RUN uv sync --frozen
+RUN --mount=type=secret,id=company_ca \
+    if [ -f /run/secrets/company_ca ]; then cat /etc/ssl/certs/ca-certificates.crt /run/secrets/company_ca > /tmp/build-ca.pem; export SSL_CERT_FILE=/tmp/build-ca.pem UV_SYSTEM_CERTS=true; fi; \
+    uv sync --frozen && rm -f /tmp/build-ca.pem
 # CLI 測試以 PATH 呼叫 stock-poc，與 runtime stage 相同。
 ENV PATH=/app/.venv/bin:${PATH}
 WORKDIR /work

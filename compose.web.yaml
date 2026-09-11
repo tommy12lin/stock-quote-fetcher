@@ -1,0 +1,38 @@
+# Separate service/image; does not recreate the existing monitor.
+name: stock-portfolio
+services:
+  web:
+    build:
+      context: .
+      secrets: [company_ca]
+    image: stock-portfolio:0.1.0
+    entrypoint: [/app/.venv/bin/python, -m, stock_quote_fetcher.web]
+    command: [--config, /input/config.toml, --schema, dashboard, --container]
+    ports: ["127.0.0.1:8765:8765"]
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DB_HOST: ${DB_HOST:-postgres}
+      DB_PORT: ${DB_PORT:-5432}
+      DB_NAME: ${DB_NAME:-stock_quote_fetcher}
+      DB_SCHEMA: ${DB_SCHEMA:-app}
+      DB_USER: ${DB_USER:-stock_quote_app}
+      TZ: UTC
+    volumes:
+      - ./input/config.toml:/input/config.toml:ro
+      - ${COMPANY_CA_FILE:-./secrets/company-root-ca.crt}:/run/secrets/company-root-ca.crt:ro
+    networks: [database]
+    restart: unless-stopped
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    logging:
+      driver: json-file
+      options: {max-size: 10m, max-file: "3"}
+secrets:
+  company_ca:
+    file: ${COMPANY_CA_FILE:-./secrets/company-root-ca.crt}
+networks:
+  database:
+    external: true
+    name: ${DB_NETWORK:-infrastructure_default}
