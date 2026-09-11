@@ -23,7 +23,7 @@ post_close_observation_minutes = 30 # Cap used when a provider delay/publication
 heartbeat_interval_seconds = 30
 
 [instruments]
-max_age_hours = 24
+max_age_hours = 168 # Keeps a restart inside a multi-day campaign loadable; refresh before starting one.
 operation_timeout_seconds = 30
 
 [tls]

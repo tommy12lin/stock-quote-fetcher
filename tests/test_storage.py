@@ -90,8 +90,9 @@ def started(storage, input_text=CSV):
     return run, cycle
 
 
-def quote(price=Decimal('200.10')):
-    return Quote('us-aapl','AAPL','AAPL','US','USD','yahoo',price,'last_trade',STAMP,STAMP,None,'regular','second')
+def quote(price=Decimal('200.10'),asset_type='stock'):
+    return Quote('us-aapl','AAPL','AAPL','US','USD','yahoo',price,'last_trade',STAMP,STAMP,None,'regular','second',
+                 asset_type=asset_type)
 
 
 def fetched(storage, cycle, q=None):
@@ -106,7 +107,7 @@ def test_migrate_idempotent_schema_and_locks(db):
     cfg, _ = db
     with Storage(cfg) as a, Storage(cfg) as b:
         assert a.check_permissions(migration=True)['username'] == cfg.user
-        assert a.migrate() == ['0001_initial.sql','0002_instrument_catalog.sql']
+        assert a.migrate() == ['0001_initial.sql','0002_instrument_catalog.sql','0003_quote_asset_type.sql']
         assert a.migrate() == []
         a.check_schema()
         with pytest.raises(StorageError, match='另一個'):
@@ -156,6 +157,8 @@ def test_exact_roundtrip_full_lifecycle_and_readonly(db):
             assert saved['run']['status'] == 'completed'
             assert saved['quotes'][0]['price'] == value
             assert saved['quotes'][0]['received_at'] == STAMP
+            # Official security type follows the quote so reports can pick the TW tick table.
+            assert saved['quotes'][0]['asset_type'] == 'stock'
             assert saved['valuations'][0]['market_value'] == report.rows[0].market_value
             assert saved['totals'][0]['total'] == report.summaries[0].total
             assert reader.conn.execute('SHOW transaction_read_only').fetchone()['transaction_read_only'] == 'on'

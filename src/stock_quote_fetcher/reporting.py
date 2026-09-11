@@ -285,10 +285,29 @@ def freshness(schedule, *, as_of, holdings, cycle_quotes, valuation):
             "samples": samples[:200], "sample_truncated": len(samples) > 200}
 
 
-def tick_size(market, price):
-    """US equities quote in cents. The TW tick table depends on the instrument type, which the
-    persisted run rows do not carry, so its investigation threshold stays undetermined here."""
-    return Decimal("0.01") if market == "US" else None
+# Official Taiwan tick tables (TWSE 集中市場交易制度；TPEx 準用相同級距)。Lower bound is
+# inclusive, so a price is matched against the first row whose upper bound it stays below.
+TW_STOCK_TICKS = ((Decimal("10"), Decimal("0.01")), (Decimal("50"), Decimal("0.05")),
+                  (Decimal("100"), Decimal("0.1")), (Decimal("500"), Decimal("0.5")),
+                  (Decimal("1000"), Decimal("1")), (None, Decimal("5")))
+TW_ETF_TICKS = ((Decimal("50"), Decimal("0.01")), (None, Decimal("0.05")))
+
+
+def tick_size(market, price, asset_type=None):
+    """US equities quote in cents. The TW table depends on the official security type, which
+    quotes written before schema 0003 do not carry; those stay undetermined."""
+    if market == "US":
+        return Decimal("0.01")
+    if asset_type not in ("stock", "etf") or price is None:
+        return None
+    table = TW_STOCK_TICKS if asset_type == "stock" else TW_ETF_TICKS
+    value = Decimal(price)
+    if not value.is_finite() or value <= 0:
+        return None
+    for upper, tick in table:
+        if upper is None or value < upper:
+            return tick
+    return None
 
 
 def price_comparison(cycle_quotes, *, valuation, comparison):
@@ -302,8 +321,9 @@ def price_comparison(cycle_quotes, *, valuation, comparison):
             continue
         main = cycle_quotes.get((cycle_id, ticker, valuation))
         result = compare(_quote(main) if main else None, _quote(row), ticker, provider)
-        tick = tick_size(row["market"], row["price"])
-        sample = {"cycle_id": str(cycle_id), **result, "market": row["market"], "tick_size": _decimal(tick)}
+        tick = tick_size(row["market"], row["price"], row.get("asset_type"))
+        sample = {"cycle_id": str(cycle_id), **result, "market": row["market"],
+                  "asset_type": row.get("asset_type"), "tick_size": _decimal(tick)}
         if result["aligned"] and tick is not None:
             comparable += 1
             sample["within_tick"] = abs(Decimal(result["difference"])) <= tick
@@ -478,7 +498,7 @@ def conclusions(*, scope, identity, coverage_section, schedule_section, freshnes
         "指標門檻為驗收計畫提出、尚未確認的建議值；報告只標示是否達到建議值，不作為 SLA。",
         "快取回傳不計入來源取得成功；未執行的操作不進入首次／重試成功率分母。",
         "無法從持久化資料獨立判斷行情是否因無成交而變舊，逾時效樣本一律列為需調查。",
-        "台股最小報價單位需要標的類型，run 紀錄未保存，因此台股比對只列精確差異而不判定吻合。",
+        "台股最小報價單位依官方級距由標的類型決定；schema 0003 之前寫入的報價沒有類型，只列精確差異而不判定吻合。",
         "報告產生主機不等於執行 run 的容器；平台證據以 run 的 image_id 與 package_version 為準。",
         "report 不重新抓價；缺漏無法事後補齊。",
         "報告含持股代碼與股數，移交前須依驗收第 7 節處理。",
@@ -499,7 +519,7 @@ def conclusions(*, scope, identity, coverage_section, schedule_section, freshnes
             "limitations": limitations, "open_cases": open_cases,
             "next_steps": [
                 "與使用者確認時效、覆蓋率與比對門檻後重跑報告，再據此判定符合或不符合。",
-                "若要判定台股價格吻合率，需將標的類型或最小報價單位納入持久化資料。",
+                "沒有標的類型的舊報價無法判定台股吻合率；需要時以 schema 0003 之後的觀測重跑。",
                 "依步驟 9 完成台美股各至少三個完整交易日的盤中觀測，再彙整 V01–V10。",
             ],
             "providers": providers}

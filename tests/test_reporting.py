@@ -28,7 +28,7 @@ def _quote_row(identity, attempt, *, price, quote_time, received, flags=(), dela
             "provider_symbol": "AAPL", "market": "US", "currency": "USD", "provider": "yahoo",
             "price": price, "price_kind": "last_trade", "quote_time": quote_time, "received_at": received,
             "trading_date": date(2026, 9, 8), "session": "regular", "time_precision": "second",
-            "declared_delay_seconds": delay, "quality_flags": list(flags),
+            "declared_delay_seconds": delay, "quality_flags": list(flags), "asset_type": "stock",
             "source_timezone": "America/New_York", "source_time_raw": None}
 
 
@@ -231,22 +231,59 @@ def test_price_comparison_only_counts_aligned_samples_with_a_known_tick(report):
     assert comparison["undetermined_threshold_samples"] == 0
 
 
-def test_taiwan_tick_size_stays_undetermined_instead_of_guessed(report):
+def _taiwan_document(asset_type):
     campaign, schedule, snapshot = observation()
     for row in snapshot["quotes"] + snapshot["cycles"] + snapshot["holdings"]:
         row["market"] = "TW"
     for row in snapshot["quotes"] + snapshot["holdings"]:
         row["currency"] = "TWD"
+    for row in snapshot["quotes"]:
+        row["asset_type"] = asset_type
     for row in schedule:
         row["market"] = "TW"
-    document = build_run(snapshot, as_of=AS_OF, schedule=run_schedule(schedule, snapshot["run"], as_of=AS_OF),
-                         maintenance=campaign["maintenance_windows"], campaign=campaign)
+    return build_run(snapshot, as_of=AS_OF, schedule=run_schedule(schedule, snapshot["run"], as_of=AS_OF),
+                     maintenance=campaign["maintenance_windows"], campaign=campaign)
+
+
+@pytest.mark.parametrize("asset_type,tick", [("stock", "0.5"), ("etf", "0.05")])
+def test_taiwan_tick_size_comes_from_the_official_table_for_the_stored_type(asset_type, tick):
+    # Fixture prices are 198.00 and 198.00: a 100-500 stock ticks at 0.5, an ETF over 50 at 0.05.
+    document = _taiwan_document(asset_type)
+    comparison = document["price_comparison"]
+    sample = comparison["samples"][0]
+    assert comparison["aligned_samples"] == 1
+    assert (sample["asset_type"], sample["tick_size"]) == (asset_type, tick)
+    assert sample["within_tick"] is True and "undetermined_reason" not in sample
+    assert comparison["match_rate"] == {"numerator": 1, "denominator": 1, "rate": 1.0}
+    assert comparison["undetermined_threshold_samples"] == 0
+
+
+def test_taiwan_tick_size_stays_undetermined_without_a_stored_asset_type():
+    document = _taiwan_document(None)
     comparison = document["price_comparison"]
     assert comparison["aligned_samples"] == 1
     assert comparison["samples"][0]["within_tick"] is None
     assert comparison["samples"][0]["undetermined_reason"] == "tick_size_unknown"
     assert comparison["match_rate"] == {"numerator": 0, "denominator": 0, "rate": None}
     assert any("最小報價單位" in item for item in document["conclusions"]["open_cases"])
+
+
+@pytest.mark.parametrize("asset_type,price,tick", [
+    ("stock", "9.99", "0.01"), ("stock", "10", "0.05"), ("stock", "49.95", "0.05"),
+    ("stock", "50", "0.1"), ("stock", "99.9", "0.1"), ("stock", "100", "0.5"),
+    ("stock", "499.5", "0.5"), ("stock", "500", "1"), ("stock", "999", "1"),
+    ("stock", "1000", "5"), ("stock", "1350", "5"),
+    ("etf", "49.99", "0.01"), ("etf", "50", "0.05"), ("etf", "220.15", "0.05"),
+])
+def test_taiwan_tick_table_boundaries_follow_the_official_brackets(asset_type, price, tick):
+    assert reporting.tick_size("TW", Decimal(price), asset_type) == Decimal(tick)
+
+
+def test_tick_size_rejects_unusable_inputs_instead_of_guessing():
+    assert reporting.tick_size("US", Decimal("198.00"), None) == Decimal("0.01")
+    assert reporting.tick_size("TW", Decimal("198.00"), "warrant") is None
+    assert reporting.tick_size("TW", None, "stock") is None
+    assert reporting.tick_size("TW", Decimal("0"), "stock") is None
 
 
 def test_valuation_recomputation_and_completeness_are_manually_checkable(report):

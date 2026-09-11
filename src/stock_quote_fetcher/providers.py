@@ -109,10 +109,12 @@ def normalize(instrument, provider, payload, received_at):
             raise ValueError('close_not_yet_available')
         # Official close has a trading date, not a timestamp of last transaction.
         quote = Quote(instrument.instrument_id,instrument.ticker,symbol,instrument.market,currency,provider,
-                      price,'close',None,received_at,day,Session.CLOSED,TimePrecision.DAY)
+                      price,'close',None,received_at,day,Session.CLOSED,TimePrecision.DAY,
+                      asset_type=instrument.asset_type)
         return assess(quote)
     quote = Quote(instrument.instrument_id,instrument.ticker,symbol,instrument.market,currency,provider,
-                  price,kind,stamp,received_at,None,session,precision,delay)
+                  price,kind,stamp,received_at,None,session,precision,delay,
+                  asset_type=instrument.asset_type)
     return assess(quote)
 
 

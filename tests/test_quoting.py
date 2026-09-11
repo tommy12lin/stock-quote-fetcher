@@ -81,6 +81,16 @@ def test_finnhub_unknown_delay_and_official_date_only():
     assert q.quote_time is None and q.time_precision == 'day'
 
 
+def test_quote_carries_the_official_asset_type_for_the_tick_table():
+    etf = Instrument('tw:twse:0050','0050','TW','TWD',{'yahoo':'0050.TW'},'TWSE','etf')
+    assert normalize(US,'yahoo',payload(),NOW).asset_type == 'stock'
+    assert normalize(US,'finnhub',{'c':'200.123','t':int(NOW.timestamp())},NOW).asset_type == 'stock'
+    assert normalize(TW,'twse',{'Code':'2330','ClosingPrice':'1234.50','Date':'1150908'},NOW).asset_type == 'stock'
+    assert normalize(etf,'yahoo',{**payload(etf),'quoteType':'ETF'},NOW).asset_type == 'etf'
+    with pytest.raises(ValueError):
+        replace(normalize(US,'yahoo',payload(),NOW),asset_type='warrant')
+
+
 def test_adapter_deadline_kills_worker(monkeypatch):
     def timeout(*a,**kw):
         assert kw['timeout'] == 0.5

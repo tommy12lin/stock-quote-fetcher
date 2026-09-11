@@ -135,10 +135,14 @@ class Quote:
     time_precision: TimePrecision
     declared_delay_seconds: int | None = None
     quality_flags: frozenset[QualityFlag] = field(default_factory=frozenset)
+    # Official security type of the instrument; drives the Taiwan tick-size table in reports.
+    asset_type: str | None = None
 
     def __post_init__(self) -> None:
         # Invalid Decimal prices can be retained as evidence, but never valued.
         require_decimal(self.price)
+        if self.asset_type not in (None, "stock", "etf"):
+            raise ValueError("Quote asset_type must be the official stock or etf category.")
         object.__setattr__(self, "market", Market(self.market))
         object.__setattr__(self, "price_kind", PriceKind(self.price_kind))
         object.__setattr__(self, "session", Session(self.session))

@@ -1,6 +1,6 @@
 # 架構與 Docker 部署設計
 
-版本：v0.5；日期：2026-09-08；狀態：步驟 0–8 完成；PostgreSQL、官方標的清單、quote、monitor、容器部署與 report 已通過，盤中連續觀測依步驟 9 執行。
+版本：v0.6；日期：2026-09-08；狀態：步驟 0–8 完成，步驟 9 觀測進行中；PostgreSQL、官方標的清單、quote、monitor、容器部署與 report 已通過，quotes 已保存官方商品類型（migration 0003）。
 
 ## 1. 架構
 
@@ -89,7 +89,7 @@ Adapter 接受一組 Instrument，回傳每個標的的 FetchResult，包含成�
 | holdings | run-id、ticker、市場、幣別、buy_price、quantity |
 | cycles | 預定時間、實際開始／完成、完成／中斷／跳過原因 |
 | fetch_attempts | run-id、cycle-id、來源、標的、嘗試序號、耗時、錯誤與回應識別 |
-| quotes | 來源、價格種類、價格、quote_time、received_at、品質與對應嘗試 |
+| quotes | 來源、價格種類、價格、quote_time、received_at、官方商品類型、品質與對應嘗試 |
 | valuations | cycle-id、選用 quote-id、市值、各幣別完整性 |
 
 目標 database `stock_quote_fetcher`、schema `app`、專用帳號 `stock_quote_app`；名稱來自建置約定，登入與權限尚待步驟 3 驗證。SQL 使用明確 schema 名稱與參數化查詢，應用不使用管理員帳號。
@@ -227,3 +227,11 @@ reporting 為純讀模組：storage 只新增唯讀的 read_schedule，無新 mi
 分母規則：一個抓取機會為（輪次、來源、標的），重試留在同一機會內；只有 response_evidence 記錄 executed 的操作進入首次與重試成功率分母。排程覆蓋率與時效分母來自 campaign 的 scheduled_cycles 左外接，缺紀錄的機會留在分母並重建為停機窗口；已被認領的機會不受時鐘影響一律視為到期。報告同時輸出含與排除預定維護窗口的統計。
 
 輸出寫入 `<output>/reports/<scope>-<id>/<產生時間>/`，每次新目錄，不覆寫既有報告。報告含持股代碼與股數，移交前需依驗收第 7 節處理。實測與界線見 [步驟 8 證據](step-8-evidence.md)。
+
+## 步驟 9 實作補充（2026-09-08）
+
+quotes 增加可空的 `asset_type`（migration `0003_quote_asset_type.sql`，CHECK 限 `stock`／`etf`），由標的清單解析出的 Instrument 於正規化時帶入，四個來源一致。可空是為了讓 0003 之前寫入的報價維持無類型狀態；報告對這些舊資料仍輸出 `tick_size_unknown`，不回填也不推測。
+
+reporting 依官方級距由 `asset_type` 決定台股最小報價單位：股票六級（未滿 10 元 0.01、10 至未滿 50 元 0.05、50 至未滿 100 元 0.1、100 至未滿 500 元 0.5、500 至未滿 1000 元 1、1000 元以上 5），ETF 兩級（未滿 50 元 0.01、50 元以上 0.05）；上櫃準用相同級距。美股維持每股 0.01 美元。比對樣本一併輸出 `asset_type` 與 `tick_size`。
+
+`instruments.max_age_hours` 於觀測設定改為 168：monitor 只在啟動時載入標的清單 generation，24 小時上限會讓跨日重啟因清單過期而無法啟動。campaign 開始前先執行一次 `instruments-refresh`，觀測期間不再更新清單。
