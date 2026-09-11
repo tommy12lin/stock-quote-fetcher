@@ -28,6 +28,8 @@ secrets/
 # Real holdings and generated data (only anonymous examples are tracked)
 *.csv
 !examples/*.csv
+*.xlsx
+!examples/*.xlsx
 input/*
 !input/holdings.example.csv
 data/
