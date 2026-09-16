@@ -15,7 +15,7 @@
 | `C1-5` 應用專用非管理角色 | ✅ 完成 | 角色 `finpo_app`；`app`／`dashboard` 兩 schema 皆通過 |
 | `C1-6` 入口認證 | ⬜ 未開始 | |
 | `C1-7` 簽章秘密與輪替方式 | ✅ 完成 | 兩組 secret 已建；輪替設計已定案（見下） |
-| `C1-8` 預算警示 | ⬜ 未開始 | |
+| `C1-8` 預算警示 | ✅ 完成 | 實填 TWD 300；取消 Credits 的 `Promotions and others`。通知送達未實測，見下 |
 | `C1-9` WIF 與 deploy SA | ⬜ 未開始 | 尚缺 `iamcredentials`／`sts` 兩個 API |
 
 ## C1-1　專案與 Billing
@@ -211,6 +211,33 @@ t2  更新 Cloud Run → S2                    恢復
 
 **已排定的首次輪替時機**：`D5` 定案真實持股待 `C7` 全數通過後才匯入。驗收期間秘密值會出現在多處操作紀錄中，因此**真實持股匯入前應執行一次輪替**。這是時間點已知的計畫內事件，不是假設情境。
 
+## C1-8　預算警示
+
+| 項目 | 值 |
+|---|---|
+| Budget 名稱 | `finpo-monthly` |
+| Scope | 僅 `finpo-508709`（非帳戶下全部專案） |
+| Time range | `Monthly` |
+| Services | `All services` |
+| Budget type | `Specified amount` |
+| Target amount | **TWD 300** |
+| Threshold rules | **50% 與 100%**，兩列皆 `Actual`；預設的 90% 一列已刪除 |
+| Credits — `Promotions and others` | **取消勾選** |
+| Credits — `Discounts` | 維持預設 |
+| 通知對象 | `Email alerts to billing admins and users`（本帳戶唯一 Billing Administrator 為專案擁有者本人） |
+
+**金額與 `D5` 的對應**：`D5` 定的上限為 $10，但 Billing 預算只接受帳戶幣別（`C1-1` 確認為 TWD），實填 300。以約 32 TWD/USD 計約當 $9.4，略低於 $10；偏差方向為**提早觸發**，不與 `D5` 衝突，不需調整。50% 門檻約當 $4.7，對應 `D5` 的 $5 警示門檻。
+
+**門檻以百分比而非絕對金額表示**：匯率變動時只需改 Target amount 一個數字，兩個門檻自動跟隨，不會出現兩個數字各自對應不同匯率的情況。
+
+**取消 `Promotions and others` 的理由（計畫書 `C1-8` 未提及此項）**：該選項預設為勾選，會把促銷額度（例如新帳號試用金）自成本中扣除，使預算在額度耗盡前看到的成本恆為 0。而 `D5` 明確定義本預算的用途是**異常偵測門檻**而非可動用預算——失控的抓價迴圈若燒掉的是試用金，正是最需要被通知的情況，卻會被靜默吸收。取消勾選後，預算追蹤的是未扣抵前的實際用量，符合 `D5` 原意。`Discounts` 維持預設，本專案無承諾使用折扣，勾選與否無差異。
+
+**`Forecasted` 未採用**：兩列 threshold 皆用 `Actual`。預測值在月初資料稀疏時波動大，對一個 `D5` 推估常態為 $0 的專案只會產生雜訊。
+
+**未實測：通知是否確實送達。** `C1` 完成條件寫「預算警示已建立且**可收到通知**」，但常態費用為 $0，不會有任何門檻被觸發，「能收到信」在此刻無法產生證據。本項僅能記為**已建立**，通知路徑的實際驗證併入 `C7-7` 的首月帳單檢視。
+
+**預算警示只通知、不停止計費**。超出後費用照樣產生，這正是 `C7-7` 仍須實際核對帳單的理由。
+
 ## 尚未取得的實測結果
 
 以下項目在 `C1` 完成前仍為未知，不得在任何文件中宣稱已驗證：
@@ -221,6 +248,7 @@ t2  更新 Cloud Run → S2                    恢復
 | Access 清空 Subdomain 後能否保護 `finpo.pages.dev` 正式部署 | `C1-6` | 不成立則 `D5` 的「不買網域」須推翻 |
 | GitHub Actions 能否以 WIF 推送映像 | `C1-9` | `C1` 完成條件之一 |
 | runtime SA 是否需要 `roles/logging.logWriter` 才輸出日誌 | `C6-2` | 未查證亦未授予。部署後若 Cloud Run 日誌為空，此為第一個檢查點；寧留待確認項，不憑印象預先多授角色 |
+| 預算警示的通知是否確實送達信箱 | `C1-8`／`C7-7` | 常態費用 $0，無法在此刻觸發任一門檻。不得宣稱「可收到通知」 |
 
 ## C1 完成條件對照
 
@@ -228,24 +256,24 @@ t2  更新 Cloud Run → S2                    恢復
 |---|---|
 | 以專用角色從本機連上 Supabase，`check_permissions()` 通過 | ✅ 已達成（`C1-5`；`app` 與 `dashboard` 兩 schema） |
 | 以 Google 帳號可通過 Access 登入測試頁 | ⬜ 未達成（`C1-6` 未開始） |
-| 預算警示已建立且可收到通知 | ⬜ 未達成（`C1-8` 未開始） |
+| 預算警示已建立且可收到通知 | 🟡 部分達成（`C1-8` 預算已建立；零花費下無法觸發門檻，通知送達併 `C7-7` 驗證） |
 | GitHub Actions 以 WIF 推送測試映像，全程無 service account 金鑰 | ⬜ 未達成（`C1-9` 未開始） |
 
 `C1` 尚未完成，不得開始 `C2`／`C5`。
 
 ## 下次接續
 
-已完成：`C1-1`、`C1-2`、`C1-3`、`C1-4`、`C1-5`、`C1-7`。剩餘：`C1-6`、`C1-8`、`C1-9`。
+已完成：`C1-1`、`C1-2`、`C1-3`、`C1-4`、`C1-5`、`C1-7`、`C1-8`。剩餘：`C1-6`、`C1-9`。
 
 **建議的下一步順序**：
 
 主控台操作以**英文介面**名稱記錄，與實際使用的介面一致。
 
-1. **`C1-8` 預算警示**（Billing → Budgets & alerts → CREATE BUDGET）
-   - `Scope` 只勾 `finpo-508709`，不要留「所有專案」。
-   - `Target amount` 以 **TWD 約 320** 填入（`C1-1` 已確認帳戶幣別為 TWD，`D5` 的 $10 上限須換算）。
-   - `Threshold rules` 用 **50% / 100% 百分比**，不要填兩個絕對金額，避免匯率變動時兩數字失去對應。
-   - 預算警示只通知、不停止計費，仍須於 `C7-7` 核對實際帳單。
+1. **`C1-6` 入口認證**（建議優先，內部順序不可顛倒）
+   - 排在 `C1-9` 之前的理由：這是 `C1` 剩餘兩項中**唯一可能推翻既有決策**者。若 Access 無法保護 `finpo.pages.dev` 正式部署，`D5` 的「不買網域」即須推翻；`C1-9` 則無此類不確定性，純屬設定量大。早一步知道結論，改動成本較低。
+   - Cloudflare Zero Trust 開通取得 team name → GCP 建 OAuth 2.0 Client（`Authorized redirect URI` 為 `https://<team>.cloudflareaccess.com/cdn-cgi/access/callback`）→ 回 Cloudflare 設 Google login method → 建佔位 Pages 專案 → 建 Self-hosted Access application。
+   - OAuth consent screen 為 **External**，**必須把自己加入 Test users 或直接 Publish app**，否則登入會被擋。
+   - Access application 的 **Subdomain 欄位要清空**（刪掉預設的 `*`），這是 `D5` 不買網域能否成立的關鍵，須實測。
 
 2. **`C1-9` WIF 與 deploy SA**
    - 先啟用 `iamcredentials.googleapis.com` 與 `sts.googleapis.com`。
@@ -255,10 +283,5 @@ t2  更新 Cloud Run → S2                    恢復
    - deploy SA `stock-quote-deploy`（與 runtime SA 分開），角色：**Artifact Registry Writer**、**Cloud Run Admin**、以及對 `stock-quote-runtime` 的 **Service Account User**。
    - 綁定主體：`principalSet://iam.googleapis.com/projects/896096883650/locations/global/workloadIdentityPools/github/attribute.repository/tommy12lin/stock-quote-fetcher`，角色 **Workload Identity User**。
    - **不得產生 service account 金鑰。**
-
-3. **`C1-6` 入口認證**（最後做，內部順序不可顛倒）
-   - Cloudflare Zero Trust 開通取得 team name → GCP 建 OAuth 2.0 Client（`Authorized redirect URI` 為 `https://<team>.cloudflareaccess.com/cdn-cgi/access/callback`）→ 回 Cloudflare 設 Google login method → 建佔位 Pages 專案 → 建 Self-hosted Access application。
-   - OAuth consent screen 為 **External**，**必須把自己加入 Test users 或直接 Publish app**，否則登入會被擋。
-   - Access application 的 **Subdomain 欄位要清空**（刪掉預設的 `*`），這是 `D5` 不買網域能否成立的關鍵，須實測。
 
 **待回填本檔的實測結果**：Cloudflare Zero Trust 是否要求綁卡、Access 能否保護 `finpo.pages.dev` 正式部署。
