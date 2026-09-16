@@ -10,9 +10,9 @@
 |---|---|---|
 | `C1-1` GCP project 與 Billing | ✅ 完成 | |
 | `C1-2` API 啟用與 Artifact Registry | ✅ 完成 | repository 命名與計畫書原建議不同，見下 |
-| `C1-3` runtime service account | ⬜ 未開始 | `C1-7` 兩組秘密已齊備，可開始 |
-| `C1-4` Supabase 專案 | ⬜ 未開始 | 需實測 Free plan 能否指定 `ap-northeast-1` |
-| `C1-5` 應用專用非管理角色 | ⬜ 未開始 | |
+| `C1-3` runtime service account | ✅ 完成 | 追加建立 `db-password`；授權在 secret 層而非 version 層，理由見下 |
+| `C1-4` Supabase 專案 | ✅ 完成 | Free plan 可指定 `ap-northeast-1`（東京），`D4` 成立 |
+| `C1-5` 應用專用非管理角色 | ✅ 完成 | 角色 `finpo_app`；`app`／`dashboard` 兩 schema 皆通過 |
 | `C1-6` 入口認證 | ⬜ 未開始 | |
 | `C1-7` 簽章秘密與輪替方式 | ✅ 完成 | 兩組 secret 已建；輪替設計已定案（見下） |
 | `C1-8` 預算警示 | ⬜ 未開始 | |
@@ -67,6 +67,93 @@ asia-northeast1-docker.pkg.dev/finpo-508709/finpo/stock-quote:<tag>
 ```
 
 `C6-1` 的 workflow 與 `C6-2` 的部署設定一律使用上述路徑。Artifact Registry 不支援 repository 改名，此決定為終局。
+
+## C1-3　runtime service account
+
+| 項目 | 值 |
+|---|---|
+| SA 名稱 | `stock-quote-runtime`（`@finpo-508709.iam.gserviceaccount.com`） |
+| 專案層級角色 | **無**。建立精靈第 2 段「Grant this service account access to project」整段跳過 |
+| secret 層授權 | `proxy-hmac-secret`、`proxy-hmac-secret-prev`、`db-password` 各一筆 `roles/secretmanager.secretAccessor` |
+
+**驗證**：以 `gcloud projects get-iam-policy finpo-508709 --flatten="bindings[].members" --filter="bindings.members:stock-quote-runtime"` 查詢，輸出為空，確認該 SA **未持有任何專案層級權限**；三個 secret 各以 `gcloud secrets get-iam-policy` 確認綁定存在。
+
+**為何必須指定 runtime SA**：Cloud Run 未指定 service account 時會改用預設的 Compute Engine SA，而該身分帶專案層級 `Editor`。服務被攻破或依賴被汙染時，影響範圍即整個 GCP 專案，而非單一服務。
+
+**授權層級與計畫書字面不同（secret 層，非 version 層）**：計畫書 `C1-3` 寫「只授予所需 secret version 的讀取權」，實際授在 secret 層。理由是 `C1-7` 的輪替程序以「新增版本」進行，且 `C6-2` 以 `latest` 參照；若權限綁在特定版本上，新增版本的瞬間 runtime 對新版本無權限，服務立即開始失敗——零中斷輪替的設計會被自己的權限設定破壞。secret 層授權的範圍仍僅限該 secret，未擴及其他資源。
+
+**追加 `db-password`（計畫書 `C1-3` 原無此項）**：`C6-2` 規定 `DB_PASSWORD` 由 Secret Manager 注入 Cloud Run，而 Cloud Run 掛載 secret 時該 secret 必須已存在，否則部署失敗。理由與 `C1-7` 先建兩組相同：部署設定不應在需要變更秘密的時刻一併變更。值為 `C1-5` 的 `finpo_app` 密碼。
+
+| Secret | 複製位置 | 用途 |
+|---|---|---|
+| `proxy-hmac-secret` | `asia-northeast1` | HMAC current |
+| `proxy-hmac-secret-prev` | `asia-northeast1` | HMAC previous |
+| `db-password` | `asia-northeast1` | Supabase `finpo_app` 密碼 |
+
+Secret Manager 免費額度為 6 個作用中版本，目前使用 3 個。
+
+## C1-4　Supabase 專案
+
+| 項目 | 值 |
+|---|---|
+| 區域 | `ap-northeast-1`（東京，AWS） |
+| Free plan 能否指定該區域 | **可以**；建立專案時於區域下拉直接選取，未被導向 general region |
+| 連線模式 | Session pooler（host 屬 `*.pooler.supabase.com`，port 5432） |
+| database | `postgres` |
+
+**`D4` 因此成立**：Cloud Run（`asia-northeast1`）與 Supabase（`ap-northeast-1`）同置東京，`C1-2` 已建立的 `finpo` Artifact Registry 不需重建。計畫書第 6 節「Supabase Free plan 能否指定 `ap-northeast-1`」一項解除。
+
+Session pooler 的 host、port 與使用者名稱不記錄於本檔（public repository），以 Supabase 主控台 Connect → Session pooler 取得。**不可改用 Transaction pooler**：兩者 host 相同、僅 port 不同（session 5432／transaction 6543），理由見 `C5-1`。
+
+## C1-5　應用專用非管理角色
+
+| 項目 | 值 |
+|---|---|
+| 角色名 | `finpo_app` |
+| 角色屬性 | `LOGIN`、`NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS` |
+| schema | `app`（來源，config.py 預設）與 `dashboard`（儀表板，dashboard.py:91 預設） |
+| schema 所有權 | 由 `postgres` 保留，未移轉給 `finpo_app` |
+| 授權 | database 層 `CONNECT`；兩個 schema 皆 `USAGE` ＋ `CREATE` |
+
+**驗證結果**：以 `finpo_app` 經 session pooler 從本機連線，`stock-poc db-check --connection-only` 於 `app`（設定檔預設）與 `dashboard`（以 `DB_SCHEMA` 覆寫）**兩個 schema 皆通過**，`check_permissions()`（storage.py:122）無異常。連線後 `current_user` 為 `finpo_app`：pooler 的登入名格式為 `<role>.<project-ref>`，但伺服器端身分是角色名本身，因此該函式對 `pg_roles` 的查詢成立。
+
+**兩個 schema 都建立的理由**：`catalog()`（dashboard.py:117）與 `valuation()`（dashboard.py:183）目前會回退查詢來源 schema。`C5-5` 若決定移除此 fallback，`app` 可一併撤除；在此之前兩者都必須存在。
+
+**所有權保留在 `postgres` 的理由**：`C5-2` 要求 runtime 最終只保留必要權限。若以 `CREATE SCHEMA ... AUTHORIZATION finpo_app` 讓角色自持所有權，日後無法撤除其 CREATE。
+
+**密碼**：與建立專案時產生的 `postgres` 管理員密碼為不同值，未共用。`C6-2` 將以 `DB_PASSWORD` 自 Secret Manager 注入 Cloud Run。
+
+### 附帶取得的 `C5-4` 與 `C5-1` 實測結果
+
+以 `finpo_app` 經 session pooler 自本機量測（2026-09-16）。兩項原本都排在 `C5`，因連線已可用而提前取得結論。
+
+#### `C5-4`：startup options 被 pooler 靜默忽略
+
+| 參數 | 不帶 options 的基準值 | 帶 options 連線後的實際值 | 程式期望 |
+|---|---|---|---|
+| `statement_timeout` | `2min` | `2min` | `10s` |
+| `lock_timeout` | `0`（無限） | `0`（無限） | `3s` |
+| `timezone` | `UTC` | `UTC` | `UTC` |
+
+兩欄完全相同，即 `Storage.__enter__`（storage.py:88）傳入的 `-c` 參數**完全沒有作用**。`timezone` 看似「符合期望」只是因為 Supabase 預設本來就是 UTC，不構成 options 生效的證據。
+
+**此問題在功能測試中不會顯現**：連線不被拒絕、查詢正常回應，程式自以為有 10 秒單句逾時與 3 秒鎖等待上限，實際上是 2 分鐘與無限等待。`D3` 已定案請求內同步完成，一次卡住的查詢即可吃掉整個 deadline，且失敗表徵會像是抓價緩慢而非資料庫問題。
+
+**本機開發環境不會重現。** 直連 PostgreSQL 時 startup options 正常生效，只有經過 Supavisor 才失效。
+
+`C5-4` 的處置因此確定：改為**連線建立後執行 `SET`**，並於 `SET` 後以 `SHOW` 核對實際值，不可只送出設定就視為成功。storage.py:91 已有連線後執行 `SET search_path` 的位置，為自然的實作點。
+
+#### `C5-1`：session 模式成立
+
+| 步驟 | 結果 | 期望 |
+|---|---|---|
+| 連線 A `pg_try_advisory_lock` | `True` | `True` |
+| A 另外執行數句 SQL 後，連線 B 取同一把鎖 | `False` | `False` |
+| A 釋放後 B 再取 | `True` | `True` |
+
+第二步是關鍵：A 取鎖後又執行了其他語句，B 仍取不到，證明 pooler 在 session 模式下維持同一條後端連線，session 層 advisory lock 不會中途失效。
+
+兩個下游推論：`C4-3`（以資料庫層原子認領取代行程內鎖）的前提成立；`C5-4` 改用連線後 `SET` 的做法可行——`SET` 同樣依賴連線的穩定性，若此測不過，該處置也不成立。
 
 ## C1-7　簽章秘密與輪替方式
 
@@ -130,17 +217,16 @@ t2  更新 Cloud Run → S2                    恢復
 
 | 項目 | 對應 | 影響 |
 |---|---|---|
-| Supabase Free plan 能否指定 `ap-northeast-1` | `C1-4` | 不成立則 `D4` 須整組改採新加坡，Artifact Registry 亦須在 `asia-southeast1` 重建 |
 | Cloudflare Zero Trust 開通是否要求綁定付款方式 | `C1-6` | 影響 `D5` 的預算前提敘述 |
 | Access 清空 Subdomain 後能否保護 `finpo.pages.dev` 正式部署 | `C1-6` | 不成立則 `D5` 的「不買網域」須推翻 |
-| runtime 角色能否通過 `check_permissions()` | `C1-5` | Supabase 預設 `postgres` 角色帶 `rolcreaterole`／`rolcreatedb`，必定觸發 `storage.py:122` 的拒絕 |
 | GitHub Actions 能否以 WIF 推送映像 | `C1-9` | `C1` 完成條件之一 |
+| runtime SA 是否需要 `roles/logging.logWriter` 才輸出日誌 | `C6-2` | 未查證亦未授予。部署後若 Cloud Run 日誌為空，此為第一個檢查點；寧留待確認項，不憑印象預先多授角色 |
 
 ## C1 完成條件對照
 
 | 完成條件 | 狀態 |
 |---|---|
-| 以專用角色從本機連上 Supabase，`check_permissions()` 通過 | ⬜ 未達成（`C1-4`／`C1-5` 未開始） |
+| 以專用角色從本機連上 Supabase，`check_permissions()` 通過 | ✅ 已達成（`C1-5`；`app` 與 `dashboard` 兩 schema） |
 | 以 Google 帳號可通過 Access 登入測試頁 | ⬜ 未達成（`C1-6` 未開始） |
 | 預算警示已建立且可收到通知 | ⬜ 未達成（`C1-8` 未開始） |
 | GitHub Actions 以 WIF 推送測試映像，全程無 service account 金鑰 | ⬜ 未達成（`C1-9` 未開始） |
@@ -149,36 +235,30 @@ t2  更新 Cloud Run → S2                    恢復
 
 ## 下次接續
 
-已完成：`C1-1`、`C1-2`、`C1-7`。
+已完成：`C1-1`、`C1-2`、`C1-3`、`C1-4`、`C1-5`、`C1-7`。剩餘：`C1-6`、`C1-8`、`C1-9`。
 
 **建議的下一步順序**：
 
-1. **`C1-3` runtime service account**（GCP Console）
-   - IAM 與管理 → 服務帳戶 → 建立 `stock-quote-runtime`。
-   - **第 2 步「授予專案存取權」整步跳過，不選任何角色。** 不指定 SA 時 Cloud Run 會改用帶 Editor 的預設 Compute SA，這正是本項要避免的。
-   - 授權方式：分別進入 Secret Manager 的 `proxy-hmac-secret` 與 `proxy-hmac-secret-prev`，在各自的「權限」分頁加入該 SA，角色為 Secret Manager 密鑰存取者。**兩組都要授，且不可從 IAM 頁面授予專案層級權限。**
-   - 驗證：`gcloud projects get-iam-policy finpo-508709 --format=json` 查不到該 SA 才正確；密鑰層級以 `gcloud secrets get-iam-policy <name>` 查。
+主控台操作以**英文介面**名稱記錄，與實際使用的介面一致。
 
-2. **`C1-8` 預算警示**（GCP Console → 帳單 → 預算與快訊）
-   - 範圍**只勾 `finpo-508709`**；金額以 **TWD 約 320** 填入；門檻用 **50%／100% 百分比**，不要填兩個絕對金額。
+1. **`C1-8` 預算警示**（Billing → Budgets & alerts → CREATE BUDGET）
+   - `Scope` 只勾 `finpo-508709`，不要留「所有專案」。
+   - `Target amount` 以 **TWD 約 320** 填入（`C1-1` 已確認帳戶幣別為 TWD，`D5` 的 $10 上限須換算）。
+   - `Threshold rules` 用 **50% / 100% 百分比**，不要填兩個絕對金額，避免匯率變動時兩數字失去對應。
+   - 預算警示只通知、不停止計費，仍須於 `C7-7` 核對實際帳單。
 
-3. **`C1-9` WIF 與 deploy SA**
+2. **`C1-9` WIF 與 deploy SA**
    - 先啟用 `iamcredentials.googleapis.com` 與 `sts.googleapis.com`。
-   - Workload Identity Pool `github` ＋ OIDC provider `github`，issuer `https://token.actions.githubusercontent.com`。
-   - 屬性對應 `google.subject = assertion.sub`、`attribute.repository = assertion.repository`。
-   - **屬性條件必填**：`assertion.repository == 'tommy12lin/stock-quote-fetcher'`。留空等同對外公開 GCP 寫入權。
-   - deploy SA `stock-quote-deploy`（與 runtime SA 分開），角色：Artifact Registry 寫入者、Cloud Run 管理員、以及對 `stock-quote-runtime` 的服務帳戶使用者。
-   - 綁定主體：`principalSet://iam.googleapis.com/projects/896096883650/locations/global/workloadIdentityPools/github/attribute.repository/tommy12lin/stock-quote-fetcher`，角色 Workload Identity 使用者。
+   - IAM & Admin → Workload Identity Federation：Pool `github` ＋ OIDC provider `github`，`Issuer (URL)` 為 `https://token.actions.githubusercontent.com`。
+   - Attribute mapping：`google.subject = assertion.sub`、`attribute.repository = assertion.repository`。
+   - **Attribute condition 必填**：`assertion.repository == 'tommy12lin/stock-quote-fetcher'`。留空等同對外公開 GCP 寫入權。
+   - deploy SA `stock-quote-deploy`（與 runtime SA 分開），角色：**Artifact Registry Writer**、**Cloud Run Admin**、以及對 `stock-quote-runtime` 的 **Service Account User**。
+   - 綁定主體：`principalSet://iam.googleapis.com/projects/896096883650/locations/global/workloadIdentityPools/github/attribute.repository/tommy12lin/stock-quote-fetcher`，角色 **Workload Identity User**。
    - **不得產生 service account 金鑰。**
 
-4. **`C1-4`／`C1-5` Supabase**（可與上述並行）
-   - 建立專案時**先確認 Free plan 的區域下拉能否選 `ap-northeast-1`（東京）**。不能選則依 `D4` 整組改採新加坡，Artifact Registry 亦須在 `asia-southeast1` 重建。
-   - Connect → **Session pooler**（不是 Transaction pooler，理由見 `C5-1`），逐欄抄 host／port／dbname，不自行拼 host。
-   - 以 SQL Editor 建立非管理角色（`NOSUPERUSER NOCREATEDB NOCREATEROLE`）與 schema，並授 CONNECT／USAGE／CREATE。pooler 連線的使用者名稱格式為 `<role>.<project-ref>`。
-
-5. **`C1-6` 入口認證**（最後做，內部順序不可顛倒）
-   - Cloudflare Zero Trust 開通取得 team name → GCP 建 OAuth Client（redirect URI 為 `https://<team>.cloudflareaccess.com/cdn-cgi/access/callback`）→ 回 Cloudflare 設 Google login method → 建佔位 Pages 專案 → 建 Access application。
-   - OAuth 同意畫面為 External，**必須把自己加入測試使用者或直接發布應用程式**，否則登入會被擋。
+3. **`C1-6` 入口認證**（最後做，內部順序不可顛倒）
+   - Cloudflare Zero Trust 開通取得 team name → GCP 建 OAuth 2.0 Client（`Authorized redirect URI` 為 `https://<team>.cloudflareaccess.com/cdn-cgi/access/callback`）→ 回 Cloudflare 設 Google login method → 建佔位 Pages 專案 → 建 Self-hosted Access application。
+   - OAuth consent screen 為 **External**，**必須把自己加入 Test users 或直接 Publish app**，否則登入會被擋。
    - Access application 的 **Subdomain 欄位要清空**（刪掉預設的 `*`），這是 `D5` 不買網域能否成立的關鍵，須實測。
 
-**待回填本檔的實測結果**：Supabase 東京區可否選擇、Cloudflare Zero Trust 是否要求綁卡、Access 能否保護 `finpo.pages.dev` 正式部署。
+**待回填本檔的實測結果**：Cloudflare Zero Trust 是否要求綁卡、Access 能否保護 `finpo.pages.dev` 正式部署。

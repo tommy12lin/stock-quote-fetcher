@@ -1,6 +1,6 @@
 # 雲端部署第一階段執行計畫
 
-日期：2026-09-16；狀態：`D1` 已全項定案（Cloudflare Access ＋ Google，服務間以 HMAC 簽章）、`D2` 已定案（Cloudflare Pages Functions 代理）、`D3` 已定案（請求內同步完成，時間上限待實測回填）、`D4` 已定案（Cloud Run 與 Supabase 同置東京）、`D5` 已定案（假持股先行、上限 $10、不買網域）、`D6` 已定案（GitHub Actions 建置推送，以 Workload Identity Federation 免金鑰認證）。`D1`–`D6` 全數定案，`C1` 進行中（`C1-1` 已完成）。
+日期：2026-09-16；狀態：`D1` 已全項定案（Cloudflare Access ＋ Google，服務間以 HMAC 簽章）、`D2` 已定案（Cloudflare Pages Functions 代理）、`D3` 已定案（請求內同步完成，時間上限待實測回填）、`D4` 已定案（Cloud Run 與 Supabase 同置東京）、`D5` 已定案（假持股先行、上限 $10、不買網域）、`D6` 已定案（GitHub Actions 建置推送，以 Workload Identity Federation 免金鑰認證）。`D1`–`D6` 全數定案，`C1` 進行中（`C1-1`–`C1-5`、`C1-7` 已完成；餘 `C1-6`、`C1-8`、`C1-9`）。
 
 本文件把 [雲端部署評估](cloud-deployment-assessment.md) 第一階段（Cloudflare 靜態前端＋Cloud Run Python API＋Supabase PostgreSQL）拆成可逐項確認與逐步交付的工作。評估文件負責「為什麼選這個架構」與成本、風險；本文件負責「要先決定什麼」與「按什麼順序做、做完怎麼算數」。
 
@@ -360,9 +360,9 @@ Dockerfile 三處 `company_ca` 掛載本來就是條件式（`if [ -f /run/secre
 - **執行項目**：
   - [ ] `C1-1` 新建 GCP project 與 Billing（目前帳號下無其他專案），區域一律使用 `D4` 定案的 `asia-northeast1`，確認部署身分權限。
   - [ ] `C1-2` 於 `asia-northeast1` 建立 Artifact Registry repository（與 Cloud Run 同區）；啟用 Cloud Run、Artifact Registry、Secret Manager，以及 `D6` 的 WIF 所需的 IAM Service Account Credentials（`iamcredentials`）與 Security Token Service（`sts`）。依 `D6` **不啟用 Cloud Build**。實際建立的 repository 名為 `finpo`（非 `stock-quote`），見 `docs/cloud-C1-evidence.md`。
-  - [ ] `C1-3` 建立 runtime service account，只授予所需 secret version 的讀取權；建置／部署身分另行管理，不共用。
-  - [ ] `C1-4` 於 `ap-northeast-1`（東京）建立 Supabase 專案；若 Free plan 無法指定該區域，依 `D4` **整組**改採新加坡並同步把 Cloud Run 移到 `asia-southeast1`。從 Connect 複製 **Session pooler** 的 host／port／dbname，不自行拼 host。
-  - [ ] `C1-5` 建立應用專用非管理角色。**不可使用 Supabase 預設的管理帳號**：`check_permissions()` 明確禁止 `rolsuper`／`rolcreatedb`／`rolcreaterole`（storage.py:122）。pooler 的角色名格式為 `[ROLE].[PROJECT-REF]`。
+  - [x] `C1-3` 建立 runtime service account，只授予所需 secret 的讀取權；建置／部署身分另行管理，不共用。實際為 `stock-quote-runtime`，無任何專案層級角色；授權層級改為 **secret 層而非 version 層**（version 層會使 `C1-7` 的輪替一新增版本即失效），並追加建立 `db-password`。理由見 `docs/cloud-C1-evidence.md`。
+  - [x] `C1-4` 於 `ap-northeast-1`（東京）建立 Supabase 專案；若 Free plan 無法指定該區域，依 `D4` **整組**改採新加坡並同步把 Cloud Run 移到 `asia-southeast1`。從 Connect 複製 **Session pooler** 的 host／port／dbname，不自行拼 host。實測結果：Free plan **可**指定 `ap-northeast-1`，`D4` 成立，見 `docs/cloud-C1-evidence.md`。
+  - [x] `C1-5` 建立應用專用非管理角色。**不可使用 Supabase 預設的管理帳號**：`check_permissions()` 明確禁止 `rolsuper`／`rolcreatedb`／`rolcreaterole`（storage.py:122）。pooler 的角色名格式為 `[ROLE].[PROJECT-REF]`。實際角色為 `finpo_app`，`app` 與 `dashboard` 兩 schema 皆通過 `db-check --connection-only`。
   - [ ] `C1-6` 依 `D1` 準備入口認證：建立 Google OAuth 2.0 Client、在 Cloudflare Zero Trust 設定 Google login method，並確認 Access 可涵蓋預定的前端網址（含 `pages.dev` 子網域是否適用）。
   - [ ] `C1-7` 產生代理與後端共用的簽章秘密，存入 Secret Manager 與 Cloudflare 環境變數，並記錄輪替方式。須建立 `proxy-hmac-secret`（current）與 `proxy-hmac-secret-prev`（previous）**兩組**，使輪替不必變更 Cloud Run 部署設定；理由與輪替程序見 `docs/cloud-C1-evidence.md`。
   - [ ] `C1-8` 依 `D5` 在 GCP Billing 建立預算：金額 $10，警示門檻 $5（50%）與 $10（100%）。Cloudflare 與 Supabase 的 Free plan 不會產生帳單，無需另設。**預算警示只會通知，不會停止計費**，因此仍須於 `C7-7` 實際核對帳單。
@@ -416,10 +416,10 @@ Dockerfile 三處 `company_ca` 掛載本來就是條件式（`if [ -f /run/secre
 - **目的**：把本機 PostgreSQL 的連線假設改成跨網際網路連線該有的樣子，並確認 pooler 能接受現有連線方式。這步的結論會回頭影響 `C4`（session 層鎖是否可用）。
 - **前置**：`C1`。
 - **執行項目**：
-  - [ ] `C5-1` 使用 **session pooler**。`Storage.acquire_lock()` 依賴 session 層 advisory lock（storage.py:135），transaction pooler 不適用；這是連線模式的決定性理由，不能只因為 Cloud Run 是 serverless 就選 transaction 模式。
+  - [x] `C5-1` 使用 **session pooler**。`Storage.acquire_lock()` 依賴 session 層 advisory lock（storage.py:135），transaction pooler 不適用；這是連線模式的決定性理由，不能只因為 Cloud Run 是 serverless 就選 transaction 模式。**已實測（2026-09-16）**：session pooler 下 A 取鎖後執行其他語句，B 仍取不到，釋放後 B 可取得，行為符合預期，`C4-3` 的前提成立。
   - [ ] `C5-2` 由管理者先建立 schema 並授權：`migrate()`（storage.py:159）只建表，**不負責 CREATE SCHEMA**。migration 帳號需要 CREATE，runtime 只保留必要權限。
   - [ ] `C5-3` 明確設定 TLS：`DatabaseConfig` 沒有 sslmode 欄位，`psycopg.connect()` 也未指定（config.py、storage.py:89），目前等同沿用 libpq 預設，不做主機憑證驗證。以 `PGSSLMODE`／`PGSSLROOTCERT` 注入，或新增明確設定欄位；優先驗證 `verify-full`。
-  - [ ] `C5-4` 實測 pooler 是否接受連線時帶的 startup options（storage.py:89 的 `timezone`／`statement_timeout`／`lock_timeout`）。不接受則改為連線建立後執行對應 `SET`，並重測逾時行為。
+  - [ ] `C5-4` **已量測（2026-09-16，見 `docs/cloud-C1-evidence.md`）**：session pooler 接受連線但**靜默忽略** startup options（storage.py:89 的 `timezone`／`statement_timeout`／`lock_timeout`），實際值為 `statement_timeout=2min`、`lock_timeout=0`。待實作：改為連線建立後執行對應 `SET`，`SET` 後以 `SHOW` 核對實際值，並重測逾時行為。**不可只送出 `SET` 就視為成功**，忽略是靜默的。
   - [ ] `C5-5` 處理雙 schema fallback：`catalog()`（dashboard.py:117）與 `valuation()`（dashboard.py:183）都會回退查詢舊 POC 的來源 schema。雲端不搬 POC 資料，建議移除此 fallback；若保留，兩個 schema 都必須初始化。另注意儀表板 `--schema` 不得與來源 `database.schema` 相同，現有程式會直接拒絕（dashboard.py 的 `Dashboard.__init__`）。
   - [ ] `C5-6` 訂定證據資料保存期與清理方式，並實測表與索引的實際容量，不只看報價筆數。
 - **完成條件**：以 runtime 角色完成一次連線、權限檢查、寫入與讀取，TLS 驗證通過，鎖行為與逾時符合預期。
@@ -431,7 +431,7 @@ Dockerfile 三處 `company_ca` 掛載本來就是條件式（`if [ -f /run/secre
 - **前置**：`C2`–`C5`、`D5`、`D6`。
 - **執行項目**：
   - [ ] `C6-1` 依 `D6` 以 GitHub Actions 建置 linux/amd64 並推送 Artifact Registry，沿用 lockfile 與非 root 設計；移除公司專用 `company_ca_file` 與 relaxed TLS 設定（config.example.toml 的 `[tls]`）。runner 不傳入 `company_ca` build secret，Dockerfile 的條件式掛載會自動跳過，不需改 Dockerfile。workflow 權限最小化：預設 `contents: read`，僅需換取 GCP 憑證的 job 才加 `id-token: write`。映像路徑固定為 `asia-northeast1-docker.pkg.dev/finpo-508709/finpo/stock-quote:<tag>`——repository 以專案命名、image 以服務命名，使同一財務系統的其他服務共用同一 repository；Artifact Registry 不支援 repository 改名，此路徑為終局。
-  - [ ] `C6-2` 部署設定：1 vCPU／1 GiB、min=0、max=1，concurrency 依 `D3` 設定（**不可為 1**，須容納更新期間並行的 job 輪詢），request timeout 依 `D3` 對齊；`DB_PASSWORD` 與必要 provider key 放 Secret Manager；簽章秘密以 `proxy-hmac-secret` 與 `proxy-hmac-secret-prev` 兩個環境變數掛載（皆參照 `latest`），兩組於 `C1-7` 已建立，因此輪替時不需變更部署設定；日誌輸出 stdout／stderr 並限制內容與保留量。
+  - [ ] `C6-2` 部署設定：1 vCPU／1 GiB、min=0、max=1，concurrency 依 `D3` 設定（**不可為 1**，須容納更新期間並行的 job 輪詢），request timeout 依 `D3` 對齊；`DB_PASSWORD` 與必要 provider key 放 Secret Manager（`db-password` 已於 `C1-3` 建立並授權給 `stock-quote-runtime`）；簽章秘密以 `proxy-hmac-secret` 與 `proxy-hmac-secret-prev` 兩個環境變數掛載（皆參照 `latest`），兩組於 `C1-7` 已建立，因此輪替時不需變更部署設定；日誌輸出 stdout／stderr 並限制內容與保留量。
   - [ ] `C6-3` 以一次性容器或 Cloud Run Job 執行 migration、`web --initialize`（web.py:126）與官方清單更新（`--refresh-catalog`，web.py:127），**不在每次 Web 啟動自動 migration**。
   - [ ] `C6-4` 記錄映像 digest、部署設定與 secret 版本，確認可回滾。digest 由 `D6` 的 workflow 輸出並留存於 run log，回滾即以該 digest 手動觸發重新部署。資料庫 migration 需向後相容：回滾映像不等於回滾資料庫。
 - **完成條件**：服務可由記錄的映像 digest 重新部署並啟動成功，初始化步驟可獨立重跑。
@@ -478,9 +478,9 @@ flowchart LR
 | 自動產生的 `_routes.json` 是否只涵蓋 `/api/*` | 未測；錯誤時只浪費 Workers 額度，不影響功能與費用 | `C7-2` |
 | Access 能否保護 `pages.dev` 子網域的正式部署 | 官方文件顯示可行且不需自訂網域（查證日 2026-09-15），但未實測；`D5` 已據此定案不買網域 | `C1-6`，最晚 `C7-3` |
 | Supabase Free 專案閒置 7 天被暫停 | 已知行為；每日更新不會觸發，驗收若中斷一週以上會誤判為程式故障 | `C7` 期間留意 |
-| pooler 是否接受 startup options | 未測 | `C5-4` |
+| ~~pooler 是否接受 startup options~~ | **已量測**：連線被接受但參數**靜默忽略**（實際為 `statement_timeout=2min`、`lock_timeout=0`）。處置已定：改為連線後 `SET` 並以 `SHOW` 核對。本機直連會生效，故此問題只在雲端出現 | `C5-4` 實作 |
 | 行情來源對 GCP 出口的接受度 | 未測；技術上可抓取不等同取得授權 | `C7-6`；公開展示前另需核對使用條款 |
-| Supabase Free plan 能否指定 `ap-northeast-1` | 未測；若被導向 general region（Singapore），`D4` 須整組改採新加坡組合 | `C1-4` |
+| ~~Supabase Free plan 能否指定 `ap-northeast-1`~~ | **已解決**：`C1-4` 實測可指定東京，`D4` 成立，Artifact Registry 不需重建 | — |
 | WIF provider 未綁定 repository 等同公開授予 GCP 寫入權 | `D6` 已列明必要條件，尚未實作 | `C1-9` |
 | public repository 的 workflow log 公開可見 | 已知行為；workflow 不得輸出秘密或資料庫連線資訊 | `C6-1` 撰寫 workflow 時 |
 | 亞洲區出口流量與映像儲存費用 | 未量測，可能產生小額費用；Supabase 在 AWS 上，Cloud Run 連線屬對外出口 | `C7-7` 後檢視首月帳單 |
