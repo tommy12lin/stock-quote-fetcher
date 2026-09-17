@@ -1,6 +1,6 @@
 # C1 執行紀錄：帳號與雲端資源準備
 
-日期：2026-09-16，`C1-6` 於 2026-09-17 補記，同日更正 consent screen 發布狀態（見下）。範圍：[雲端部署第一階段執行計畫](cloud-phase-1-plan.md) 的 `C1`。本檔只記錄**已實際執行並驗證**的結果；未執行的項目標為未完成，不預先宣稱通過。
+日期：2026-09-16，`C1-6` 與 `C1-9` 於 2026-09-17 補記，同日更正 consent screen 發布狀態與 runtime SA 名稱（見下）。範圍：[雲端部署第一階段執行計畫](cloud-phase-1-plan.md) 的 `C1`。本檔只記錄**已實際執行並驗證**的結果；未執行的項目標為未完成，不預先宣稱通過。
 
 **本檔不含任何秘密值。** 本 repository 為 public，因此秘密內容、資料庫密碼與完整 DSN 一律不進入本檔；僅記錄資源名稱、版本編號與設定。GCP 專案 ID 與專案編號屬識別碼而非憑證，且 `C6-1` 的 workflow 與映像路徑本來就會公開，故照實記錄。**個人電子郵件位址與 Billing 帳戶 ID 一律不記錄**：兩者對證據價值無幫助，卻會永久留在公開的 git 歷史中。
 
@@ -9,14 +9,14 @@
 | 項目 | 狀態 | 備註 |
 |---|---|---|
 | `C1-1` GCP project 與 Billing | ✅ 完成 | |
-| `C1-2` API 啟用與 Artifact Registry | 🟡 部分完成 | Artifact Registry 與三個 API 已就緒；WIF 所需的 `iamcredentials`／`sts` 併入 `C1-9` 啟用。repository 命名與計畫書原建議不同，見下 |
-| `C1-3` runtime service account | ✅ 完成 | 追加建立 `db-password`；授權在 secret 層而非 version 層，理由見下 |
+| `C1-2` API 啟用與 Artifact Registry | ✅ 完成 | Artifact Registry 與五個 API 已就緒（`iamcredentials`／`sts` 於 `C1-9` 補啟用）。repository 命名與計畫書原建議不同，見下 |
+| `C1-3` runtime service account | ✅ 完成 | SA 實名為 `finpo-runtime`（本檔原記為 `stock-quote-runtime`，2026-09-17 更正）；追加建立 `db-password`；授權在 secret 層而非 version 層，理由見下 |
 | `C1-4` Supabase 專案 | ✅ 完成 | Free plan 可指定 `ap-northeast-1`（東京），`D4` 成立 |
 | `C1-5` 應用專用非管理角色 | ✅ 完成 | 角色 `finpo_app`；`app`／`dashboard` 兩 schema 皆通過 |
 | `C1-6` 入口認證 | ✅ 完成 | team name `khlin`；Free 方案**要求綁卡**；載體改為 Worker，`D5` 不買網域成立 |
 | `C1-7` 簽章秘密與輪替方式 | ✅ 完成 | 兩組 secret 已建；輪替設計已定案（見下） |
 | `C1-8` 預算警示 | ✅ 完成 | 實填 TWD 300；取消 Credits 的 `Promotions and others`。通知送達未實測，見下 |
-| `C1-9` WIF 與 deploy SA | ⬜ 未開始 | 尚缺 `iamcredentials`／`sts` 兩個 API |
+| `C1-9` WIF 與 deploy SA | ✅ 完成 | Pool／provider／`finpo-deploy` 均已建立；GitHub Actions 實測推送成功，全程無金鑰 |
 
 ## C1-1　專案與 Billing
 
@@ -44,8 +44,10 @@
 | `run.googleapis.com` | Cloud Run |
 | `artifactregistry.googleapis.com` | 映像存放 |
 | `secretmanager.googleapis.com` | 簽章秘密 |
+| `iamcredentials.googleapis.com` | 以 federated token 換發 deploy SA 的短期憑證（`C1-9` 補啟用） |
+| `sts.googleapis.com` | GitHub OIDC token 與 Google federated token 的交換（`C1-9` 補啟用） |
 
-依 `D6`，**Cloud Build 維持未啟用**（映像由 GitHub Actions 建置）。`C1-9` 另需 `iamcredentials.googleapis.com` 與 `sts.googleapis.com`，尚未啟用。
+依 `D6`，**Cloud Build 維持未啟用**（映像由 GitHub Actions 建置）。後兩個 API 於 2026-09-17 執行 `C1-9` 時啟用。
 
 Repository（`gcloud artifacts repositories describe finpo --location=asia-northeast1`）：
 
@@ -72,11 +74,13 @@ asia-northeast1-docker.pkg.dev/finpo-508709/finpo/stock-quote:<tag>
 
 | 項目 | 值 |
 |---|---|
-| SA 名稱 | `stock-quote-runtime`（`@finpo-508709.iam.gserviceaccount.com`） |
+| SA 名稱 | `finpo-runtime`（`@finpo-508709.iam.gserviceaccount.com`） |
 | 專案層級角色 | **無**。建立精靈第 2 段「Grant this service account access to project」整段跳過 |
 | secret 層授權 | `proxy-hmac-secret`、`proxy-hmac-secret-prev`、`db-password` 各一筆 `roles/secretmanager.secretAccessor` |
 
-**驗證**：以 `gcloud projects get-iam-policy finpo-508709 --flatten="bindings[].members" --filter="bindings.members:stock-quote-runtime"` 查詢，輸出為空，確認該 SA **未持有任何專案層級權限**；三個 secret 各以 `gcloud secrets get-iam-policy` 確認綁定存在。
+**驗證**：以 `gcloud projects get-iam-policy finpo-508709 --flatten="bindings[].members" --filter="bindings.members:finpo-runtime"` 查詢，輸出為空，確認該 SA **未持有任何專案層級權限**；三個 secret 各以 `gcloud secrets get-iam-policy` 確認綁定存在。
+
+**本檔原將此 SA 記為 `stock-quote-runtime`，2026-09-17 更正為 `finpo-runtime`。** 實際資源自始即為 `finpo-runtime`（三個 secret 的 `secretAccessor` 綁定亦指向它），錯的是紀錄不是設定。計畫書 `C1-3`／`C6-2` 的同一錯名一併更正。此錯誤在 `C1-9` 要對該 SA 授予 `Service Account User` 時才暴露——指令回 `NOT_FOUND`。**記取的教訓與 consent screen 那次相同：資源名稱應自 `list` 輸出抄錄，不應憑命名慣例推寫。**
 
 **為何必須指定 runtime SA**：Cloud Run 未指定 service account 時會改用預設的 Compute Engine SA，而該身分帶專案層級 `Editor`。服務被攻破或依賴被汙染時，影響範圍即整個 GCP 專案，而非單一服務。
 
@@ -357,6 +361,126 @@ t2  更新 Cloud Run → S2                    恢復
 
 **預算警示只通知、不停止計費**。超出後費用照樣產生，這正是 `C7-7` 仍須實際核對帳單的理由。
 
+## C1-9　WIF 與 deploy SA
+
+日期：2026-09-17，全程以 `gcloud` 執行，操作帳號為專案 Owner。
+
+### 建立的資源
+
+| 項目 | 值 |
+|---|---|
+| Workload Identity Pool | `github`（`global`，`ACTIVE`） |
+| OIDC provider | `github`（`ACTIVE`） |
+| Issuer URI | `https://token.actions.githubusercontent.com` |
+| Attribute mapping | `google.subject=assertion.sub`、`attribute.repository=assertion.repository` |
+| **Attribute condition** | `assertion.repository == 'tommy12lin/stock-quote-fetcher'` |
+| deploy SA | `finpo-deploy`（`@finpo-508709.iam.gserviceaccount.com`） |
+| deploy SA 專案層角色 | `roles/artifactregistry.writer`、`roles/run.admin` |
+| deploy SA 對 runtime SA | `roles/iam.serviceAccountUser`，綁在 `finpo-runtime` **資源層**，非專案層 |
+| WIF 綁定 | `principalSet://iam.googleapis.com/projects/896096883650/locations/global/workloadIdentityPools/github/attribute.repository/tommy12lin/stock-quote-fetcher` → `roles/iam.workloadIdentityUser` |
+| service account 金鑰 | **0 個**（`keys list --managed-by=user` 輸出為空） |
+
+以 `get-iam-policy` 逐一核對：deploy SA 的 SA 層 policy **只有** `workloadIdentityUser` 一條；`finpo-runtime` 的專案層角色仍為空，未被本次操作污染。
+
+**deploy SA 命名（與計畫書原文不同）**：計畫書寫 `stock-quote-deploy`，實建為 `finpo-deploy`。理由是實際的 runtime SA 名為 `finpo-runtime`（見 `C1-3` 的更正），基礎設施層資源一律以**專案**命名（Artifact Registry repository 亦為 `finpo`），且 deploy SA 部署的是專案下的任何服務、本質上不綁單一服務。過程中曾先建出 `stock-quote-deploy`，發現與實況不一致後刪除重建，兩條專案 binding 一併重做，已確認無殘留（以 `stock-quote-deploy` 過濾專案 policy 輸出為空）。SA 不可改名，此決定為終局。
+
+**`roles/run.admin` 授在專案層的理由**：Cloud Run 服務要到 `C6-2` 才存在，首次部署時沒有可綁定的服務資源，只能授在專案層。相對地 `Service Account User` 刻意綁在 `finpo-runtime` 資源上——那是 deploy SA 唯一能冒用的身分，避免它能以專案內任何 SA 的身分部署服務。
+
+### 驗證：GitHub Actions 實測推送（run `35196067829`）
+
+驗證載具為一次性 workflow `.github/workflows/wif-test.yml`，**刻意推 `busybox` 而非本專案映像**：目的是讓失敗只可能來自身分鏈（OIDC → STS → SA → AR 寫入權），不與 Dockerfile 建置失敗混在一起。驗證後分支與測試映像皆已刪除。
+
+| 測項 | 結果 |
+|---|---|
+| `google-github-actions/auth@v2` 取得憑證 | ✅ 日誌顯示 `service_account: finpo-deploy@…`，全程無金鑰 |
+| `docker login -u oauth2accesstoken` | ✅ `Login Succeeded` |
+| 推送 `finpo/wif-test:run-1` | ✅ digest `sha256:92b1d1ca…f0f46e3` |
+| GCP 端獨立核對 | ✅ `gcloud artifacts docker images list` 可見該映像，repo 由 0 → 2.296 MB |
+| job 耗時 | 18 秒 |
+
+**觸發方式為分支 push，不是 `workflow_dispatch`。** `workflow_dispatch` 只在 workflow 檔**已存在於預設分支**時才可觸發（Actions 頁面不會顯示按鈕，API 同樣拒絕），因此無法用於「合併進 `main` 之前的驗證」；`pull_request` 則被 `D6` 排除。最後採 `on: push: branches: [wif-test]`——fork 推不動本 repo 的分支，觸發者必為具 write 權限者，且 `C1` 的驗證得以在不污染 `main` 的前提下完成。
+
+### 三項未驗證與留給 `C6-1` 的條件
+
+1. **attribute condition 的阻擋效力未做反面測試。** 本次為正向驗證。「別的 repository 換不到憑證」僅以設定查核確認（條件字串非空且內容正確），未由另一個 repo 實測——那需要第二個 repository 才能構成證據。**不得宣稱已驗證能擋下。**
+2. **provider 未限定 ref。** 條件只含 `assertion.repository`，因此本 repo 的**任何分支**都能換到 deploy SA 憑證（本次測試正是靠這個性質才能從 `wif-test` 分支通過）。正式部署若只該由 `main` 觸發，須於 `C6-1` 另加 `assertion.ref` 條件或在 workflow 層限制。
+3. **action 釘在可變的 `@v2` tag。** 帶 `id-token: write` 的 workflow 一旦用到被汙染的 action，等同交出 deploy SA 權限；`C6-1` 應改釘 commit SHA。另 runner 已警告 `google-github-actions/auth@v2` 仍以 Node 20 為目標、被強制跑在 Node 24 上。
+
+### 附錄：驗證用 workflow 全文
+
+本檔隨 `wif-test` 分支一併刪除，未進 `main`；保留全文供 `C6-1` 沿用 `auth` 段的參數。
+
+```yaml
+# C1-9 的驗證用 workflow：確認 GitHub Actions 能以 Workload Identity Federation
+# 取得 GCP 憑證並推送映像到 Artifact Registry，全程不使用 service account 金鑰。
+#
+# 這是一次性的驗證載具，不是建置管道：刻意推 busybox 而非本專案映像，
+# 目的是讓失敗只可能來自身分鏈（OIDC → STS → SA → AR 寫入權），
+# 不會與 Dockerfile 建置失敗混在一起。驗證通過後由 C6-1 的正式 workflow 取代，
+# 測試映像與本檔一併刪除。
+#
+# public repository 的兩個限制（見計畫書 D6）：
+#   1. 執行紀錄公開可見，因此本檔不得輸出任何秘密值。
+#   2. 觸發方式限本 repo 的 wif-test 分支 push（fork 推不動本 repo 的分支，
+#      因此觸發者必為具 write 權限者）；不得使用 pull_request 或 pull_request_target，
+#      也不得在 fork 的 PR 上授予 id-token: write。
+#
+# 已知範圍（留給 C6-1）：provider 的 attribute condition 只限定 repository、未限定 ref，
+# 因此任何分支都能換到 deploy SA 憑證。正式部署管道應另加 ref 限制。
+
+name: WIF test
+
+on:
+  push:
+    branches: [wif-test]  # 專用測試分支；檔案未進 main，故只能以 push 觸發
+  workflow_dispatch:      # 檔案若日後進了預設分支才會生效，先留著不影響
+
+permissions:
+  contents: read
+  id-token: write # 缺這一行，OIDC token 取不到，auth 步驟必失敗
+
+jobs:
+  push-test-image:
+    runs-on: ubuntu-latest
+    env:
+      REGISTRY: asia-northeast1-docker.pkg.dev
+      IMAGE: asia-northeast1-docker.pkg.dev/finpo-508709/finpo/wif-test
+
+    steps:
+      - id: auth
+        name: 以 WIF 取得 GCP 憑證（無金鑰）
+        uses: google-github-actions/auth@v2
+        with:
+          project_id: finpo-508709
+          workload_identity_provider: projects/896096883650/locations/global/workloadIdentityPools/github/providers/github
+          service_account: finpo-deploy@finpo-508709.iam.gserviceaccount.com
+          token_format: access_token
+
+      - name: 登入 Artifact Registry
+        env:
+          ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
+        run: |
+          echo "$ACCESS_TOKEN" | docker login -u oauth2accesstoken --password-stdin "https://$REGISTRY"
+
+      - name: 推送測試映像
+        run: |
+          set -euo pipefail
+          TAG="run-$GITHUB_RUN_NUMBER"
+          docker pull busybox:latest
+          docker tag busybox:latest "$IMAGE:$TAG"
+          docker push "$IMAGE:$TAG"
+          echo "pushed: $IMAGE:$TAG"
+          docker inspect --format='digest: {{index .RepoDigests 0}}' "$IMAGE:$TAG"
+```
+
+### 費用
+
+WIF pool／provider、service account 與 IAM 綁定**皆無價目 SKU**；GitHub Actions 對 public repository 免費且不限分鐘數；映像推送屬入站流量，GCP 不計費。測試映像 2.296 MB 遠低於 Artifact Registry 的 0.5 GB 免費額度，且已刪除。**本項增量費用為 0。**
+
+**觀測**：測試當日於 Billing 報表未見本次測試產生的新增費用。惟報表有延遲（通常數小時至一日），且測試映像於同日刪除，因此這不是「零費用」的最終證據，最終以 `C7-7` 的首月帳單核對。
+
+**附帶查明的既有費用來源**：Billing 報表上那筆極小額（不到 0.0002）的 SKU 為 **Artifact Registry**。用量在 0.5 GB 免費額度內，折抵後淨額應為 0，惟 credit 明細未逐筆核對。`C1-8` 取消 `Promotions and others` 後，預算追蹤的是折抵前的毛額，**免費額度內的用量因此會顯示為極小的非零數字**——這是該設定的預期副作用，不是異常。`C6` 起情況會變：Python 映像每個 tag 約 200–400 MB，累積數個 tag 即逼近 0.5 GB，超出後 $0.10／GB／月，因此 `C6-1` 應一併設 cleanup policy 只保留最近數個 tag。
+
 ## 尚未取得的實測結果
 
 以下項目在 `C1` 完成前仍為未知，不得在任何文件中宣稱已驗證：
@@ -366,7 +490,7 @@ t2  更新 Cloud Run → S2                    恢復
 | ~~Cloudflare Zero Trust 開通是否要求綁定付款方式~~ | `C1-6` | **已解決**：要求綁卡，月費 $0。`D5` 成本結論不變，理由見 `C1-6` |
 | ~~Access 能否保護免費子網域的正式部署~~ | `C1-6` | **已解決**：`workers.dev` 可保護，且 Worker-level Access 一併涵蓋 preview，`D5` 的「不買網域」成立 |
 | ~~OAuth consent screen 的發布狀態，及非白名單帳號的拒絕來源~~ | `C1-6` | **已解決**：由 Cloudflare Access 拒絕，policy 已驗證。consent screen 經直接查核為 `Testing`（推翻先前反推的 `In production`），該測試帳號在 Test users 內，不影響 policy 結論 |
-| GitHub Actions 能否以 WIF 推送映像 | `C1-9` | `C1` 完成條件之一 |
+| ~~GitHub Actions 能否以 WIF 推送映像~~ | `C1-9` | **已解決**：run `35196067829` 推送成功，全程無金鑰。惟 attribute condition 的阻擋效力未做反面測試，見 `C1-9` |
 | runtime SA 是否需要 `roles/logging.logWriter` 才輸出日誌 | `C6-2` | 未查證亦未授予。部署後若 Cloud Run 日誌為空，此為第一個檢查點；寧留待確認項，不憑印象預先多授角色 |
 | 預算警示的通知是否確實送達信箱 | `C1-8`／`C7-7` | 常態費用 $0，無法在此刻觸發任一門檻。不得宣稱「可收到通知」 |
 
@@ -377,27 +501,20 @@ t2  更新 Cloud Run → S2                    恢復
 | 以專用角色從本機連上 Supabase，`check_permissions()` 通過 | ✅ 已達成（`C1-5`；`app` 與 `dashboard` 兩 schema） |
 | 以 Google 帳號可通過 Access 登入測試頁 | ✅ 已達成（`C1-6`，含非白名單帳號遭 Access 拒絕的反面驗證） |
 | 預算警示已建立且可收到通知 | 🟡 部分達成（`C1-8` 預算已建立；零花費下無法觸發門檻，通知送達併 `C7-7` 驗證） |
-| GitHub Actions 以 WIF 推送測試映像，全程無 service account 金鑰 | ⬜ 未達成（`C1-9` 未開始） |
+| GitHub Actions 以 WIF 推送測試映像，全程無 service account 金鑰 | ✅ 已達成（`C1-9`，run `35196067829`） |
 
-`C1` 尚未完成，不得開始 `C2`／`C5`。
+四項完成條件中三項已達成；「預算警示可收到通知」在零花費下無法觸發任一門檻，已併入 `C7-7` 驗證，不構成阻擋。**`C1` 完成，`C2`／`C5` 可以開始。**
 
 ## 下次接續
 
-已完成：`C1-1`–`C1-8`（`C1-2` 除 `iamcredentials`／`sts` 兩個 API 外皆完成，該兩項併入 `C1-9`）。剩餘：**`C1-9`**。
+`C1` 已全部完成（`C1-1`–`C1-9`）。**下一步為 `C2`／`C5`**，兩者無先後相依。
 
-**從空白 session 接手時**：先讀 [cloud-phase-1-plan.md](cloud-phase-1-plan.md) 第 3 節的 `D1`–`D6`（決策與理由）與第 4 節的 `C1`／`C6`（`C1-9` 的完成條件與 `C6-1` 如何使用這些身分），再讀本檔的 `C1-6`、`C1-7` 兩節（入口認證現況與秘密輪替的設計約束）。GCP 專案為 `finpo-508709`（專案編號 `896096883650`），Cloudflare team name 為 `khlin`，前端為 Worker `finpo`（`finpo.drhiromu.workers.dev`）。
+**從空白 session 接手時**：先讀 [cloud-phase-1-plan.md](cloud-phase-1-plan.md) 第 3 節的 `D1`–`D6`（決策與理由），再依要動工的步驟讀該節。本檔中仍具約束力的三處：`C1-5` 附帶取得的 `C5-4`（pooler 靜默忽略 startup options，處置為連線後 `SET` 並以 `SHOW` 核對）、`C1-7`（驗簽函式必須接受一組秘密，這是 `C3-1` 的設計約束）、`C1-9`（WIF 的三項留待條件）。
 
-主控台操作以**英文介面**名稱記錄，與實際使用的介面一致。
+資源速查：GCP 專案 `finpo-508709`（專案編號 `896096883650`），runtime SA `finpo-runtime`、deploy SA `finpo-deploy`，Artifact Registry `asia-northeast1-docker.pkg.dev/finpo-508709/finpo`，Cloudflare team name `khlin`，前端為 Worker `finpo`（`finpo.drhiromu.workers.dev`）。主控台操作以**英文介面**名稱記錄，與實際使用的介面一致。
 
-1. **`C1-9` WIF 與 deploy SA**
-   - 先啟用 `iamcredentials.googleapis.com` 與 `sts.googleapis.com`。
-   - IAM & Admin → Workload Identity Federation：Pool `github` ＋ OIDC provider `github`，`Issuer (URL)` 為 `https://token.actions.githubusercontent.com`。
-   - Attribute mapping：`google.subject = assertion.sub`、`attribute.repository = assertion.repository`。
-   - **Attribute condition 必填**：`assertion.repository == 'tommy12lin/stock-quote-fetcher'`。留空等同對外公開 GCP 寫入權。
-   - deploy SA `stock-quote-deploy`（與 runtime SA 分開），角色：**Artifact Registry Writer**、**Cloud Run Admin**、以及對 `stock-quote-runtime` 的 **Service Account User**。
-   - 綁定主體：`principalSet://iam.googleapis.com/projects/896096883650/locations/global/workloadIdentityPools/github/attribute.repository/tommy12lin/stock-quote-fetcher`，角色 **Workload Identity User**。
-   - **不得產生 service account 金鑰。**
+**`C1` 之後的收尾（尚未執行）**
 
-**待回填本檔的實測結果**：GitHub Actions 能否以 WIF 推送測試映像（`C1-9`）。`C1-6` 已無待補項。
-
-**`C1` 之後的收尾**：`C1-6` 的佔位頁與 canary 標記字串於 `C7-1` 部署真正的靜態檔時取代；`C1-6` 自動產生的 policy 名稱 `email domain` 應改為 `owner-only`，避免名稱與實際規則不符而誤導日後判斷。
+1. `C1-6` 的佔位頁與 canary 標記字串，於 `C7-1` 部署真正的靜態檔時取代。
+2. `C1-6` 自動產生的 policy 名稱 `email domain` 應改為 `owner-only`，避免名稱與實際規則（逐一列舉的 `Emails`）不符而誤導日後判斷。
+3. `C1-9` 留給 `C6-1` 的三條：provider 加 `assertion.ref` 限制、action 改釘 commit SHA、Artifact Registry 設 cleanup policy。
