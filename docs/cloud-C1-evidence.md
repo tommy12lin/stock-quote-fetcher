@@ -1,6 +1,6 @@
 # C1 執行紀錄：帳號與雲端資源準備
 
-日期：2026-09-16，`C1-6` 於 2026-09-17 補記。範圍：[雲端部署第一階段執行計畫](cloud-phase-1-plan.md) 的 `C1`。本檔只記錄**已實際執行並驗證**的結果；未執行的項目標為未完成，不預先宣稱通過。
+日期：2026-09-16，`C1-6` 於 2026-09-17 補記，同日更正 consent screen 發布狀態（見下）。範圍：[雲端部署第一階段執行計畫](cloud-phase-1-plan.md) 的 `C1`。本檔只記錄**已實際執行並驗證**的結果；未執行的項目標為未完成，不預先宣稱通過。
 
 **本檔不含任何秘密值。** 本 repository 為 public，因此秘密內容、資料庫密碼與完整 DSN 一律不進入本檔；僅記錄資源名稱、版本編號與設定。GCP 專案 ID 與專案編號屬識別碼而非憑證，且 `C6-1` 的 workflow 與映像路徑本來就會公開，故照實記錄。**個人電子郵件位址與 Billing 帳戶 ID 一律不記錄**：兩者對證據價值無幫助，卻會永久留在公開的 git 歷史中。
 
@@ -218,24 +218,61 @@ Session pooler 的 host、port 與使用者名稱不記錄於本檔（public rep
 | 擋下的是誰 | 畫面 | 證明了什麼 |
 |---|---|---|
 | **Cloudflare Access**（實際發生） | Access 的拒絕頁 | **policy 的 email 白名單生效** |
-| Google | `Access blocked: ... has not completed the Google verification process` | 只證明 consent screen 仍在 Testing 且該帳號非 Test user；Access policy **完全沒被執行到**，反面測試等於白測 |
+| Google | `Access blocked: ... has not completed the Google verification process` | 只證明該帳號不在 Google 的 Test users 清單內（consent screen 確為 `Testing`）；Access policy **完全沒被執行到**，反面測試等於白測 |
 
 因此授權層確實由 Access policy 把關，而非借道 Google 的 Test users 清單。這兩者在使用者眼中都只是「進不來」，但只有前者是本專案要的性質——Test users 清單是 Google 的開發階段設施，不是授權機制。
 
-### 四個值得記下的坑
+### 五個值得記下的坑
 
 1. **policy 名稱與實際規則不一致。** 內建流程自動產生的 policy 名為 `email domain`，實際規則卻是逐一列舉的 `Emails`。名稱會誤導日後的判斷（看到「domain」以為可以放心加同網域的人，一改就開門），**應改名為 `owner-only`**。
 2. **內建 Access 流程的粒度不足。** Worker `Access` 分頁的簡化建立器只提供 `Cloudflare account` 與 `Email domain`，無法選 identity provider。官方文件載明進階設定須於建立後至 Zero Trust 編輯該 application。過渡期務必選 `Cloudflare account`（範圍＝帳號成員＝一人）；若選 `Email domain` 並填個人 Gmail 的網域，等同放行全世界所有 Gmail 使用者，而正向測試對此完全無感。
 3. **主控台導覽已改版。** Zero Trust 併入 `dash.cloudflare.com`（`one.dash.cloudflare.com` 轉跳），`Settings → Authentication → Login methods` 改為 **`Integrations → Identity providers`**，`Access` 改為 **`Access controls`**。
-4. **新版 `Create application` 預設建出 Worker 而非 Pages 專案。** 此即 `D2` 載體修訂的觸發點。誤建後的表徵是主機名為 `<worker>.<subdomain>.workers.dev` 而非 `<project>.pages.dev`，以 `curl -s` 測試舊主機名時錯誤被 `-s` 吞掉、只看到空輸出，容易誤判為「內容不對」。**驗證時應保留 curl 的錯誤輸出**（`-sS`），並先在套用 Access 前量一次基準線，確認標記字串取得 `1`，否則之後的「讀不到」無法區分是 Access 生效還是檔案根本沒部署成功。
+4. **Testing 模式是一道隱形的第二閘門。** consent screen 維持 `Testing`（見下節），因此**能通過 Google 那一關的帳號僅限 Test users 清單內者**。日後要放行第二個人時，只在 Access policy 加 email **不夠**，還須把對方加進 Google 的 Test users，否則他會在更前面被 Google 擋下。表徵是「白名單加了卻仍進不去」，極易誤判為 Access 設定問題。查核處為 Google Auth Platform → Audience → Test users。
+5. **新版 `Create application` 預設建出 Worker 而非 Pages 專案。** 此即 `D2` 載體修訂的觸發點。誤建後的表徵是主機名為 `<worker>.<subdomain>.workers.dev` 而非 `<project>.pages.dev`，以 `curl -s` 測試舊主機名時錯誤被 `-s` 吞掉、只看到空輸出，容易誤判為「內容不對」。**驗證時應保留 curl 的錯誤輸出**（`-sS`），並先在套用 Access 前量一次基準線，確認標記字串取得 `1`，否則之後的「讀不到」無法區分是 Access 生效還是檔案根本沒部署成功。
 
 ### Google OAuth consent screen 的發布狀態
 
-`Publish app` 一度被 Branding 頁的必填欄位擋下。Cloudflare Access 只需 `openid`／`email`／`profile` 三個非敏感 scope，不觸發 Google 的 verification 流程；Testing ＋ Test users 對單人 Access 亦為可用狀態，因 Access 在登入當下完成 OAuth 交換後即改發自己的 `CF_Authorization` cookie，不依賴 Google 的 refresh token 續命，Testing 模式的七天限制實質無影響。
+| 項目 | 值 |
+|---|---|
+| User type | `External`（個人 Gmail 非 Workspace，只有此選項） |
+| Publishing status | **`Testing`**，publish 已試過並**被擋下**，決定維持 Testing |
+| App name | `khlin-gcp`（帳號層通用命名，不綁專案，理由同 team name，見上） |
+| 查核方式 | Google Auth Platform → Audience，**直接查核**（2026-09-17） |
 
-**最終狀態為 `In production`（由行為反推）**：6c 的非白名單 Gmail 帳號**通過了 Google 那一關**、由 Cloudflare Access 擋下。Testing 模式下 Google 會以 Test users 清單攔截非清單帳號，該帳號不可能抵達 Access，故 consent screen 必為 `In production`。此為推論而非直接查核，於 Google Auth Platform → Audience 可一眼確認。
+Cloudflare Access 只需 `openid`／`email`／`profile` 三個非敏感 scope，不觸發 Google 的 verification 流程。
 
-發布不會放寬授權：publish 的意思是任何 Google 帳號都能走完 Google 那一關、證明自己是誰，**擋不擋得住由 Access policy 的 email 白名單決定**——這正是 6c 所驗證的。`D1` 把「人員身分」與「授權」分為兩層，此處即其落地。
+**本項曾記錯，於 2026-09-17 更正。** 原先寫「最終狀態為 `In production`」，係由「非白名單 Gmail 通過了 Google 那一關、由 Access 擋下」反推而來。該推論不成立：實際狀態為 `Testing`，而 6c 所用的測試帳號**本身即在 Test users 清單內**（已查核清單確認），因此在 Testing 模式下仍可通過 Google。**記取的教訓是：可由設定頁一眼確認的事實，不應以行為反推代替查核。**
+
+**更正不影響 6c 的結論。** 反面測試證明的是「帳號**通過 Google 那一關之後**，被 Access policy 的 email 白名單擋下」；它得以通過 Google 的原因是 `In production` 還是 Test users，與該結論無關。上方拒絕來源表要區分的是「擋下的是 Google 還是 Access」，實際擋下者為 Access，該區分成立。
+
+**維持 `Testing`。** 單人使用下 Testing 完全夠用，且其 Test users 限制方向為更緊而非更鬆。兩項代價：
+
+1. 七天 refresh token 限制——**實質無影響**。Access 在登入當下完成 OAuth 交換後即改發自己的 `CF_Authorization` cookie，不依賴 Google 的 refresh token 續命。
+2. Test users 成為隱形的第二閘門——見上方坑 4，日後放行第二人時必須同步維護兩份清單。
+
+無論 `Testing` 或 `In production`，Google 那一關都只回答「你是誰」，**擋不擋得住一律由 Access policy 的 email 白名單決定**。`D1` 把「人員身分」與「授權」分為兩層，此處即其落地。
+
+### 前瞻性試探：切換至 External production 被擋下（2026-09-17）
+
+**這不是 `C1` 的工作項，也不是 phase 1 的需求。** 計畫書第 2 節已記載本專案的長期目標為開放多人，本次刻意嘗試 publish，目的是及早得知 Google 端對「開放多人」有什麼前置要求，以便回頭修正 `D5`。結論已取得，因此停手，未繼續補填欄位。
+
+依上方指引先在 Branding 頁填妥 App name（`khlin-gcp`）、User support email 與 Developer contact information，**刻意留空 App logo 與三個 App domain URL**（留空的理由：上傳 logo 會強制觸發 Google verification；填入任一 URL 則其網域必須列入 Authorized domains）。隨後於 Audience 頁按 `Publish app`，遭擋下，原文如下：
+
+> Valid app name, support email, homepage url, and privacy policy url are required for switching the app to external production mode. You must enter the missing information to proceed. Please visit the Branding page to finish configuring your app.
+
+**結論：切換至 External production 需要 homepage URL 與 privacy policy URL**，兩者皆非免費欄位可打發。三層阻礙：
+
+| 層 | 內容 |
+|---|---|
+| 1. 網域擁有權 | URL 須掛在 Authorized domain 下，而 Authorized domain 須是**自有且已於 Google Search Console 驗證**的頂層網域。`workers.dev` 與 `cloudflareaccess.com` 皆非本帳號所有 |
+| 2. 公開可達性 | 隱私權政策頁必須公開可讀，但本 Worker 的 Access 為 Traffic scope `All traffic`（見上），**全站含該頁一律 302 導向登入**，Google 與使用者都讀不到 |
+| 3. 架構相容性 | 要為單一路徑開例外，須退回 hostname-based Access，而那正是 `D2` 捨棄 Pages 路線的理由。為一個靜態頁放棄「一個開關全包」的性質不划算 |
+
+第 2 層是關鍵：**隱私權政策不能放在這個受 Access 保護的 Worker 上**，必須另找公開載體。
+
+**因此停手，不補填。** 三個理由：phase 1 不需要 production 模式；補填需買網域（約 $10／年）或另接一個平台，phase 1 得不到對應價值；且開放多人時要處理的是他人的持股資料，該份隱私權政策是**實質義務**而非解鎖按鈕用的格式文件，現在貼一頁佔位文字反而會讓日後忘記回頭認真寫。
+
+**回填 `D5`**：計畫書 `D5` 的「第一階段不買網域」不受影響（phase 1 用不到 production 模式），但新增一條已知條件——**開放多人時必須先有自有網域**。詳見計畫書 `D5`。
 
 ## C1-7　簽章秘密與輪替方式
 
@@ -328,7 +365,7 @@ t2  更新 Cloud Run → S2                    恢復
 |---|---|---|
 | ~~Cloudflare Zero Trust 開通是否要求綁定付款方式~~ | `C1-6` | **已解決**：要求綁卡，月費 $0。`D5` 成本結論不變，理由見 `C1-6` |
 | ~~Access 能否保護免費子網域的正式部署~~ | `C1-6` | **已解決**：`workers.dev` 可保護，且 Worker-level Access 一併涵蓋 preview，`D5` 的「不買網域」成立 |
-| ~~OAuth consent screen 的發布狀態，及非白名單帳號的拒絕來源~~ | `C1-6` | **已解決**：由 Cloudflare Access 拒絕，policy 已驗證；consent screen 據此反推為 `In production` |
+| ~~OAuth consent screen 的發布狀態，及非白名單帳號的拒絕來源~~ | `C1-6` | **已解決**：由 Cloudflare Access 拒絕，policy 已驗證。consent screen 經直接查核為 `Testing`（推翻先前反推的 `In production`），該測試帳號在 Test users 內，不影響 policy 結論 |
 | GitHub Actions 能否以 WIF 推送映像 | `C1-9` | `C1` 完成條件之一 |
 | runtime SA 是否需要 `roles/logging.logWriter` 才輸出日誌 | `C6-2` | 未查證亦未授予。部署後若 Cloud Run 日誌為空，此為第一個檢查點；寧留待確認項，不憑印象預先多授角色 |
 | 預算警示的通知是否確實送達信箱 | `C1-8`／`C7-7` | 常態費用 $0，無法在此刻觸發任一門檻。不得宣稱「可收到通知」 |
