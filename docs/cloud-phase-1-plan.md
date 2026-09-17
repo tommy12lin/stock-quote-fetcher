@@ -1,6 +1,6 @@
 # 雲端部署第一階段執行計畫
 
-日期：2026-09-16；狀態：`D1` 已全項定案（Cloudflare Access ＋ Google，服務間以 HMAC 簽章）、`D2` 已定案（Cloudflare Pages Functions 代理）、`D3` 已定案（請求內同步完成，時間上限待實測回填）、`D4` 已定案（Cloud Run 與 Supabase 同置東京）、`D5` 已定案（假持股先行、上限 $10、不買網域）、`D6` 已定案（GitHub Actions 建置推送，以 Workload Identity Federation 免金鑰認證）。`D1`–`D6` 全數定案，`C1` 進行中（`C1-1`、`C1-3`–`C1-5`、`C1-7`、`C1-8` 已完成，`C1-2` 尚差 WIF 所需的兩個 API；餘 `C1-6`、`C1-9`）。
+日期：2026-09-17；狀態：`D1` 已全項定案（Cloudflare Access ＋ Google，服務間以 HMAC 簽章）、`D2` 已定案（**Cloudflare Workers static assets**，單一 Worker 同時承載靜態檔與 `/api/` 代理；2026-09-17 由原訂的 Pages Functions 改採，理由見 `D2`）、`D3` 已定案（請求內同步完成，時間上限待實測回填）、`D4` 已定案（Cloud Run 與 Supabase 同置東京）、`D5` 已定案（假持股先行、上限 $10、不買網域）、`D6` 已定案（GitHub Actions 建置推送，以 Workload Identity Federation 免金鑰認證）。`D1`–`D6` 全數定案，`C1` 進行中（`C1-1`–`C1-8` 已完成，其中 `C1-2` 尚差 WIF 所需的兩個 API；餘 `C1-9`）。
 
 本文件把 [雲端部署評估](cloud-deployment-assessment.md) 第一階段（Cloudflare 靜態前端＋Cloud Run Python API＋Supabase PostgreSQL）拆成可逐項確認與逐步交付的工作。評估文件負責「為什麼選這個架構」與成本、風險；本文件負責「要先決定什麼」與「按什麼順序做、做完怎麼算數」。
 
@@ -35,7 +35,7 @@
 
 - **決定（2026-09-15）**：
   - 人員身分：採**選項 1 — Cloudflare Access，以 Google 作為 identity provider**。前端不實作任何登入程式碼。
-  - 服務間信任：採 **HMAC 共享秘密簽章**，由 Pages Function 產生、Cloud Run 以標準庫驗證。未採 Access Service Token（無 body 綁定與防重放）與驗 Access JWT（需新增 JWT 與加密依賴，與維持 5 個直接依賴的鎖定狀態衝突）。
+  - 服務間信任：採 **HMAC 共享秘密簽章**，由邊緣 Worker 產生、Cloud Run 以標準庫驗證。未採 Access Service Token（無 body 綁定與防重放）與驗 Access JWT（需新增 JWT 與加密依賴，與維持 5 個直接依賴的鎖定狀態衝突）。
 - **目的**：現行程式沒有使用者認證。`/api/session` 對任何連得到服務的人直接發 token（web.py:72），token 只用來擋跨站寫入，不是身分驗證；GET 完全沒有驗證。放上公網前必須先有真正的入口。
 - **前提**：靜態前端不能持有任何秘密。進得了瀏覽器的值（JS 檔、注入的環境變數、API 回應）使用者都看得到，因此**簽章不可能在瀏覽器端產生**。簽章必須由伺服器端元件加上，這是選項 1 與 `D2` 選項 1（Cloudflare 代理）必須綁在一起的原因。
 
@@ -55,7 +55,7 @@
 Cloudflare Access ── 未登入 → 導向 Cloudflare 登入頁 → Google OAuth
    │  通過後轉發請求，並附上 Cf-Access-Jwt-Assertion
    ▼
-Pages Function（伺服器端執行，秘密存於環境變數／Secret binding）
+Worker（伺服器端執行，秘密存於 Secret binding）
    │  加上 X-Timestamp 與 X-Signature = HMAC(secret, ts|method|path|sha256(body))
    ▼  HTTPS
 Cloud Run：驗簽；失敗一律 401，且不信任任何可偽造的標頭
@@ -88,7 +88,7 @@ Cloud Run：驗簽；失敗一律 401，且不信任任何可偽造的標頭
 
 | 角色 | 是什麼 | 誰持有 |
 |---|---|---|
-| Cloudflare 帳號 | 設定 Pages 與 Zero Trust 的管理帳號 | 只有開發者 |
+| Cloudflare 帳號 | 設定 Workers 與 Zero Trust 的管理帳號 | 只有開發者 |
 | Zero Trust team domain | `https://<team-name>.cloudflareaccess.com`，驗證關卡 | 開發者設定，訪客僅被導向 |
 | Google 帳號 | 真正證明身分的憑據 | 訪客本人 |
 
@@ -98,7 +98,7 @@ Cloud Run：驗簽；失敗一律 401，且不信任任何可偽造的標頭
   1. Cloudflare Access（Zero Trust Free，50 人以內）保護前端與 `/api/` 路由，Cloud Run 端另外驗證請求確實來自自己的 Cloudflare 專案。**前端不需實作任何登入程式碼。**
   2. Cloud Run 設為需要 IAM 驗證，本機以 `gcloud run services proxy` 存取。安全性最高，但前端失去「從瀏覽器直接開網址使用」的意義，與 Cloudflare 託管前端的決策衝突。
   3. 自建帳密登入與簽章 cookie。需自行處理密碼保存、重設與鎖定，是本階段最不划算的自建項目。
-- **建議（已採納為決定）**：選項 1。人員身分交給 Access，以 Google 作為 identity provider；Cloudflare 與 Cloud Run 之間用共享秘密做 HMAC 簽章（時間戳＋方法＋路徑＋body digest），**由 Pages Function 產生、不經過瀏覽器**，後端驗簽以阻擋直接呼叫 `run.app` 繞過。以標準庫 `hmac`／`hashlib` 即可完成，不需新增 JWT 與加密依賴，維持目前 5 個直接依賴的鎖定狀態（pyproject.toml）。
+- **建議（已採納為決定）**：選項 1。人員身分交給 Access，以 Google 作為 identity provider；Cloudflare 與 Cloud Run 之間用共享秘密做 HMAC 簽章（時間戳＋方法＋路徑＋body digest），**由邊緣 Worker 產生、不經過瀏覽器**，後端驗簽以阻擋直接呼叫 `run.app` 繞過。以標準庫 `hmac`／`hashlib` 即可完成，不需新增 JWT 與加密依賴，維持目前 5 個直接依賴的鎖定狀態（pyproject.toml）。
 
 **Google 登入的具體設定**（選項 1 的落地步驟，全部在主控台完成，無程式碼）：
 
@@ -121,51 +121,74 @@ Cloud Run：驗簽；失敗一律 401，且不信任任何可偽造的標頭
   - Access **Service Token**：Cloudflare 官方機制，輪替在 Zero Trust 介面操作，實作最少；但秘密會在每次請求上線路，且無 body 綁定與時間窗。
   - 後端驗 `Cf-Access-Jwt-Assertion`：用 Cloudflare 公開 JWKS 驗簽並檢查 `aud`，沒有共享秘密要保管或輪替，安全性最乾淨；但需新增 JWT 驗證依賴並處理 JWKS 快取。若未來依賴政策放寬，這是優先的升級方向。
 - **需一併確認**：
-  - Cloudflare Access 能否直接保護 `pages.dev` 子網域的正式部署，或必須綁自訂網域。官方文件顯示**可行且不需自訂網域**（Zero Trust 的 Pages 應用中移除 Subdomain 的萬用字元 `*` 即涵蓋正式部署，查證日 2026-09-15），但**尚未實測**。`D5` 已據此定案不買網域，因此 `C1-6` 必須實測確認；不成立則回頭調整 `D5`。
+  - Cloudflare Access 能否直接保護 `workers.dev` 子網域，或必須綁自訂網域。官方文件把 `workers.dev` 與 Custom Domain 並列為 hostname-based Access 的同等選項，且另有 **Worker-level Access**（2026-08 推出）可一次涵蓋該 Worker 的所有 hostname，含 routes、Custom Domains、`workers.dev` 與 preview URL；**均不以擁有自訂網域為前提**（查證日 2026-09-17）。`D5` 已據此定案不買網域。**`C1-6` 已實測確認成立**（2026-09-17，見 `docs/cloud-C1-evidence.md`）。
   - 共享秘密的輪替方式：需支援「後端同時接受新舊兩把秘密」的過渡期，否則輪替必然造成中斷。後端讀取秘密的方式（環境變數或啟動時拉 Secret Manager）與輪替時是否需重新部署，一併於 `C1-7` 決定。
   - Access session 過期後，頁面上的 `fetch()` 會收到往 `cloudflareaccess.com` 的跨網域轉址而失敗（不是乾淨的 401）。前端需偵測此情況並整頁重新載入以觸發登入流程，見 `C3-3`。
 - **影響範圍**：`C3` 全部、`C1-6`、`C2-2`、`C7-3`、`D5`（自訂網域）。
 
 ### D2　API 路由：瀏覽器直連或 Cloudflare 代理（已定案）
 
-- **決定（2026-09-15）**：採**選項 1 — Cloudflare Pages Functions 代理 `/api/` 路由**。前端維持相對路徑呼叫，`D1` 的 HMAC 簽章在 Function 端加上。
+- **決定（2026-09-15；載體於 2026-09-17 修訂）**：採**選項 1 — 在 Cloudflare 邊緣代理 `/api/` 路由**。前端維持相對路徑呼叫，`D1` 的 HMAC 簽章在邊緣端加上。**載體採 Workers static assets**：單一 Worker 同時承載三個靜態檔與 `/api/*` 代理，不使用 Pages。
 - **目的**：決定前端要不要改，以及安全標頭與跨來源規則由誰負責。
 - **選項**：
-  1. **Cloudflare Pages Functions 代理 `/api/` 路由**：前端維持相對路徑呼叫（static/app.js:13-14），`connect-src 'self'` 的 CSP 仍成立，不必處理跨來源與憑證；代價是代理屬動態執行，計入 Workers 額度，且多一層逾時要對齊。
+  1. **在 Cloudflare 邊緣代理 `/api/` 路由**：前端維持相對路徑呼叫（static/app.js:13-14），`connect-src 'self'` 的 CSP 仍成立，不必處理跨來源與憑證；代價是代理屬動態執行，計入 Workers 額度，且多一層逾時要對齊。
   2. **瀏覽器直連 Cloud Run**：前端要集中設定 API base URL，後端要處理 OPTIONS、Origin 白名單、允許的方法與標頭；CSP 的 `connect-src` 也要改。
 - **建議（已採納為決定）**：選項 1。前端改動最小，且與 `D1` 的簽章方案天然相容（簽章在代理端加上，秘密不會進瀏覽器）。
 
-**機制說明**（避免把 `_routes.json` 誤認為轉發規則）：Pages Functions 不是平台提供的轉發設定，而是與靜態站共用網域、一起部署的一支 Worker，由**檔案路徑對應網址路徑**決定誰處理哪個請求。
+**載體的修訂（2026-09-17）**：原訂 Pages Functions，改採 Workers static assets。**決策本體未變**——在邊緣代理 `/api/`、前端維持相對路徑、簽章在伺服器端加上，三項都成立；變的只是哪個產品承載它。
+
+觸發點是 `C1-6` 執行時，新版主控台的 `Create application` 預設建出的是 Worker 而非 Pages 專案。查證後判定改採較有利，理由三項：
+
+| 面向 | Pages Functions（原訂） | Workers static assets（採用） |
+|---|---|---|
+| preview 網址的保護 | 需**兩個** Access application（`<project>.pages.dev` 與 `*.<project>.pages.dev`），且自動建立的 policy 預設與手建者不一致，須手動對齊 | **Worker-level Access 一個開關**涵蓋 routes、Custom Domains、workers.dev 與 preview |
+| 額度衛生 | 手寫並驗證 `_routes.json`，原列為待驗風險項 | `run_worker_first` 指定 `/api/*`，其餘走靜態檔；無 `_routes.json` |
+| 部署單元（`C6-1`） | Pages 專案，與 Worker 分屬兩種產品設定 | 單一 Worker ＋ 一份 wrangler 設定 |
+| 平台方向 | 新功能已停滯 | Cloudflare 現行主推，新版主控台預設 |
+| HMAC（WebCrypto）／10ms CPU 上限 | 相同 | 相同 |
+
+第一項是改採的主因：preview 網址（`<hash>.<project>.pages.dev`）同樣託管一份完整前端且公開可讀，漏保護等同正門上鎖、側門大開。Pages 路線要靠人記得建第二個 application 並對齊 policy 才安全，Workers 路線是一個開關全包——**把安全性從「記得做」變成「預設如此」**。
+
+已付出的代價：網址由 `<project>.pages.dev` 變為 `<worker>.<subdomain>.workers.dev`（較長，且 `subdomain` 為帳號層設定），並須改寫本節、`C7-1`、`C7-2` 與第 6 節風險表。
+
+**機制說明**：Worker 與靜態檔是**同一個部署單元**。`assets` 把一個目錄掛成靜態資產，`run_worker_first` 指定哪些路徑要先交給 Worker 程式碼，其餘由邊緣直接供應靜態檔。
 
 | 名詞 | 是什麼 | 計費 |
 |---|---|---|
-| Pages | 靜態檔託管 | 請求無限、免費 |
+| Static assets | 掛在 Worker 上的靜態檔目錄 | 請求免費，不計 Workers 額度 |
 | Worker | 跑在 Cloudflare 邊緣、收 request 回 Response 的 JS 函式 | 每次執行計 1 次請求 |
-| Pages Functions | **即 Worker**，只是打包在 Pages 專案的 `functions/` 目錄內、共用網域 | 與 Worker 共用同一個額度 |
+| `run_worker_first` | 路徑樣式陣列，決定哪些請求要啟動 Worker | 決定上面兩列如何分流 |
 
 ```
-Pages 專案/
-├── index.html / app.js / style.css     ← 靜態檔
-├── functions/api/[[path]].js           ← 代理程式碼，接管 /api/* 並 fetch 到 Cloud Run
-└── _routes.json                        ← 決定「哪些請求要啟動 Worker」
+專案/
+├── static/index.html · app.js · style.css   ← assets.directory
+├── worker/index.js                          ← 接管 /api/*，加簽章後 fetch 到 Cloud Run
+└── wrangler.jsonc                           ← assets 與 run_worker_first 設定
+```
+
+```jsonc
+{
+  "name": "finpo",
+  "main": "./worker/index.js",
+  "assets": {
+    "directory": "./static/",
+    "binding": "ASSETS",
+    "run_worker_first": ["/api/*"]
+  }
+}
 ```
 
 ```
 瀏覽器 GET /api/portfolio
    ▼ Cloudflare 邊緣
    ▼ Access 驗 CF_Authorization（擋在此處不計任何額度）
-   ▼ _routes.json：這個路徑要不要啟動 Worker？
-      ├─ 不要 → 直接吐靜態檔，免費、無限
-      └─ 要   → 啟動 Worker（計 1 次請求）
-                  ▼ 檔案路由挑出 functions/api/[[path]].js
-                  ▼ 程式碼加簽章後 fetch 到 Cloud Run
+   ▼ run_worker_first 是否命中？
+      ├─ 否（/app.js 等） → 直接吐靜態檔，免費、不計額度
+      └─ 是（/api/*）     → 啟動 Worker（計 1 次請求）
+                              ▼ 程式碼加簽章後 fetch 到 Cloud Run
 ```
 
-**`_routes.json` 的作用是計費閘門，不是轉發規則**。有 `functions/` 目錄時 Pages CI／Wrangler 會自動產生一份，預設等同 `include: ["/*"]`，代表每個請求都先啟動 Worker；`/app.js` 這類沒有對應 Function 的路徑仍會正確落回靜態檔，只是白白計一次呼叫。`C7-2` 須手寫並於部署後以實際請求核對：
-
-```json
-{ "version": 1, "include": ["/api/*"], "exclude": [] }
-```
+`run_worker_first` 取代了原訂方案的 `_routes.json`。兩者解決同一個問題——哪些請求要啟動 Worker——差別在失敗模式：`_routes.json` 由 Pages CI 自動產生、預設等同 `include: ["/*"]`，不手動覆寫就會每個請求都啟動 Worker 而白白計額度，因此原本必須列為待驗項；`run_worker_first` 是明寫在 wrangler 設定中的宣告，沒有「自動產生一份錯的」這種失敗模式。**第 6 節風險表的 `_routes.json` 一列因此解除。**
 
 **額度與費用**（依 Cloudflare 官方文件，查證日 2026-09-15）：
 
@@ -173,16 +196,17 @@ Pages 專案/
 - Free plan **沒有 overage billing**：超量是該類請求開始回錯誤、UTC 00:00 重置，不會產生帳單。要付費必須自行升級 Workers Paid（帳號層級最低 $5/月）。
 - Cloudflare Access 走 Zero Trust Free（50 人以內），在 Worker 之前執行，不計入 Workers 額度。
 - 本專案估算：前端每 1.8 秒輪詢 job（static/app.js:86），一次五分鐘更新約 170 次請求；一天十輪加日常操作約數千次，遠低於 100k。
-- 結論：`_routes.json` 對本階段是**額度衛生，不是成本阻擋項**；設不設都不會產生費用，差別只在是否浪費額度。
+- 結論：`run_worker_first` 的範圍對本階段是**額度衛生，不是成本阻擋項**；寫寬了也不會產生費用，差別只在是否浪費額度。
 
 **實作注意**：
 
-- Worker 執行環境沒有 Node 的 `hmac`／`hashlib`，`D1` 的簽章在 Function 端須以 WebCrypto（`crypto.subtle.importKey` ＋ `sign`）實作；後端 Python 仍用標準庫。兩側必須對同一 canonical string 產生相同的十六進位字串，需有跨語言一致性測試（`C7-2`）。
-- 簽章須對**原始 body bytes** 計算：Function 端以 `request.arrayBuffer()` 取得後，同一份 bytes 同時用於 digest 與轉發，不可先 `json()` 再重組。
+- Worker 執行環境沒有 Node 的 `hmac`／`hashlib`，`D1` 的簽章須以 WebCrypto（`crypto.subtle.importKey` ＋ `sign`）實作；後端 Python 仍用標準庫。兩側必須對同一 canonical string 產生相同的十六進位字串，需有跨語言一致性測試（`C7-2`）。
+- 簽章須對**原始 body bytes** 計算：Worker 端以 `request.arrayBuffer()` 取得後，同一份 bytes 同時用於 digest 與轉發，不可先 `json()` 再重組。
 - 10ms CPU 上限只計 CPU 時間，等待 Cloud Run 回應的時間不計入；HMAC-SHA256 為微秒等級，不會踩到此限制。
+- `run_worker_first` 只列 `/api/*`。未命中的路徑先找靜態檔，找不到才回落到 Worker，因此 `C2-6` 決定的靜態檔集合不必在此重複宣告。
 - **需一併確認**：
   - 代理的逾時上限是否容納 `D3` 決定的抓價時間；超過時的行為（回 504 或改非同步）。**未測**：Cloudflare 邊緣對長請求常見在約 100 秒切斷（524）；若屬實，與 `D3` 現況每批 `cycle_budget_seconds=300`（dashboard.py:256）直接衝突。須於 `C7-2` 以故意延遲回應的測試端點量出實際上限，再回頭定 `D3` 的 deadline。
-  - 自動產生的 `_routes.json` 實際內容是否只涵蓋 `/api/*`，不得假設正確。
+  - Worker-level Access 官方載明**不支援 WebSocket**（upgrade 請求回 403）。本階段前端以 `fetch` 輪詢（static/app.js:86），不使用 WebSocket，故不受影響；但這條限制會封死「改用 WebSocket 推播取代 1.8 秒輪詢」這個未來選項，若日後要走該方向須改用 hostname-based Access。
 - **影響範圍**：`C2-6`、`C4-1`、`C7-1`、`C7-2`、`D3`（逾時上限）。
 
 ### D3　報價更新的執行方式與上限（已定案）
@@ -275,7 +299,7 @@ Cloud Run 的「CPU always allocated」可讓背景執行緒續跑，但需為�
   - 初始資料：先用匿名範本 `持股範本.xlsx` 的假持股；真實持股待 `C7` 全數通過再匯入，並核對筆數、幣別與精度。
   - 每月費用上限：**$10**，以 **$5 為警示門檻**。
   - 預估使用量：**每日更新 1–3 次**。
-  - 自訂網域：**第一階段不買**，直接使用 `<project>.pages.dev`。
+  - 自訂網域：**第一階段不買**，直接使用 `<worker>.<subdomain>.workers.dev`（依 `D2` 的載體修訂；原訂為 `<project>.pages.dev`）。
   - 第一階段的成功定義：**整套能在雲端順利運作**（`C7` 驗收全通過），不是功能完整度。
 - **目的**：決定初始化要匯入什麼，以及什麼情況算超支。
 
@@ -286,7 +310,7 @@ Cloud Run 的「CPU always allocated」可讓背景執行緒續跑，但需為�
 | Cloud Run vCPU 時間 | 180,000 vCPU-秒 | 90 次 × 約 110 秒 ≈ 9,900 | 約 6% |
 | Cloud Run 記憶體 | 360,000 GiB-秒 | 同上 ≈ 9,900 | 約 3% |
 | Cloud Run 請求數 | 2,000,000 | 約 5,000（含每 1.8 秒的 job 輪詢） | ＜1% |
-| Workers／Pages Functions | 100,000／天 | 每日約 200 | ＜1% |
+| Workers 請求數（靜態檔不計入） | 100,000／天 | 每日約 200 | ＜1% |
 | Supabase 資料庫容量 | 500 MB | 持股與報價，遠低於此（`C5-6` 實測） | 低 |
 | Supabase egress | 5 GB／月 | 低 | 低 |
 
@@ -300,7 +324,7 @@ Cloud Run 的「CPU always allocated」可讓背景執行緒續跑，但需為�
 
 最可能先出現的小額項目是 **Artifact Registry 儲存**：免費 0.5 GB，而 `C6-4` 要求保留可回滾的舊映像，多留幾版就會超出。超出後約 $0.10／GB／月，即使累積到 2 GB 也僅約 $0.20／月。連同亞洲區出口流量，於 `C7-7` 檢視首月帳單確認。
 
-**「不買網域」的前提已初步查證**：Cloudflare 官方文件說明可為 `*.pages.dev` 啟用 Access——在 Zero Trust 的 Pages 應用中把 **Subdomain 欄位的萬用字元 `*` 移除**即可涵蓋正式部署，**並不以擁有自訂網域為前提**（查證日 2026-09-15）。但這僅是文件閱讀的結論，**尚未實測**，`C1-6` 必須實際建立並驗證後才算數。
+**「不買網域」的前提已初步查證**：Cloudflare 官方文件把 `workers.dev` 主機名與 Custom Domain 並列為 Access 的同等選項，另有 **Worker-level Access** 可對 Worker 本身啟用一次、涵蓋其所有 hostname（含 preview URL），**均不以擁有自訂網域為前提**（查證日 2026-09-17）。**`C1-6` 已於 2026-09-17 實測成立**，見 `docs/cloud-C1-evidence.md`。
 
 - 退路成本：若實測不成立而必須買網域，Cloudflare Registrar 以成本價出售，`.com` 約 $10／年（約 $0.9／月），仍在本決策的上限內。也就是說這個風險會影響工期，不會擊穿預算。
 
@@ -363,7 +387,7 @@ Dockerfile 三處 `company_ca` 掛載本來就是條件式（`if [ -f /run/secre
   - [x] `C1-3` 建立 runtime service account，只授予所需 secret 的讀取權；建置／部署身分另行管理，不共用。實際為 `stock-quote-runtime`，無任何專案層級角色；授權層級改為 **secret 層而非 version 層**（version 層會使 `C1-7` 的輪替一新增版本即失效），並追加建立 `db-password`。理由見 `docs/cloud-C1-evidence.md`。
   - [x] `C1-4` 於 `ap-northeast-1`（東京）建立 Supabase 專案；若 Free plan 無法指定該區域，依 `D4` **整組**改採新加坡並同步把 Cloud Run 移到 `asia-southeast1`。從 Connect 複製 **Session pooler** 的 host／port／dbname，不自行拼 host。實測結果：Free plan **可**指定 `ap-northeast-1`，`D4` 成立，見 `docs/cloud-C1-evidence.md`。
   - [x] `C1-5` 建立應用專用非管理角色。**不可使用 Supabase 預設的管理帳號**：`check_permissions()` 明確禁止 `rolsuper`／`rolcreatedb`／`rolcreaterole`（storage.py:122）。pooler 的角色名格式為 `[ROLE].[PROJECT-REF]`。實際角色為 `finpo_app`，`app` 與 `dashboard` 兩 schema 皆通過 `db-check --connection-only`。
-  - [ ] `C1-6` 依 `D1` 準備入口認證：建立 Google OAuth 2.0 Client、在 Cloudflare Zero Trust 設定 Google login method，並確認 Access 可涵蓋預定的前端網址（含 `pages.dev` 子網域是否適用）。
+  - [x] `C1-6` 依 `D1` 準備入口認證：建立 Google OAuth 2.0 Client、在 Cloudflare Zero Trust 設定 Google identity provider，並確認 Access 可涵蓋預定的前端網址（`workers.dev` 子網域是否適用，含 preview URL）。**注意主控台導覽已改版**：Zero Trust 併入 `dash.cloudflare.com`，`Login methods` 更名為 `Integrations → Identity providers`，`Access` 更名為 `Access controls`。team name、OAuth consent screen 的 App name 皆為**帳號層**設定，全帳號共用，不得以單一專案命名；Worker 名稱與 Access application 名才是專案層。
   - [x] `C1-7` 產生代理與後端共用的簽章秘密，存入 Secret Manager 與 Cloudflare 環境變數，並記錄輪替方式。須建立 `proxy-hmac-secret`（current）與 `proxy-hmac-secret-prev`（previous）**兩組**，使輪替不必變更 Cloud Run 部署設定；理由與輪替程序見 `docs/cloud-C1-evidence.md`。
   - [x] `C1-8` 依 `D5` 在 GCP Billing 建立預算：金額 $10，警示門檻 $5（50%）與 $10（100%）。Cloudflare 與 Supabase 的 Free plan 不會產生帳單，無需另設。**預算警示只會通知，不會停止計費**，因此仍須於 `C7-7` 實際核對帳單。實際建立為 `finpo-monthly`，Scope 僅 `finpo-508709`，金額 **TWD 300**（帳戶幣別為 TWD，約當 $9.4，偏保守方向），門檻以 50%／100% 百分比表示且皆為 `Actual`；另**取消 Credits 的 `Promotions and others`**，否則試用金會抵銷成本使警示永不觸發，與 `D5`「異常偵測門檻」的用途不符。理由與未實測項見 `docs/cloud-C1-evidence.md`。
   - [ ] `C1-9` 依 `D6` 建立 GitHub Actions 的建置／部署身分：新增 deploy service account（與 `C1-3` 的 runtime SA 分開，不共用），授予 Artifact Registry 寫入與 Cloud Run 部署所需角色；建立 Workload Identity Pool 與 GitHub OIDC provider，attribute condition **必須**限定 `assertion.repository`，SA binding 以 `principalSet` 綁定同一 repository。**不得產生 service account 金鑰**。
@@ -442,8 +466,8 @@ Dockerfile 三處 `company_ca` 掛載本來就是條件式（`if [ -f /run/secre
 - **目的**：完成使用者實際會走的路徑，並用實測取代推論。本階段所有「可行」的說法都要在這步變成量測結果。
 - **前置**：`C6`、`D1`、`D2`。
 - **執行項目**：
-  - [ ] `C7-1` 部署既有三個靜態檔到 Cloudflare，於 Cloudflare 端配置安全標頭（CSP、`X-Content-Type-Options`、`Referrer-Policy` 等）。
-  - [ ] `C7-2` 依 `D2` 建立 `functions/api/[[path]].js` 代理與 `_routes.json`（`include` 僅 `/api/*`），核對靜態檔請求不會啟動 Worker；驗證 Function 端 WebCrypto 與後端 Python 對同一 canonical string 產生相同簽章；以故意延遲回應的測試端點量出代理的實際逾時上限，並對齊前端、代理與後端的逾時。
+  - [ ] `C7-1` 依 `D2` 以 Workers static assets 部署既有三個靜態檔（`assets.directory` 指向 `static/`），於 Cloudflare 端配置安全標頭（CSP、`X-Content-Type-Options`、`Referrer-Policy` 等）。
+  - [ ] `C7-2` 依 `D2` 在同一 Worker 內實作 `/api/*` 代理，`assets.run_worker_first` 僅列 `/api/*`，並以實際請求核對靜態檔路徑不會啟動 Worker；驗證 Worker 端 WebCrypto 與後端 Python 對同一 canonical string 產生相同簽章；以故意延遲回應的測試端點量出代理的實際逾時上限，並對齊前端、代理與後端的逾時。
   - [ ] `C7-3` 啟用入口驗證，並驗證無法繞過代理直接呼叫 `run.app`。後端驗證需依賴可靠簽章或憑證，不得只檢查可偽造的標頭。另須實測：未授權的 Google 帳號被 Access 拒絕、無痕視窗開啟會導向 Google 登入、session 過期後前端可自行恢復。
   - [ ] `C7-4` 功能驗收：上傳 Excel、預覽、儲存、版本衝突（409）、報價更新、缺價／失敗、查詢結果與前端提示。使用 `D5` 決定的資料。
   - [ ] `C7-5` 持久性驗收：關閉瀏覽器、等待縮容後重開，確認持股仍在；更新中途終止與重新部署，確認 job 不永久卡住。
@@ -474,9 +498,10 @@ flowchart LR
 |---|---|---|
 | ~~共享秘密輪替的過渡期處理~~ | **已解決**：`C1-7` 定案兩組 secret＋驗簽接受一組秘密；程序見 `docs/cloud-C1-evidence.md` | `C3-1` 依此實作 |
 | 抓價整體 deadline 與單次上限 | 尚無量測，目前僅有每批 300 秒的批次預算；上限受 `C7-2` 的邊緣逾時實測值封頂 | `C4` 開始前；`C7-6` 後回填實測值 |
-| Pages Function 對外請求的實際逾時上限 | 未測；常見說法為邊緣約 100 秒切斷（524），若屬實則與每批 300 秒預算衝突 | `C7-2`；最晚 `D3` 定 deadline 前 |
-| 自動產生的 `_routes.json` 是否只涵蓋 `/api/*` | 未測；錯誤時只浪費 Workers 額度，不影響功能與費用 | `C7-2` |
-| Access 能否保護 `pages.dev` 子網域的正式部署 | 官方文件顯示可行且不需自訂網域（查證日 2026-09-15），但未實測；`D5` 已據此定案不買網域 | `C1-6`，最晚 `C7-3` |
+| Worker 對外請求的實際逾時上限 | 未測；常見說法為邊緣約 100 秒切斷（524），若屬實則與每批 300 秒預算衝突 | `C7-2`；最晚 `D3` 定 deadline 前 |
+| ~~自動產生的 `_routes.json` 是否只涵蓋 `/api/*`~~ | **已解除**：`D2` 改採 Workers static assets 後，改以 wrangler 的 `run_worker_first` 明文宣告，無自動產生的失敗模式 | — |
+| ~~Access 能否保護免費子網域（含 preview URL）~~ | **已解決**：`C1-6` 實測 `workers.dev` 可受 Worker-level Access 保護，未登入時靜態檔不送出、`/api/*` 亦在保護傘內，`D5` 的「不買網域」成立 | — |
+| Worker-level Access 不支援 WebSocket | 已知行為；本階段以 `fetch` 輪詢，不受影響，但封死日後改用 WebSocket 推播的選項 | 若日後要改推播，需改用 hostname-based Access |
 | Supabase Free 專案閒置 7 天被暫停 | 已知行為；每日更新不會觸發，驗收若中斷一週以上會誤判為程式故障 | `C7` 期間留意 |
 | ~~pooler 是否接受 startup options~~ | **已量測**：連線被接受但參數**靜默忽略**（實際為 `statement_timeout=2min`、`lock_timeout=0`）。處置已定：改為連線後 `SET` 並以 `SHOW` 核對。本機直連會生效，故此問題只在雲端出現 | `C5-4` 實作 |
 | 行情來源對 GCP 出口的接受度 | 未測；技術上可抓取不等同取得授權 | `C7-6`；公開展示前另需核對使用條款 |

@@ -1,6 +1,6 @@
 # C1 執行紀錄：帳號與雲端資源準備
 
-日期：2026-09-16。範圍：[雲端部署第一階段執行計畫](cloud-phase-1-plan.md) 的 `C1`。本檔只記錄**已實際執行並驗證**的結果；未執行的項目標為未完成，不預先宣稱通過。
+日期：2026-09-16，`C1-6` 於 2026-09-17 補記。範圍：[雲端部署第一階段執行計畫](cloud-phase-1-plan.md) 的 `C1`。本檔只記錄**已實際執行並驗證**的結果；未執行的項目標為未完成，不預先宣稱通過。
 
 **本檔不含任何秘密值。** 本 repository 為 public，因此秘密內容、資料庫密碼與完整 DSN 一律不進入本檔；僅記錄資源名稱、版本編號與設定。GCP 專案 ID 與專案編號屬識別碼而非憑證，且 `C6-1` 的 workflow 與映像路徑本來就會公開，故照實記錄。**個人電子郵件位址與 Billing 帳戶 ID 一律不記錄**：兩者對證據價值無幫助，卻會永久留在公開的 git 歷史中。
 
@@ -9,11 +9,11 @@
 | 項目 | 狀態 | 備註 |
 |---|---|---|
 | `C1-1` GCP project 與 Billing | ✅ 完成 | |
-| `C1-2` API 啟用與 Artifact Registry | ✅ 完成 | repository 命名與計畫書原建議不同，見下 |
+| `C1-2` API 啟用與 Artifact Registry | 🟡 部分完成 | Artifact Registry 與三個 API 已就緒；WIF 所需的 `iamcredentials`／`sts` 併入 `C1-9` 啟用。repository 命名與計畫書原建議不同，見下 |
 | `C1-3` runtime service account | ✅ 完成 | 追加建立 `db-password`；授權在 secret 層而非 version 層，理由見下 |
 | `C1-4` Supabase 專案 | ✅ 完成 | Free plan 可指定 `ap-northeast-1`（東京），`D4` 成立 |
 | `C1-5` 應用專用非管理角色 | ✅ 完成 | 角色 `finpo_app`；`app`／`dashboard` 兩 schema 皆通過 |
-| `C1-6` 入口認證 | ⬜ 未開始 | |
+| `C1-6` 入口認證 | ✅ 完成 | team name `khlin`；Free 方案**要求綁卡**；載體改為 Worker，`D5` 不買網域成立 |
 | `C1-7` 簽章秘密與輪替方式 | ✅ 完成 | 兩組 secret 已建；輪替設計已定案（見下） |
 | `C1-8` 預算警示 | ✅ 完成 | 實填 TWD 300；取消 Credits 的 `Promotions and others`。通知送達未實測，見下 |
 | `C1-9` WIF 與 deploy SA | ⬜ 未開始 | 尚缺 `iamcredentials`／`sts` 兩個 API |
@@ -155,6 +155,88 @@ Session pooler 的 host、port 與使用者名稱不記錄於本檔（public rep
 
 兩個下游推論：`C4-3`（以資料庫層原子認領取代行程內鎖）的前提成立；`C5-4` 改用連線後 `SET` 的做法可行——`SET` 同樣依賴連線的穩定性，若此測不過，該處置也不成立。
 
+## C1-6　入口認證
+
+依 `D1` 建立。**前端載體已於 2026-09-17 由 Pages Functions 改為 Workers static assets**（`D2` 修訂，理由見計畫書），因此本項實測的對象是 `workers.dev` 主機名，不是原訂的 `pages.dev`。
+
+### 帳號層設定
+
+| 項目 | 值 |
+|---|---|
+| Zero Trust team name | `khlin` |
+| Team domain | `https://khlin.cloudflareaccess.com` |
+| Zero Trust 方案 | Free（50 人以內） |
+| Google OAuth Client 所在 GCP 專案 | `finpo-508709` |
+| Authorized redirect URI | `https://khlin.cloudflareaccess.com/cdn-cgi/access/callback` |
+| identity provider | **Google**（個人帳號，非 Google Workspace） |
+| PKCE | **已啟用** |
+
+**team name 與 OAuth consent screen 的 App name 刻意不以專案命名。** 一個 Cloudflare 帳號只有一個 Zero Trust organization，team name 是帳號層唯一的一份；日後每個新前端都是在同一個 team domain 下多加一個 Access application，不會各自擁有 team name。取成 `finpo` 會讓第二個專案登入時被導向 `finpo.cloudflareaccess.com`，語意錯誤。改名並非不可逆，但每個已設定的 identity provider 的 redirect URI 都要同步更新，更新完成前所有 app 登入全滅，故當一次性決定處理。同理，Google 同意頁顯示的 App name 也是帳號層共用。
+
+**已知耦合（刻意延後處理）**：OAuth Client 建在 `finpo-508709` 內，但它服務的是帳號層登入，日後所有前端都會相依於這個 GCP 專案。未另開 identity 專用專案的理由是搬遷成本極低——team name 不變則 redirect URI 不變，搬家只是在新專案建一個相同 redirect URI 的 Client，再把 ID／secret 貼回 Cloudflare 兩個欄位。
+
+### 實測：Zero Trust Free 要求綁定付款方式
+
+**要求。** 訂閱 Free 方案的流程必須填入信用卡，月費 $0。
+
+對 `D5` 的影響：**成本結論不變**。`D5` 的零帳單前提依賴的是「Cloudflare Free 沒有 overage billing，超量是該類請求回錯誤並於 UTC 00:00 重置」，不是「帳號無付款能力」，該前提未受影響，`C1-8` 的 GCP 預算警示亦不需調整。但帳號上現已存在可扣款的付款方式，日後誤啟用任何付費產品——最接近的是 `D2` 提到的 Workers Paid（帳號層 $5／月）——會直接扣款，中間沒有第二道關卡。
+
+### 實測：Access 可保護 `workers.dev`，`D5` 的「不買網域」成立
+
+| 項目 | 值 |
+|---|---|
+| 受保護主機 | `finpo.drhiromu.workers.dev`（`drhiromu` 為帳號層 workers.dev subdomain） |
+| 建立方式 | Worker 的 `Access` 分頁 → `Protect this Worker behind Access` |
+| Traffic scope | **`All traffic`**（非 `Previews only`） |
+| 涵蓋範圍 | 該 Worker 的所有 hostname，含 `workers.dev` 與 preview URL |
+| Access application 數量 | **1**（preview 未另立，由 Worker-level Access 一併涵蓋） |
+| Policy 名稱 | 自動產生為 `email domain` |
+| Policy 實際規則 | Action `Allow`，Include → **`Emails`** → 單一位址 |
+| identity provider | 僅 Google（登入時直接導向 Google，未出現登入方式選單） |
+
+**Worker-level Access 只需一個 application 即涵蓋 preview**，這是 `D2` 改採此載體的主因。Pages 路線需建兩個 application（正式 ＋ `*.` 萬用字元）並手動對齊 policy，preview 網址同樣託管完整前端且公開可讀，漏建等同正門上鎖、側門大開。
+
+### 驗證輸出（2026-09-17）
+
+未登入狀態，自本機對 `https://finpo.drhiromu.workers.dev` 發出：
+
+| 測項 | 結果 | 判讀 |
+|---|---|---|
+| `GET /` | `302` → `khlin.cloudflareaccess.com/cdn-cgi/access/login/...`，`auth_status: NONE` | 入口生效，且 application 綁定的是該主機名 |
+| `GET /` 內容中的佔位標記 | **`0` 次命中**（套用 Access 前為 `1`） | 未登入時 HTML 一個 byte 都沒離開 Cloudflare |
+| `GET /app.js` | `302` | 靜態資產同樣受保護 |
+| `GET /api/portfolio` | `302`（**不是 404**） | Access 在 Worker 路由之前執行 |
+| 無痕視窗登入（白名單帳號） | 直接導向 Google，登入後可見佔位頁，`CF_Authorization` cookie 存在 | 正向通過；未出現選單即確認 One-time PIN 旁路未啟用 |
+| 無痕視窗登入（非白名單 Gmail） | 遭 **Cloudflare Access 拒絕頁**擋下 | policy 的 email 白名單生效 |
+
+`/api/portfolio` 那一列值得點名：該路徑目前沒有任何對應程式碼，若 Access 排在 Worker 之後會回 404。它回 302，證明驗證發生在路由之前——`C7-2` 的代理放上去即自動受保護，`D1` 要求的「所有 API 含 GET 都須通過驗證」在邊緣層已先成立一半。
+
+佔位頁僅含一行標記字串，不含任何專案內容，`C7-1` 部署真正的靜態檔時取代之。
+
+**拒絕來源的歸屬**：非白名單帳號是被 **Cloudflare Access 的拒絕頁**擋下，不是被 Google 擋下。這個區別決定本測項有沒有效力：
+
+| 擋下的是誰 | 畫面 | 證明了什麼 |
+|---|---|---|
+| **Cloudflare Access**（實際發生） | Access 的拒絕頁 | **policy 的 email 白名單生效** |
+| Google | `Access blocked: ... has not completed the Google verification process` | 只證明 consent screen 仍在 Testing 且該帳號非 Test user；Access policy **完全沒被執行到**，反面測試等於白測 |
+
+因此授權層確實由 Access policy 把關，而非借道 Google 的 Test users 清單。這兩者在使用者眼中都只是「進不來」，但只有前者是本專案要的性質——Test users 清單是 Google 的開發階段設施，不是授權機制。
+
+### 四個值得記下的坑
+
+1. **policy 名稱與實際規則不一致。** 內建流程自動產生的 policy 名為 `email domain`，實際規則卻是逐一列舉的 `Emails`。名稱會誤導日後的判斷（看到「domain」以為可以放心加同網域的人，一改就開門），**應改名為 `owner-only`**。
+2. **內建 Access 流程的粒度不足。** Worker `Access` 分頁的簡化建立器只提供 `Cloudflare account` 與 `Email domain`，無法選 identity provider。官方文件載明進階設定須於建立後至 Zero Trust 編輯該 application。過渡期務必選 `Cloudflare account`（範圍＝帳號成員＝一人）；若選 `Email domain` 並填個人 Gmail 的網域，等同放行全世界所有 Gmail 使用者，而正向測試對此完全無感。
+3. **主控台導覽已改版。** Zero Trust 併入 `dash.cloudflare.com`（`one.dash.cloudflare.com` 轉跳），`Settings → Authentication → Login methods` 改為 **`Integrations → Identity providers`**，`Access` 改為 **`Access controls`**。
+4. **新版 `Create application` 預設建出 Worker 而非 Pages 專案。** 此即 `D2` 載體修訂的觸發點。誤建後的表徵是主機名為 `<worker>.<subdomain>.workers.dev` 而非 `<project>.pages.dev`，以 `curl -s` 測試舊主機名時錯誤被 `-s` 吞掉、只看到空輸出，容易誤判為「內容不對」。**驗證時應保留 curl 的錯誤輸出**（`-sS`），並先在套用 Access 前量一次基準線，確認標記字串取得 `1`，否則之後的「讀不到」無法區分是 Access 生效還是檔案根本沒部署成功。
+
+### Google OAuth consent screen 的發布狀態
+
+`Publish app` 一度被 Branding 頁的必填欄位擋下。Cloudflare Access 只需 `openid`／`email`／`profile` 三個非敏感 scope，不觸發 Google 的 verification 流程；Testing ＋ Test users 對單人 Access 亦為可用狀態，因 Access 在登入當下完成 OAuth 交換後即改發自己的 `CF_Authorization` cookie，不依賴 Google 的 refresh token 續命，Testing 模式的七天限制實質無影響。
+
+**最終狀態為 `In production`（由行為反推）**：6c 的非白名單 Gmail 帳號**通過了 Google 那一關**、由 Cloudflare Access 擋下。Testing 模式下 Google 會以 Test users 清單攔截非清單帳號，該帳號不可能抵達 Access，故 consent screen 必為 `In production`。此為推論而非直接查核，於 Google Auth Platform → Audience 可一眼確認。
+
+發布不會放寬授權：publish 的意思是任何 Google 帳號都能走完 Google 那一關、證明自己是誰，**擋不擋得住由 Access policy 的 email 白名單決定**——這正是 6c 所驗證的。`D1` 把「人員身分」與「授權」分為兩層，此處即其落地。
+
 ## C1-7　簽章秘密與輪替方式
 
 ### 已建立
@@ -198,7 +280,7 @@ t2  更新 Cloud Run → S2                    恢復
 2. 將「新產生的值」寫入 proxy-hmac-secret（新增版本）
    → 後端此時同時接受新舊兩把
 3. 等待 Cloud Run 實例自然汰換
-4. 更新 Cloudflare 環境變數為新值，重新部署 Pages
+4. 更新 Cloudflare 環境變數為新值，重新部署 Worker
 5. 觀察確認無 401
 6. 停用 proxy-hmac-secret-prev 的該版本
 ```
@@ -244,8 +326,9 @@ t2  更新 Cloud Run → S2                    恢復
 
 | 項目 | 對應 | 影響 |
 |---|---|---|
-| Cloudflare Zero Trust 開通是否要求綁定付款方式 | `C1-6` | 影響 `D5` 的預算前提敘述 |
-| Access 清空 Subdomain 後能否保護 `finpo.pages.dev` 正式部署 | `C1-6` | 不成立則 `D5` 的「不買網域」須推翻 |
+| ~~Cloudflare Zero Trust 開通是否要求綁定付款方式~~ | `C1-6` | **已解決**：要求綁卡，月費 $0。`D5` 成本結論不變，理由見 `C1-6` |
+| ~~Access 能否保護免費子網域的正式部署~~ | `C1-6` | **已解決**：`workers.dev` 可保護，且 Worker-level Access 一併涵蓋 preview，`D5` 的「不買網域」成立 |
+| ~~OAuth consent screen 的發布狀態，及非白名單帳號的拒絕來源~~ | `C1-6` | **已解決**：由 Cloudflare Access 拒絕，policy 已驗證；consent screen 據此反推為 `In production` |
 | GitHub Actions 能否以 WIF 推送映像 | `C1-9` | `C1` 完成條件之一 |
 | runtime SA 是否需要 `roles/logging.logWriter` 才輸出日誌 | `C6-2` | 未查證亦未授予。部署後若 Cloud Run 日誌為空，此為第一個檢查點；寧留待確認項，不憑印象預先多授角色 |
 | 預算警示的通知是否確實送達信箱 | `C1-8`／`C7-7` | 常態費用 $0，無法在此刻觸發任一門檻。不得宣稱「可收到通知」 |
@@ -255,7 +338,7 @@ t2  更新 Cloud Run → S2                    恢復
 | 完成條件 | 狀態 |
 |---|---|
 | 以專用角色從本機連上 Supabase，`check_permissions()` 通過 | ✅ 已達成（`C1-5`；`app` 與 `dashboard` 兩 schema） |
-| 以 Google 帳號可通過 Access 登入測試頁 | ⬜ 未達成（`C1-6` 未開始） |
+| 以 Google 帳號可通過 Access 登入測試頁 | ✅ 已達成（`C1-6`，含非白名單帳號遭 Access 拒絕的反面驗證） |
 | 預算警示已建立且可收到通知 | 🟡 部分達成（`C1-8` 預算已建立；零花費下無法觸發門檻，通知送達併 `C7-7` 驗證） |
 | GitHub Actions 以 WIF 推送測試映像，全程無 service account 金鑰 | ⬜ 未達成（`C1-9` 未開始） |
 
@@ -263,19 +346,13 @@ t2  更新 Cloud Run → S2                    恢復
 
 ## 下次接續
 
-已完成：`C1-1`、`C1-2`、`C1-3`、`C1-4`、`C1-5`、`C1-7`、`C1-8`。剩餘：`C1-6`、`C1-9`。
+已完成：`C1-1`–`C1-8`（`C1-2` 除 `iamcredentials`／`sts` 兩個 API 外皆完成，該兩項併入 `C1-9`）。剩餘：**`C1-9`**。
 
-**建議的下一步順序**：
+**從空白 session 接手時**：先讀 [cloud-phase-1-plan.md](cloud-phase-1-plan.md) 第 3 節的 `D1`–`D6`（決策與理由）與第 4 節的 `C1`／`C6`（`C1-9` 的完成條件與 `C6-1` 如何使用這些身分），再讀本檔的 `C1-6`、`C1-7` 兩節（入口認證現況與秘密輪替的設計約束）。GCP 專案為 `finpo-508709`（專案編號 `896096883650`），Cloudflare team name 為 `khlin`，前端為 Worker `finpo`（`finpo.drhiromu.workers.dev`）。
 
 主控台操作以**英文介面**名稱記錄，與實際使用的介面一致。
 
-1. **`C1-6` 入口認證**（建議優先，內部順序不可顛倒）
-   - 排在 `C1-9` 之前的理由：這是 `C1` 剩餘兩項中**唯一可能推翻既有決策**者。若 Access 無法保護 `finpo.pages.dev` 正式部署，`D5` 的「不買網域」即須推翻；`C1-9` 則無此類不確定性，純屬設定量大。早一步知道結論，改動成本較低。
-   - Cloudflare Zero Trust 開通取得 team name → GCP 建 OAuth 2.0 Client（`Authorized redirect URI` 為 `https://<team>.cloudflareaccess.com/cdn-cgi/access/callback`）→ 回 Cloudflare 設 Google login method → 建佔位 Pages 專案 → 建 Self-hosted Access application。
-   - OAuth consent screen 為 **External**，**必須把自己加入 Test users 或直接 Publish app**，否則登入會被擋。
-   - Access application 的 **Subdomain 欄位要清空**（刪掉預設的 `*`），這是 `D5` 不買網域能否成立的關鍵，須實測。
-
-2. **`C1-9` WIF 與 deploy SA**
+1. **`C1-9` WIF 與 deploy SA**
    - 先啟用 `iamcredentials.googleapis.com` 與 `sts.googleapis.com`。
    - IAM & Admin → Workload Identity Federation：Pool `github` ＋ OIDC provider `github`，`Issuer (URL)` 為 `https://token.actions.githubusercontent.com`。
    - Attribute mapping：`google.subject = assertion.sub`、`attribute.repository = assertion.repository`。
@@ -284,4 +361,6 @@ t2  更新 Cloud Run → S2                    恢復
    - 綁定主體：`principalSet://iam.googleapis.com/projects/896096883650/locations/global/workloadIdentityPools/github/attribute.repository/tommy12lin/stock-quote-fetcher`，角色 **Workload Identity User**。
    - **不得產生 service account 金鑰。**
 
-**待回填本檔的實測結果**：Cloudflare Zero Trust 是否要求綁卡、Access 能否保護 `finpo.pages.dev` 正式部署。
+**待回填本檔的實測結果**：GitHub Actions 能否以 WIF 推送測試映像（`C1-9`）。`C1-6` 已無待補項。
+
+**`C1` 之後的收尾**：`C1-6` 的佔位頁與 canary 標記字串於 `C7-1` 部署真正的靜態檔時取代；`C1-6` 自動產生的 policy 名稱 `email domain` 應改為 `owner-only`，避免名稱與實際規則不符而誤導日後判斷。
