@@ -8,6 +8,10 @@ name = "stock_quote_fetcher"
 schema = "app"
 user = "stock_quote_app"
 # Password is injected via DB_PASSWORD; never store it here.
+sslmode = "disable" # Local container on a private network. Remote databases: verify-full.
+# sslmode accepts disable / require / verify-ca / verify-full only. libpq's prefer and
+# allow fall back to plaintext without saying so, so they are rejected (C5-3).
+# sslrootcert applies to verify-ca / verify-full; "system" uses the OS trust store.
 
 [providers]
 valuation = "yahoo" # Initial implementation only; final US source remains undecided.

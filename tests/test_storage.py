@@ -27,9 +27,14 @@ def test_configuration_rejects_secret_and_invalid_values(tmp_path):
     with pytest.raises(ConfigurationError) as caught:
         load_database_config(path, {})
     assert 'do-not-print' not in str(caught.value)
-    for changes in ({'schema': 123}, {'schema': 'public'}, {'schema': 'pg_catalog'}, {'schema': 'x;DROP'}, {'port': True}, {'connect_timeout': 0}, {'password': ''}):
+    for changes in ({'schema': 123}, {'schema': 'public'}, {'schema': 'pg_catalog'}, {'schema': 'x;DROP'}, {'port': True}, {'connect_timeout': 0}, {'password': ''},
+                    # C5-3: prefer and allow downgrade to plaintext in silence, so they are not accepted.
+                    {'sslmode': 'prefer'}, {'sslmode': 'allow'}, {'sslmode': ''}, {'sslmode': 'VERIFY-FULL'},
+                    {'sslrootcert': ''}, {'sslmode': 'verify-ca', 'sslrootcert': ''}):
         with pytest.raises(ConfigurationError):
             DatabaseConfig(**({'password': 'secret'} | changes))
+    assert DatabaseConfig(password='secret').sslmode == 'verify-full'  # secure without being told
+    assert DatabaseConfig(password='secret', sslmode='disable', sslrootcert='').sslmode == 'disable'
     path.write_text('[database]\nport=5432\n')
     config = load_database_config(path, {'DB_PASSWORD': 'secret', 'DB_HOST': 'db', 'DB_PORT': '5433'})
     assert config.host == 'db' and config.port == 5433
@@ -66,7 +71,9 @@ def db():
     identity = 'test_' + uuid4().hex
     admin.execute(sql.SQL('CREATE ROLE {} LOGIN PASSWORD {}').format(sql.Identifier(identity), sql.Literal('test-password')))
     admin.execute(sql.SQL('CREATE SCHEMA {} AUTHORIZATION {}').format(sql.Identifier(identity),sql.Identifier(identity)))
-    cfg = DatabaseConfig(host='stock-poc-test-db', name='postgres', schema=identity, user=identity, password='test-password')
+    # Disposable container on a private network with no TLS; the default is verify-full.
+    cfg = DatabaseConfig(host='stock-poc-test-db', name='postgres', schema=identity, user=identity,
+                         password='test-password', sslmode='disable')
     try:
         yield cfg, admin
     finally:

@@ -83,17 +83,26 @@ class Storage:
         if self.conn is not None:
             raise StorageError('Storage session 不可重複開啟。')
         c = self.config
+        tls = {'sslmode': c.sslmode} | ({'sslrootcert': c.sslrootcert} if c.sslmode.startswith('verify') else {})
         try:
             self.conn = psycopg.connect(host=c.host, port=c.port, dbname=c.name, user=c.user,
-                password=c.password, connect_timeout=c.connect_timeout, autocommit=True, row_factory=dict_row,
+                password=c.password, connect_timeout=c.connect_timeout, autocommit=True, row_factory=dict_row, **tls,
                 options=f'-c timezone=UTC -c statement_timeout={c.statement_timeout_ms} -c lock_timeout={c.lock_timeout_ms}')
             # Explicitly qualified application SQL; never trust a caller's search_path.
             self.conn.execute("SET search_path TO pg_catalog")
-            return self
         except psycopg.Error:
             if self.conn:
                 self.conn.close()
+                self.conn = None
             raise StorageError('資料庫連線失敗；請核對網路、帳號與環境設定。') from None
+        # libpq refuses a plaintext connection under require/verify-*, so this should be
+        # unreachable. It is checked anyway because C5-4 found the pooler silently ignoring
+        # connection settings: a setting sent is not a setting in force.
+        if c.sslmode != 'disable' and not self.conn.pgconn.ssl_in_use:
+            self.conn.close()
+            self.conn = None
+            raise StorageError('連線未使用 TLS，與 database.sslmode 設定不符。')
+        return self
 
     def __exit__(self, *args):
         if self.conn:

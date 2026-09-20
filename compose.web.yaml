@@ -18,6 +18,8 @@ services:
       DB_NAME: ${DB_NAME:-stock_quote_fetcher}
       DB_SCHEMA: ${DB_SCHEMA:-app}
       DB_USER: ${DB_USER:-stock_quote_app}
+      # 見 compose.yaml 的同名設定：本機無 TLS，程式預設為 verify-full（C5-3）。
+      DB_SSLMODE: ${DB_SSLMODE:-disable}
       TZ: UTC
     volumes:
       - ./input/config.toml:/input/config.toml:ro
