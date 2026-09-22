@@ -79,7 +79,18 @@ uv run --frozen stock-poc validate --input examples/holdings.csv
 uv run --frozen pytest -q
 ```
 
-uv 版本由 pyproject.toml 強制核對，Python 修補版由 .python-version 選定；uv.lock 保存傳遞依賴與下載雜湊。更新依賴時才重新產生鎖定檔，日常使用 frozen 安裝。此輪已驗證 Linux amd64；Windows 原生環境尚未測試。本機無 Python／uv 時可用 [固定 Docker 映像驗證命令](docs/step-1-evidence.md)。
+uv 版本由 pyproject.toml 強制核對，Python 修補版由 .python-version 選定；uv.lock 保存傳遞依賴與下載雜湊。更新依賴時才重新產生鎖定檔，日常使用 frozen 安裝。Linux amd64 已驗證；Windows 原生環境亦已跑完整套件（297 passed、51 skipped，skip 為需要一次性 PostgreSQL 容器的整合測試），但有下述前提。本機無 Python／uv 時可用 [固定 Docker 映像驗證命令](docs/step-1-evidence.md)。
+
+**Windows 原生環境執行測試需先設 `PYTHONUTF8=1`**，否則 `tests/test_cli.py` 會有 6 項失敗：
+
+```text
+$env:PYTHONUTF8 = "1"
+uv run --frozen pytest -q
+```
+
+該檔以子程序執行 `stock-poc` 並以 UTF-8 解碼其輸出，而中文版 Windows 的子程序預設以 cp950 輸出。解碼失敗發生在 subprocess 的讀取執行緒裡，`stdout`／`stderr` 因此變成 `None`，**表徵是斷言的 `TypeError` 而不是編碼錯誤**，看起來與編碼無關。
+
+改用 `.venv\Scripts\python.exe -m pytest` 直接執行時，還需要把 `.venv\Scripts` 加入 `PATH`：`run_cli` 呼叫的是裸的 `stock-poc`，`uv run` 會自動處理而直接呼叫 python 不會，缺少時表徵是 12 項 `FileNotFoundError`（WinError 2）。兩種入口的 `sys.path` 差異則由 pyproject.toml 的 `pythonpath` 消除，不需另行設定。
 
 匿名範例位於 examples/holdings.csv。config.example.toml 的 database 區段供 db-check／migrate 使用，providers、scheduler 限制與 TLS 已供 quote 與 monitor 使用，可複製為已忽略的 config.toml；一般設定與秘密值分離，DB_PASSWORD／FINNHUB_API_KEY 僅示於 .env.example 空欄。db-check／migrate 讀取 database 設定；CLI 不自動載入 .env，可由 Docker --env-file 注入。實際持股、憑證與秘密值不得放入範例檔。
 

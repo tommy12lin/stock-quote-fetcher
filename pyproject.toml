@@ -31,3 +31,8 @@ required-version = "==0.12.10"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra"
+# tests/test_step9_audit.py imports scripts.step9_audit, a namespace package at the project
+# root. "python -m pytest" puts the working directory on sys.path and hides the dependency;
+# the console script (uv run pytest) does not, so collection failed there. Stating the path
+# makes both entry points behave the same instead of one of them only appearing to work.
+pythonpath = ["."]
