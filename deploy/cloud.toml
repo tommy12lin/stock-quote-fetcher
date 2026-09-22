@@ -23,9 +23,13 @@
 #                (dashboard.py:96), so the cloud service calls no keyed provider.
 #   [scheduler]  D3's deadline and batch size are still unmeasured; C7-2 and C7-6 fill
 #                them in here. Writing guessed numbers now would look like decisions.
-#   [database]   connect_timeout / statement_timeout_ms / lock_timeout_ms have no
-#                environment override, but C5-4 moves them to a post-connect SET;
-#                until that lands the defaults (10s / 10s / 3s) apply.
+#   database timeout fields retain the defaults (connect 10s / statement 10s / lock 3s).
+#   C5-4 applies session values after connecting and verifies each with SHOW.
+
+[database]
+# Public Supabase CA, verified against the live session pooler (C5-3).
+sslmode = "verify-full"
+sslrootcert = "/app/supabase-ca.crt"
 
 [instruments]
 # A week, against the 24-hour default. D3 completes refreshes inside the request, and a

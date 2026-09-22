@@ -6,6 +6,7 @@ venv/
 __pycache__/
 *.py[cod]
 .pytest_cache/
+.test-tmp/
 *.egg-info/
 dist/
 build/
@@ -21,6 +22,7 @@ config.toml
 secrets/
 *.pem
 *.crt
+!deploy/supabase-ca.crt
 *.key
 *.p12
 *.pfx

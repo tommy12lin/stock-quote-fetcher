@@ -43,9 +43,10 @@ def test_no_company_tls_settings_leak_into_the_cloud(document):
 
 def test_no_connection_identity_is_committed(document):
     # Host, user and password stay in deployment settings; C1-4 keeps them out of the repo.
-    assert 'database' not in document
-    values = [str(value).lower() for section in document.values() for value in section.values()]
-    assert not [v for v in values if 'supabase' in v or 'pooler' in v]
+    assert set(document['database']) == {'sslmode', 'sslrootcert'}
+    assert document['database']['sslmode'] == 'verify-full'
+    assert document['database']['sslrootcert'] == '/app/supabase-ca.crt'
+    assert (CLOUD.parent / 'supabase-ca.crt').read_text().startswith('-----BEGIN CERTIFICATE-----')
 
 
 def test_no_keyed_provider_is_configured():

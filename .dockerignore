@@ -8,6 +8,7 @@
 !src
 # C2-5：雲端設定檔，只有 web stage 會 COPY；不含秘密（見該檔開頭說明）。
 !deploy/cloud.toml
+!deploy/supabase-ca.crt
 
 # 即使 src 被放行，仍明確排除快取與編譯產物。
 **/__pycache__

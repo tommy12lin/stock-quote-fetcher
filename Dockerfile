@@ -62,6 +62,7 @@ FROM base AS web
 # --chmod 明寫：COPY 沿用來源檔權限，Windows 與 Linux runner 會給出不同的模式位元，
 # 使同一份程式在兩處建出不同的層。釘死為 0644 讓建置可重現。
 COPY --chown=root:root --chmod=0644 deploy/cloud.toml /app/cloud.toml
+COPY --chown=root:root --chmod=0644 deploy/supabase-ca.crt /app/supabase-ca.crt
 # --container 與 --config 放在 ENTRYPOINT 而非 CMD：若放 CMD，任何附加參數都會把它們
 # 整組取代而靜默失去監聽介面或設定檔，表徵是平台判定啟動失敗但程式看似正常。
 ENTRYPOINT ["/app/.venv/bin/stock-web", "--container", "--config", "/app/cloud.toml"]

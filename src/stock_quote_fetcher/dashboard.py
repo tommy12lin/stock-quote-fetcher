@@ -89,10 +89,7 @@ def calculate(holdings, quotes, fx, names=None, market='ALL'):
 
 class Dashboard:
     def __init__(self, config_path, schema='dashboard'):
-        self.source = load_database_config(config_path)
-        if schema == self.source.schema:
-            raise WebError('儀表板 schema 必須與觀測 schema 不同。')
-        self.db = replace(self.source, schema=schema)
+        self.db = replace(load_database_config(config_path), schema=schema)
         self.quote_config = replace(load_quote_config(config_path), comparison=())
         self.catalog_config = load_instrument_catalog_config(config_path)
         self.mutex = Lock()
@@ -113,14 +110,11 @@ class Dashboard:
             return row['document']
 
     def catalog(self):
-        # Prefer the dedicated catalog; source POC is read-only and never locked.
-        for config in (self.db, self.source):
-            try:
-                with Storage(config) as s:
-                    return s.load_instrument_catalog()[1]
-            except StorageError:
-                continue
-        raise WebError('官方標的清單暫不可用，請按「更新股票清單」後重試；編輯內容仍保留。', code='catalog_unavailable', status=503)
+        try:
+            with Storage(self.db) as s:
+                return s.load_instrument_catalog()[1]
+        except StorageError:
+            raise WebError('官方標的清單暫不可用，請按「更新股票清單」後重試；編輯內容仍保留。', code='catalog_unavailable', status=503) from None
 
     def resolve(self, holdings):
         entries = supplement(self.catalog())
@@ -180,17 +174,16 @@ class Dashboard:
                     resolved = {ticker: Instrument(**data) for ticker, data in p['instruments'].items()}
                 else:
                     resolved, _ = self.resolve(holdings)
-                for config in (self.db, self.source):
-                    with Storage(config) as s:
-                        for h in holdings:
-                            for _, q in s.cached_quotes(resolved[h.ticker], 'yahoo'):
-                                if q.provider_symbol != resolved[h.ticker].provider_symbols['yahoo'] or q.received_at > datetime.now(UTC):
-                                    continue
-                                checked = assess(q, as_of=datetime.now(UTC))
-                                checked = replace(checked, quality_flags=checked.quality_flags | {F.CACHED})
-                                if value_holdings([h], {h.ticker: checked}).rows[0].market_value is not None:
-                                    candidates.setdefault(h.ticker, []).append(checked)
-                                    break
+                with Storage(self.db) as s:
+                    for h in holdings:
+                        for _, q in s.cached_quotes(resolved[h.ticker], 'yahoo'):
+                            if q.provider_symbol != resolved[h.ticker].provider_symbols['yahoo'] or q.received_at > datetime.now(UTC):
+                                continue
+                            checked = assess(q, as_of=datetime.now(UTC))
+                            checked = replace(checked, quality_flags=checked.quality_flags | {F.CACHED})
+                            if value_holdings([h], {h.ticker: checked}).rows[0].market_value is not None:
+                                candidates.setdefault(h.ticker, []).append(checked)
+                                break
                 quotes = {ticker: max(items, key=lambda q: q.received_at) for ticker, items in candidates.items()}
             except (StorageError, WebError) as exc:
                 warning = str(exc)
