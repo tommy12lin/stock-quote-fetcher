@@ -1,6 +1,7 @@
 """Exercise the installed console entry point and its public exit-code contract."""
 
 from importlib.metadata import version
+import os
 import subprocess
 import sys
 
@@ -8,8 +9,14 @@ import pytest
 
 
 def run_cli(*args: str) -> subprocess.CompletedProcess[str]:
+    # The CLI writes Chinese diagnostics, and a zh-TW Windows host runs the child in cp950
+    # while this call decodes UTF-8. The mismatch raises inside subprocess's reader thread,
+    # which leaves stdout/stderr as None, so the assertions below fail with TypeError and
+    # point away from the encoding. Put the child in UTF-8 mode here rather than making
+    # every caller remember to export PYTHONUTF8.
     return subprocess.run(
-        ["stock-poc", *args], capture_output=True, text=True, encoding="utf-8", check=False
+        ["stock-poc", *args], capture_output=True, text=True, encoding="utf-8", check=False,
+        env=os.environ | {"PYTHONUTF8": "1"},
     )
 
 
