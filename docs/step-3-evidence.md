@@ -73,6 +73,18 @@ docker network rm stock-poc-test
 
 上述公開密碼只供隔離、用完即棄的測試資料庫。未設定 `STOCK_POC_TEST_POSTGRES=disposable-local` 時，資料庫整合案例會 skip，不能把一般離線 pytest 通過視為完成 DB 驗收。
 
+**兩處會卡住的地方（2026-09-22 於 C4 重跑時實際撞到，一併記下）**：
+
+- **`--internal` 網路裝不了依賴。** 上面第六行要在該網路上 `pip install uv`，但 internal 網路沒有對外連線，DNS 解析 `pypi.org` 會直接失敗。處置是**只把 runner 另外接上有外網的網路**，資料庫維持只在 internal 網路上，隔離性不變：
+
+  ```powershell
+  docker network connect bridge stock-poc-test-runner   # 在 pip install 之前
+  ```
+
+  收尾時 `docker rm -f` 會一併清掉，不需額外 disconnect。
+
+- **改用 Git Bash 執行時，容器內路徑會被改寫。** MSYS 會把 `--tmpfs /var/lib/postgresql/data` 與 `target=/workspace` 當成主機路徑轉成 Windows 形式，錯誤訊息是 `invalid mount path: 'C' mount path must be absolute`。整行前面加 `MSYS_NO_PATHCONV=1` 即可；`source=` 也要改成實際路徑（Bash 沒有 `$((Get-Location).Path)`）。以 PowerShell 執行則沒有這個問題。
+
 ## 後續界線
 
 - 儲存 API 以持鎖 session 操作；start_run／create_campaign／recover_incomplete 核對 schema，不自動 migration。recover_incomplete 須在取鎖後、新 run 建立前呼叫。
