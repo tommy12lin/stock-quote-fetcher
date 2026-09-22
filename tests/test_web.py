@@ -1,5 +1,8 @@
 """HTTP-layer tests for the ASGI dashboard: guard, routing, error mapping and body limits."""
 import json
+import hashlib
+import hmac
+import time
 
 import pytest
 from starlette.testclient import TestClient
@@ -7,7 +10,9 @@ from starlette.testclient import TestClient
 from stock_quote_fetcher import web
 from stock_quote_fetcher.web_input import MAX_UPLOAD, WebError
 
-TOKEN = 'test-token'
+SECRET = 'test-secret-' * 4
+AUTH = web.Auth(SECRET)
+TOKEN = AUTH.issue_session()
 HOST = 'testserver'
 WRITE = {'Origin': f'http://{HOST}', 'X-Portfolio-Token': TOKEN}
 
@@ -42,12 +47,22 @@ class FakeService:
 @pytest.fixture
 def service():
     fake = FakeService()
-    web.app.state.service, web.app.state.token = fake, TOKEN
+    web.app.state.service, web.app.state.auth = fake, AUTH
     return fake
 
 
+class SignedClient(TestClient):
+    def send(self, request, **kwargs):
+        raw = request.read()
+        timestamp = str(int(time.time()))
+        canonical = timestamp.encode() + b'|' + request.method.encode() + b'|' + request.url.raw_path + b'|' + hashlib.sha256(raw).hexdigest().encode()
+        request.headers['X-Timestamp'] = timestamp
+        request.headers['X-Signature'] = hmac.new(SECRET.encode(), canonical, hashlib.sha256).hexdigest()
+        return super().send(request, **kwargs)
+
+
 def build(hosts={HOST}, origins={f'http://{HOST}'}):
-    return TestClient(web.Failsafe(web.Guard(web.app, hosts, origins, TOKEN)))
+    return SignedClient(web.Failsafe(web.Guard(web.app, hosts, origins, AUTH)))
 
 
 @pytest.fixture
@@ -59,7 +74,7 @@ def client(service):
 def test_session_returns_token(client):
     response = client.get('/api/session')
     assert response.status_code == 200
-    assert response.json() == {'token': TOKEN}
+    assert AUTH.verify_session(response.json()['token'])
 
 
 def test_security_headers_on_every_response(client):
@@ -116,7 +131,7 @@ def test_foreign_host_is_refused(client):
 def test_writes_need_origin_and_token(client, service, headers):
     response = client.put('/api/portfolio', headers=headers, content=b'{"revision": 0}')
     assert response.status_code == 403
-    assert response.json()['message'] == '請從本機儀表板進行操作。'
+    assert response.json()['code'] in {'origin_denied', 'session_expired'}
     assert service.calls == []
 
 

@@ -436,13 +436,17 @@ Dockerfile 三處 `company_ca` 掛載本來就是條件式（`if [ -f /run/secre
 
 ### C3　認證與 session token
 
+**2026-09-21 進度**：C3-1／C3-2／C3-4 已實作且通過本機測試；C3-3 程式與模擬測試已完成，真實 Access 過期與 Cloud Run 縮容驗收仍待 C7，尚不宣稱雲端完成條件已通過。見 [C3 證據](cloud-C3-evidence.md)。下列「目前」描述為開工前問題。
+
+**部署契約**：Secret Manager 的 `proxy-hmac-secret` → `PROXY_HMAC_SECRET`（必填）；`proxy-hmac-secret-prev` → `PROXY_HMAC_SECRET_PREV`（選填）。各非空秘密至少 32 bytes。缺少 current 時 API 拒絕啟動；初始化／清單更新命令不需要此秘密。
+
 - **目的**：把「只擋跨站寫入」升級為「擋未授權存取」，並解除 token 與程序生命週期綁死的問題。
 - **前置**：`D1`、`C2`。
 - **執行項目**：
-  - [ ] `C3-1` 依 `D1` 的 HMAC 簽章規格實作後端驗證：所有 API（含 GET）都要通過驗證，不能只保護前端頁面；以 `hmac.compare_digest()` 比對、對原始 body bytes 計算 digest、先檢查時間窗再驗簽。
-  - [ ] `C3-2` 改掉每程序各自產生的 token：目前 token 是啟動時的 `secrets.token_urlsafe(32)`（web.py:147），冷啟動或換 revision 後，已開著的頁面再送 PUT 會被判 403。改為無狀態簽章並處理過期重取；固定秘密不得放進 JavaScript。
+  - [x] `C3-1` 依 `D1` 的 HMAC 簽章規格實作後端驗證：所有 API（含 GET）都要通過驗證，不能只保護前端頁面；以 `hmac.compare_digest()` 比對、對原始 body bytes 計算 digest、先檢查時間窗再驗簽。
+  - [x] `C3-2` 改掉每程序各自產生的 token：原本 token 是啟動時的 `secrets.token_urlsafe(32)`，現已改為用途區隔的無狀態簽章，效期一小時，支援過期重取；固定秘密不放進 JavaScript。
   - [ ] `C3-3` 前端對應調整：目前啟動時取一次 token（static/app.js:93），需支援 401／403 後重新取得並重試一次；另需處理 Access session 過期——此時 `fetch()` 會因跨網域轉址而失敗而非回 401，應偵測後整頁重新載入以觸發 Google 登入。前端不實作登入表單。
-  - [ ] `C3-4` 確認未授權請求的回應不洩漏內部資訊，且失敗訊息與既有錯誤處理風格一致。
+  - [x] `C3-4` 確認未授權請求的回應不洩漏內部資訊，且失敗訊息與既有錯誤處理風格一致。
 - **完成條件**：未帶有效憑證的 GET／PUT／POST 一律被拒；瀏覽器閒置至服務縮容後再操作，不需手動重新整理即可繼續使用。
 - **證據**：授權與未授權請求的對照紀錄。
 

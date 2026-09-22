@@ -5,7 +5,6 @@ from pathlib import Path
 import json
 import os
 import re
-import secrets
 import sys
 
 import anyio
@@ -19,6 +18,7 @@ import uvicorn
 from stock_quote_fetcher.dashboard import Dashboard
 from stock_quote_fetcher.storage import Storage, lock_key
 from stock_quote_fetcher.web_input import WebError, MAX_UPLOAD, bounded_preview, template_xlsx
+from stock_quote_fetcher.web_auth import Auth
 
 # Blocking work (psycopg, quote runs) stays off the event loop; this caps how many
 # such calls run at once, replacing the accept-side semaphore of the previous server.
@@ -118,8 +118,8 @@ class Guard:
     anyone who can reach the service, so no proxy header takes part in any decision.
     """
 
-    def __init__(self, app, hosts, origins, token):
-        self.app, self.token = app, token
+    def __init__(self, app, hosts, origins, auth):
+        self.app, self.auth = app, auth
         self.hosts, self.origins = hosts, origins
 
     async def __call__(self, scope, receive, send):
@@ -133,11 +133,41 @@ class Guard:
         denied = None
         if self.hosts != ANY_HOST and headers.get('host') not in self.hosts:
             denied = WebError('拒絕不合法的 Host。', status=403)
-        elif scope['method'] != 'GET' and (headers.get('origin') not in self.origins
-                                           or headers.get('x-portfolio-token') != self.token):
-            denied = WebError('請從本機儀表板進行操作。', status=403)
         if denied is not None:
             return await respond(denied.status, denied.payload)(scope, receive, send)
+        if scope['path'] == '/api' or scope['path'].startswith('/api/'):
+            try:
+                timestamp = headers.get('x-timestamp')
+                signature = headers.get('x-signature')
+                invalid = WebError('請求未通過驗證。', code='unauthorized', status=401)
+                if (len(headers.getlist('x-timestamp')) != 1 or len(headers.getlist('x-signature')) != 1
+                        or not self.auth.timestamp_valid(timestamp)):
+                    raise invalid
+                raw = await body_bytes(Request(scope, receive))
+                target = scope['raw_path']
+                if scope.get('query_string'):
+                    target += b'?' + scope['query_string']
+                if not self.auth.verify_request(timestamp, scope['method'], target, raw, signature):
+                    raise invalid
+                if scope['method'] != 'GET':
+                    if headers.get('origin') not in self.origins:
+                        raise WebError('請從儀表板進行操作。', code='origin_denied', status=403)
+                    if not self.auth.verify_session(headers.get('x-portfolio-token')):
+                        raise WebError('操作憑證已失效，請重新取得。', code='session_expired', status=403)
+            except WebError as exc:
+                return await respond(exc.status, exc.payload)(scope, receive, send)
+
+            original_receive = receive
+            delivered = False
+
+            async def replay():
+                nonlocal delivered
+                if not delivered:
+                    delivered = True
+                    return {'type': 'http.request', 'body': raw, 'more_body': False}
+                return await original_receive()
+
+            receive = replay
         await self.app(scope, receive, send)
 
 
@@ -199,7 +229,7 @@ async def health(request: Request):
 
 @app.get('/api/session')
 async def session(request: Request):
-    return respond(200, {'token': request.app.state.token})
+    return respond(200, {'token': request.app.state.auth.issue_session()})
 
 
 @app.get('/api/portfolio')
@@ -275,20 +305,24 @@ def main():
             s.save_instrument_catalog(fetch_all(service.catalog_config), max_age_hours=service.catalog_config.max_age_hours)
         print('Dashboard catalog refreshed.')
         return
+    try:
+        auth = Auth.from_env()
+    except ValueError as exc:
+        parser.error(str(exc))
     # Singleton process lease separate from both collector locks; protects recovery.
     with Storage(service.db) as lease:
         acquired = lease.conn.execute('SELECT pg_try_advisory_lock(%s) AS acquired', (lock_key(args.schema + ':web'),)).fetchone()['acquired']
         if not acquired:
             parser.error('同一 schema 已有儀表板服務。')
         service.recover_jobs()
-        app.state.service, app.state.token = service, secrets.token_urlsafe(32)
+        app.state.service, app.state.auth = service, auth
         host = '0.0.0.0' if args.container else '127.0.0.1'
         print(f'Portfolio dashboard API: listening on {host}:{port}', flush=True)
         print(f'Allowed hosts: {hosts if hosts == ANY_HOST else ", ".join(sorted(hosts))}', flush=True)
         print(f'Allowed origins: {", ".join(sorted(origins))}', flush=True)
         # Access logs would carry query strings, which hold filenames and market filters.
         # proxy_headers=False: X-Forwarded-* reach this service unverified and nothing here needs them.
-        uvicorn.run(Failsafe(Guard(app, hosts, origins, app.state.token)), host=host, port=port,
+        uvicorn.run(Failsafe(Guard(app, hosts, origins, auth)), host=host, port=port,
                     access_log=False, server_header=False, proxy_headers=False, log_level='warning')
 
 
