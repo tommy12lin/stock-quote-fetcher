@@ -16,7 +16,7 @@ from starlette.concurrency import run_in_threadpool
 import uvicorn
 
 from stock_quote_fetcher.dashboard import Dashboard
-from stock_quote_fetcher.storage import Storage, lock_key
+from stock_quote_fetcher.storage import Storage
 from stock_quote_fetcher.web_input import WebError, MAX_UPLOAD, bounded_preview, template_xlsx
 from stock_quote_fetcher.web_auth import Auth
 
@@ -266,16 +266,23 @@ async def save(request: Request):
     return respond(200, await run_in_threadpool(request.app.state.service.save, document))
 
 
+# D3/C4-1: the work now happens inside these two requests, so they answer 200 with a
+# finished job instead of 202 with a queued one. The connection stays open for the whole
+# refresh because Cloud Run only guarantees CPU while it is. A 202 is still possible in
+# one case: another instance holds a live lease, and its unfinished job is returned for
+# the caller to poll.
 @app.post('/api/portfolio/refresh')
 async def refresh(request: Request):
     await body_bytes(request)
-    return respond(202, await run_in_threadpool(request.app.state.service.refresh))
+    job = await run_in_threadpool(request.app.state.service.refresh)
+    return respond(202 if job['status'] in ('queued', 'running') else 200, job)
 
 
 @app.post('/api/catalog/refresh')
 async def refresh_catalog(request: Request):
     await body_bytes(request)
-    return respond(202, await run_in_threadpool(request.app.state.service.refresh, True))
+    job = await run_in_threadpool(request.app.state.service.refresh, True)
+    return respond(202 if job['status'] in ('queued', 'running') else 200, job)
 
 
 def main():
@@ -309,21 +316,20 @@ def main():
         auth = Auth.from_env()
     except ValueError as exc:
         parser.error(str(exc))
-    # Singleton process lease separate from both collector locks; protects recovery.
-    with Storage(service.db) as lease:
-        acquired = lease.conn.execute('SELECT pg_try_advisory_lock(%s) AS acquired', (lock_key(args.schema + ':web'),)).fetchone()['acquired']
-        if not acquired:
-            parser.error('同一 schema 已有儀表板服務。')
-        service.recover_jobs()
-        app.state.service, app.state.auth = service, auth
-        host = '0.0.0.0' if args.container else '127.0.0.1'
-        print(f'Portfolio dashboard API: listening on {host}:{port}', flush=True)
-        print(f'Allowed hosts: {hosts if hosts == ANY_HOST else ", ".join(sorted(hosts))}', flush=True)
-        print(f'Allowed origins: {", ".join(sorted(origins))}', flush=True)
-        # Access logs would carry query strings, which hold filenames and market filters.
-        # proxy_headers=False: X-Forwarded-* reach this service unverified and nothing here needs them.
-        uvicorn.run(Failsafe(Guard(app, hosts, origins, auth)), host=host, port=port,
-                    access_log=False, server_header=False, proxy_headers=False, log_level='warning')
+    # C4-2: no process-wide advisory lease. A new revision has to be able to start while
+    # the old one is still serving, which Cloud Run does on every rollout; the old code
+    # ended the new process with parser.error instead. Jobs interrupted by a lost instance
+    # are reclaimed by lease expiry at the next claim (C4-4), not by a sweep at startup,
+    # which could not tell another live instance's work from abandoned work.
+    app.state.service, app.state.auth = service, auth
+    host = '0.0.0.0' if args.container else '127.0.0.1'
+    print(f'Portfolio dashboard API: listening on {host}:{port}', flush=True)
+    print(f'Allowed hosts: {hosts if hosts == ANY_HOST else ", ".join(sorted(hosts))}', flush=True)
+    print(f'Allowed origins: {", ".join(sorted(origins))}', flush=True)
+    # Access logs would carry query strings, which hold filenames and market filters.
+    # proxy_headers=False: X-Forwarded-* reach this service unverified and nothing here needs them.
+    uvicorn.run(Failsafe(Guard(app, hosts, origins, auth)), host=host, port=port,
+                access_log=False, server_header=False, proxy_headers=False, log_level='warning')
 
 
 if __name__ == '__main__':

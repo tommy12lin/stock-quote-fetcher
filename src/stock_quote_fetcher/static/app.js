@@ -25,17 +25,23 @@ async function renewSession() {
   if(!sessionRequest) sessionRequest = api('/api/session', 'GET', undefined, false).then(data=>{token=data.token;}).finally(()=>{sessionRequest=null;});
   await sessionRequest;
 }
-async function api(path, method='GET', body, retry=true) {
+// C4-1 makes the refresh POST a long request. A proxy or edge that cuts it short looks
+// exactly like an Access redirect to fetch(), so that one call opts out of the reload and
+// reports the cut instead; a genuine login expiry is caught by the next call.
+function cutShort() {
+  throw new Error('更新未能在連線時限內完成；既有價格保留，請稍後重試。若仍無法更新，請重新整理頁面。');
+}
+async function api(path, method='GET', body, retry=true, reloadOnRedirect=true) {
   const headers = {}; if(method!=='GET') { headers['X-Portfolio-Token']=token; if(!(body instanceof File)) headers['Content-Type']='application/json'; }
   let response;
   try {
     response = await fetch(path, {method,headers,redirect:'manual',body:body===undefined?undefined:body instanceof File?body:JSON.stringify(body)});
   } catch(error) {
     // CORS redirects and network outages are indistinguishable to fetch; bound reloads.
-    if(error instanceof TypeError) return resumeLogin();
+    if(error instanceof TypeError) return reloadOnRedirect ? resumeLogin() : cutShort();
     throw error;
   }
-  if(response.type==='opaqueredirect' || response.redirected || response.headers.get('content-type')?.includes('text/html')) return resumeLogin();
+  if(response.type==='opaqueredirect' || response.redirected || response.headers.get('content-type')?.includes('text/html')) return reloadOnRedirect ? resumeLogin() : cutShort();
   const data = await response.json();
   if(retry && path!=='/api/session' && [401,403].includes(response.status) && ['unauthorized','session_expired'].includes(data.code)) {
     await renewSession();
@@ -110,8 +116,12 @@ function renderDetails(){
 function saveStatus(text, error=false) { const status=$('save-status'); status.hidden=false; status.textContent=text; status.style.color=error?'#ad3e4a':'#237057'; status.style.whiteSpace='pre-line'; }
 async function save(fxOnly=false){if(loading||!saved)return;loading=true;saveStatus('儲存中…');$('save').textContent='儲存中…';$('save').disabled=true;$('apply-fx').disabled=true;try{const fx=$('fx').value.trim(); const editing=JSON.stringify(draft);const p=await api('/api/portfolio','PUT',{revision:recoveredRevision??saved.revision,rows:fxOnly?saved.rows:draft.map(r=>({...r})),fx});saved=p;recoveredRevision=null;saveStatus(fxOnly?'匯率已保存。':'持股已保存。');if(!fxOnly&&editing===JSON.stringify(draft)) {draft=structuredClone(p.rows);dirty=$('fx').value.trim()!==fx;draftRender();}else if(fxOnly){dirty=JSON.stringify(draft)!==JSON.stringify(p.rows)||$('fx').value.trim()!==fx;}$('draft-state').textContent=dirty?'有未保存的修改 · 總覽仍使用已保存清單':'已保存 · 總覽使用此版本';$('draft-state').className=dirty?'dirty':'';savedRender();await loadValuation();message(fxOnly?'匯率已套用，已使用既有價格重新換算。':'持股已保存。可按「更新報價」取得新價格。',true);if(!fxOnly&&valuation&&valuation.coverage<valuation.count)refresh();}catch(e){saveStatus('儲存失敗，草稿仍保留。'+String.fromCharCode(10)+e.message,true);message(e.message);}finally{loading=false;$('save').textContent='儲存持股';$('save').disabled=false;$('apply-fx').disabled=false;}}
 async function upload(sheet){if(!file)return;const current=file;$('confirm-import').disabled=true;try{const result=await api('/api/imports/preview?filename='+encodeURIComponent(current.name)+(sheet?'&sheet='+encodeURIComponent(sheet):''),'POST',current);if(file!==current)return;preview=result;$('filename').textContent=current.name;$('sheets').replaceChildren(...preview.sheets.map(name=>{const o=el('option',name);o.value=name;return o;}));$('sheets').value=preview.sheet;$('preview').replaceChildren();preview.rows.forEach((r,i)=>{const tr=el('tr');[String(i+2),r.ticker,r.quantity,r.buy_price].forEach(x=>tr.append(el('td',x)));$('preview').append(tr);});$('import-errors').textContent=preview.issues.map(x=>`第 ${x.row} 列 ${fieldLabel(x.field)}：${x.message}`).join('\n');const old=new Set(draft.map(r=>r.ticker.trim().toUpperCase())),next=new Set(preview.rows.map(r=>r.ticker));$('replace-note').textContent=`確認後將取代整份草稿：新增 ${[...next].filter(x=>!old.has(x)).length} 檔、移除 ${[...old].filter(x=>!next.has(x)).length} 檔。仍需點「儲存持股」才會保存。`;$('confirm-import').disabled=preview.issues.length>0;if(!$('import-dialog').open)$('import-dialog').showModal();}catch(e){message(e.message);}}
-async function refresh(catalogOnly=false){if(!saved)return;$('refresh').disabled=true;try{const job=await api(catalogOnly?'/api/catalog/refresh':'/api/portfolio/refresh','POST',{});await watch(job.job_id);}catch(e){message(e.message);$('refresh').disabled=false;}}
-async function watch(id){try{const job=await api('/api/jobs/'+id);$('job').textContent=job.message;if(['queued','running'].includes(job.status)){poll=setTimeout(()=>watch(id),1800);return;} $('refresh').disabled=false;if(job.portfolio_revision===saved.revision)await loadValuation();else message('先前版本的報價工作已完成；目前清單維持新版本，請再次更新報價。');}catch(e){$('refresh').disabled=false;message(e.message);}}
+// The work now runs inside this request (D3), so the wait is the request itself. A job
+// still comes back queued/running in one case: another instance holds a live lease, and
+// then the existing poll is what follows it.
+async function refresh(catalogOnly=false){if(!saved)return;$('refresh').disabled=true;$('job').textContent=catalogOnly?'正在更新官方股票清單，請保持分頁開啟…':'正在更新報價，請保持分頁開啟；工作在這個請求內完成，關閉分頁會中斷。';try{const job=await api(catalogOnly?'/api/catalog/refresh':'/api/portfolio/refresh','POST',{},true,false);if(['queued','running'].includes(job.status))return await watch(job.job_id);await settle(job);}catch(e){$('job').textContent='';$('refresh').disabled=false;message(e.message);}}
+async function settle(job){$('job').textContent=job.message;$('refresh').disabled=false;if(job.portfolio_revision===saved.revision)await loadValuation();else message('先前版本的報價工作已完成；目前清單維持新版本，請再次更新報價。');}
+async function watch(id){try{const job=await api('/api/jobs/'+id);if(['queued','running'].includes(job.status)){$('job').textContent=job.message;poll=setTimeout(()=>watch(id),1800);return;}await settle(job);}catch(e){$('refresh').disabled=false;message(e.message);}}
 $('add').onclick=$('start-add').onclick=add;$('save').onclick=()=>save();$('apply-fx').onclick=()=>save(true);$('fx').oninput=setDirty;$('market').onchange=()=>loadValuation().catch(e=>message(e.message));$('sort').onchange=()=>valuation&&renderDetails();$('refresh').onclick=()=>refresh();
 const catalogButton=el('button','更新股票清單','ghost');catalogButton.onclick=()=>refresh(true);$('editor').querySelector('.actions').prepend(catalogButton);
 $('upload').onclick=()=>{if(saved)$('file').click();};$('file').onchange=()=>{file=$('file').files[0];if(!file)return;if(!file.name.toLowerCase().endsWith('.xlsx')||file.size>5*1024*1024){message('請選擇不超過 5 MiB 的 .xlsx 檔案。');return;}upload();};$('sheets').onchange=()=>upload($('sheets').value);

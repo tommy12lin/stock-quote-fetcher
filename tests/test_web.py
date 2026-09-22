@@ -21,6 +21,9 @@ class FakeService:
     def __init__(self):
         self.calls = []
         self.error = None
+        # C4-1 runs the refresh inside the request, so the route reports the job it got
+        # back; only a job still held by another instance leaves the caller polling.
+        self.job_status = 'succeeded'
 
     def _record(self, name, *args):
         self.calls.append((name, *args))
@@ -41,7 +44,7 @@ class FakeService:
         return self._record('save', json.dumps(document, sort_keys=True))
 
     def refresh(self, catalog_only=False):
-        return self._record('refresh', catalog_only)
+        return dict(self._record('refresh', catalog_only), status=self.job_status)
 
 
 @pytest.fixture
@@ -145,10 +148,16 @@ def test_save_passes_the_parsed_document(client, service):
     assert service.calls == [('save', '{"revision": 3}')]
 
 
-def test_refresh_routes_answer_202(client, service):
+def test_refresh_routes_answer_200_for_a_finished_job(client, service):
+    assert client.post('/api/portfolio/refresh', headers=WRITE, content=b'{}').status_code == 200
+    assert client.post('/api/catalog/refresh', headers=WRITE, content=b'{}').status_code == 200
+    assert service.calls == [('refresh', False), ('refresh', True)]
+
+
+def test_refresh_routes_answer_202_while_another_instance_holds_the_job(client, service):
+    service.job_status = 'running'
     assert client.post('/api/portfolio/refresh', headers=WRITE, content=b'{}').status_code == 202
     assert client.post('/api/catalog/refresh', headers=WRITE, content=b'{}').status_code == 202
-    assert service.calls == [('refresh', False), ('refresh', True)]
 
 
 def test_malformed_json_is_a_400(client, service):

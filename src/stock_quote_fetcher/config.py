@@ -163,7 +163,7 @@ def load_quote_config(path: Path) -> QuoteConfig:
     providers, scheduler, tls = (doc.get(key,{}) for key in ('providers','scheduler','tls'))
     for raw, allowed in ((providers, {'valuation','comparison'}),
                          (scheduler, {'operation_timeout_seconds','cycle_budget_seconds','max_retries','poll_interval_seconds',
-                                      'campaign_duration_days','post_close_observation_minutes','heartbeat_interval_seconds'}),
+                                      'campaign_duration_days','post_close_observation_minutes','heartbeat_interval_seconds'} | REFRESH_KEYS),
                          (tls, {'company_ca_file','relaxed_sources','relaxed_providers'})):
         if not isinstance(raw,dict) or set(raw) - allowed:
             raise ConfigurationError('報價設定包含不支援的欄位；秘密只能透過環境注入。')
@@ -171,5 +171,41 @@ def load_quote_config(path: Path) -> QuoteConfig:
         if key in raw and (not isinstance(raw[key],list) or not all(isinstance(x,str) for x in raw[key])):
             raise ConfigurationError(f'{key} 必須是字串陣列。')
     return QuoteConfig(valuation=providers.get('valuation','yahoo'), comparison=tuple(providers.get('comparison',[])),
-                       **scheduler, company_ca_file=tls.get('company_ca_file',''),
+                       **{key:value for key,value in scheduler.items() if key not in REFRESH_KEYS},
+                       company_ca_file=tls.get('company_ca_file',''),
                        relaxed_providers=tuple(tls.get('relaxed_providers',[])))
+
+
+REFRESH_KEYS = frozenset({'refresh_deadline_seconds', 'refresh_max_tickers'})
+
+
+@dataclass(frozen=True)
+class RefreshConfig:
+    """D3 runs a refresh inside the request, so it needs a wall-clock limit of its own.
+
+    These live in [scheduler] but stay out of QuoteConfig: they bound the HTTP request,
+    not a quote cycle, and adding them to QuoteConfig would change the configuration
+    snapshot digest that campaign matching depends on (storage.configuration_snapshot).
+
+    Both defaults are provisional. deadline_seconds reuses the per-batch budget the
+    dashboard already spent (300s) as a whole-refresh limit, which is strictly tighter
+    than the previous behaviour of no total limit at all; it is not a claim about the
+    edge timeout. max_tickers defaults to 0 (bounded by the deadline alone). C7-2 and
+    C7-6 measure the real values and C6-2 writes them into deploy/cloud.toml before the
+    service is deployed. D3 forbids writing a guessed number here.
+    """
+    deadline_seconds: int = 300
+    max_tickers: int = 0
+
+    def __post_init__(self):
+        for name, lower, upper in (('deadline_seconds',1,3600), ('max_tickers',0,500)):
+            if type(getattr(self,name)) is not int or not lower <= getattr(self,name) <= upper:
+                raise ConfigurationError(f'refresh_{name} 超出允許範圍。')
+
+
+def load_refresh_config(path: Path) -> RefreshConfig:
+    scheduler = _load_document(path).get('scheduler', {})
+    if not isinstance(scheduler, dict):
+        raise ConfigurationError('報價設定包含不支援的欄位；秘密只能透過環境注入。')
+    return RefreshConfig(**{key.removeprefix('refresh_'): value
+                            for key, value in scheduler.items() if key in REFRESH_KEYS})

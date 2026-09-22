@@ -1,24 +1,34 @@
 """Local portfolio service. Its schema and collector lock are separate from the POC."""
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal, localcontext
 from io import StringIO
+from time import monotonic
 import csv
-from threading import Lock, Thread
 from uuid import uuid4
 
 from psycopg import sql
 from psycopg.types.json import Jsonb
 
-from stock_quote_fetcher.config import load_database_config, load_quote_config, load_instrument_catalog_config
+from stock_quote_fetcher.config import (load_database_config, load_quote_config, load_instrument_catalog_config,
+                                        load_refresh_config)
 from stock_quote_fetcher.instruments import resolve_holdings
 from stock_quote_fetcher.otc_catalog import supplement
 from stock_quote_fetcher.models import Instrument, QualityFlag as F
 from stock_quote_fetcher.quality import assess
 from stock_quote_fetcher.quoting import QuoteRunner, public_config
-from stock_quote_fetcher.storage import Storage, StorageError
+from stock_quote_fetcher.storage import Storage, StorageError, lock_key
 from stock_quote_fetcher.valuation import value_holdings, exact_product, exact_sum, display_amount
 from stock_quote_fetcher.web_input import WebError, validate_rows, normalize
+
+
+COOLDOWN_SECONDS = 60
+BATCH_SIZE = 5
+# Grace on top of one batch's budget and one in-flight provider call. A lease has to
+# outlast the quiet stretch between two progress writes, or a second instance would
+# reclaim a job that is still running.
+LEASE_GRACE_SECONDS = 30
+LOST_MESSAGE = '更新未在時限內完成或服務已中斷；既有價格保留，請重新更新。'
 
 
 def now():
@@ -92,7 +102,10 @@ class Dashboard:
         self.db = replace(load_database_config(config_path), schema=schema)
         self.quote_config = replace(load_quote_config(config_path), comparison=())
         self.catalog_config = load_instrument_catalog_config(config_path)
-        self.mutex = Lock()
+        self.refresh_config = load_refresh_config(config_path)
+        # Identifies this process inside a job's lease. Cloud Run can run two revisions
+        # at once, so ownership belongs in the row, never in this process's memory.
+        self.instance = str(uuid4())
 
     def initialize(self):
         """Explicit command only; never part of HTTP startup."""
@@ -193,39 +206,108 @@ class Dashboard:
                       fx=p['fx'], fx_source=p.get('fx_source'), fx_updated_at=p.get('fx_updated_at'), warning=warning)
         return result
 
+    @property
+    def lease_seconds(self):
+        """One batch's budget plus one in-flight provider call, plus grace."""
+        return self.quote_config.cycle_budget_seconds + self.quote_config.operation_timeout_seconds + LEASE_GRACE_SECONDS
+
+    def lease_until(self):
+        return (datetime.now(UTC) + timedelta(seconds=self.lease_seconds)).isoformat()
+
+    @staticmethod
+    def expired(job, as_of=None):
+        """A job written before C4-4 carries no lease, and is expired by definition."""
+        lease = job.get('lease_expires_at')
+        if not lease:
+            return True
+        return datetime.fromisoformat(lease) <= (as_of or datetime.now(UTC))
+
+    def visible(self, job):
+        """Read-side view. An expired lease reads as failed even before the next claim
+        sweeps it, so a poller never watches a dead job sit in 'running' forever."""
+        if job.get('status') in ('queued', 'running') and self.expired(job):
+            return dict(job, status='failed', message=LOST_MESSAGE)
+        return job
+
     def job(self, job_id):
         with Storage(self.db) as s:
             row = s.conn.execute(sql.SQL('SELECT document FROM {} WHERE id=%s').format(s.table('refresh_jobs')), (job_id,)).fetchone()
             if not row:
                 raise WebError('找不到更新工作。', status=404)
-            return row['document']
+            return self.visible(row['document'])
 
-    def put_job(self, job):
-        with Storage(self.db) as s:
-            s.conn.execute(sql.SQL('INSERT INTO {} VALUES (%s,%s) ON CONFLICT(id) DO UPDATE SET document=EXCLUDED.document').format(s.table('refresh_jobs')), (job['job_id'], Jsonb(job)))
+    def put_job(self, job, s=None):
+        if s is None:
+            with Storage(self.db) as own:
+                return self.put_job(job, own)
+        s.conn.execute(sql.SQL('INSERT INTO {} VALUES (%s,%s) ON CONFLICT(id) DO UPDATE SET document=EXCLUDED.document').format(s.table('refresh_jobs')), (job['job_id'], Jsonb(job)))
+
+    def progress(self, job, message):
+        """Every progress write renews the lease. This is the job's only heartbeat."""
+        job.update(message=message, lease_expires_at=self.lease_until())
+        self.put_job(job)
+
+    def recover_jobs(self, s=None):
+        """C4-4: reclaim by expiry only. A job whose lease is still valid belongs to a
+        live instance, possibly another revision, and must not be declared failed."""
+        if s is None:
+            with Storage(self.db) as own:
+                return self.recover_jobs(own)
+        rows = s.conn.execute(sql.SQL("SELECT document FROM {} WHERE document->>'status' IN ('queued','running')").format(s.table('refresh_jobs'))).fetchall()
+        recovered = []
+        for row in rows:
+            job = row['document']
+            if not self.expired(job):
+                continue
+            job.update(status='failed', message=LOST_MESSAGE, completed_at=now())
+            self.put_job(job, s)
+            recovered.append(job)
+        return recovered
+
+    def claim(self, p, catalog_only):
+        """The atomic claim that replaces Dashboard.mutex (C4-3).
+
+        The advisory lock is transaction-scoped, so commit, rollback and a dropped
+        connection all release it; nothing outlives the process that took it. Expiry
+        recovery runs inside the same transaction, so no one can observe a stale job
+        between the sweep and the claim.
+        """
+        with Storage(self.db) as s, s.conn.transaction():
+            held = s.conn.execute('SELECT pg_try_advisory_xact_lock(%s) AS held',
+                                  (lock_key(self.db.schema + ':refresh'),)).fetchone()['held']
+            if not held:
+                raise WebError('另一個更新正在進行，請稍後重試。', code='refresh_busy', status=429)
+            self.recover_jobs(s)
+            row = s.conn.execute(sql.SQL("SELECT document FROM {} ORDER BY document->>'created_at' DESC LIMIT 1").format(s.table('refresh_jobs'))).fetchone()
+            if row:
+                latest = row['document']
+                if latest['status'] in ('queued', 'running'):
+                    return latest, False
+                # C4-5: the cooldown is read from the row, so it holds across instances.
+                if (datetime.now(UTC) - datetime.fromisoformat(latest['created_at'])).total_seconds() < COOLDOWN_SECONDS:
+                    raise WebError('更新冷卻中，請於一分鐘後重試。', code='cooldown', status=429)
+            job = {'job_id': str(uuid4()), 'portfolio_revision': p['revision'], 'created_at': now(),
+                   'status': 'running', 'message': '正在取得一般交易時段報價', 'catalog_only': catalog_only,
+                   'owner': self.instance, 'lease_expires_at': self.lease_until()}
+            self.put_job(job, s)
+            return job, True
 
     def refresh(self, catalog_only=False):
-        with self.mutex:
-            p = self.get()
-            if not p['rows'] and not catalog_only:
-                raise WebError('請先保存持股。')
-            with Storage(self.db) as s:
-                jobs = s.conn.execute(sql.SQL('SELECT document FROM {} ORDER BY document->>\'created_at\' DESC LIMIT 1').format(s.table('refresh_jobs'))).fetchall()
-            if jobs:
-                latest = jobs[0]['document']
-                if latest['status'] in ('queued', 'running'):
-                    return latest
-                if (datetime.now(UTC) - datetime.fromisoformat(latest['created_at'])).total_seconds() < 60:
-                    raise WebError('更新冷卻中，請於一分鐘後重試。', code='cooldown', status=429)
-            job = {'job_id': str(uuid4()), 'portfolio_revision': p['revision'], 'created_at': now(), 'status': 'queued', 'message': '等待更新', 'catalog_only': catalog_only}
-            self.put_job(job)
-            Thread(target=self.run_job, args=(job, p), daemon=True).start()
-            return job
+        """D3: the work runs inside this request, because Cloud Run only guarantees CPU
+        while the connection is open. The caller receives a finished job, not a 202.
+        """
+        p = self.get()
+        if not p['rows'] and not catalog_only:
+            raise WebError('請先保存持股。')
+        job, mine = self.claim(p, catalog_only)
+        if not mine:
+            return job  # another instance holds a live lease; report it, do not duplicate
+        self.run_job(job, p)
+        return job
 
     def run_job(self, job, p):
+        deadline = monotonic() + self.refresh_config.deadline_seconds
         try:
-            job.update(status='running', message='正在取得一般交易時段報價')
-            self.put_job(job)
             try:
                 self.catalog()
                 needs_catalog = False
@@ -233,8 +315,7 @@ class Dashboard:
                 needs_catalog = True
             if job.get('catalog_only') or needs_catalog:
                 from stock_quote_fetcher.catalog import fetch_all
-                job.update(message='正在更新官方股票清單')
-                self.put_job(job)
+                self.progress(job, '正在更新官方股票清單')
                 with Storage(self.db) as s:
                     s.acquire_lock()
                     s.save_instrument_catalog(fetch_all(self.catalog_config), max_age_hours=self.catalog_config.max_age_hours)
@@ -242,17 +323,27 @@ class Dashboard:
                     job.update(status='succeeded', message='官方股票清單已更新，可以重新儲存持股。')
                     return
             holdings = validate_rows(p['rows'])
-            resolved, _ = self.resolve(holdings)
+            limit = self.refresh_config.max_tickers
+            planned = holdings[:limit] if limit else holdings
+            deferred = len(holdings) - len(planned)
+            resolved, _ = self.resolve(planned)
+            count, attempted, cut = 0, 0, False
             with Storage(self.db) as s:
                 s.acquire_lock()
                 s.recover_incomplete()
-                runner = QuoteRunner(s, replace(self.quote_config, cycle_budget_seconds=300))
-                runner.restore_cooldowns(s.provider_cooldowns(as_of=datetime.now(UTC)))
-                count = 0
                 # Every position gets a bounded batch; large portfolios cannot starve
                 # later tickers behind a single market cycle's time budget.
-                for offset in range(0, len(holdings), 5):
-                    batch = holdings[offset:offset + 5]
+                for offset in range(0, len(planned), BATCH_SIZE):
+                    remaining = deadline - monotonic()
+                    if remaining <= 1:
+                        cut = True
+                        break
+                    batch = planned[offset:offset + BATCH_SIZE]
+                    # Rebuilt per batch so no cycle can outlive the deadline. Cooldowns
+                    # are rebuilt from persisted attempts, so carrying them is a re-read.
+                    runner = QuoteRunner(s, replace(self.quote_config,
+                                                    cycle_budget_seconds=max(1, min(self.quote_config.cycle_budget_seconds, int(remaining)))))
+                    runner.restore_cooldowns(s.provider_cooldowns(as_of=datetime.now(UTC)))
                     stream = StringIO(newline='')
                     writer = csv.writer(stream)
                     writer.writerow(('ticker', 'quantity', 'buy_price'))
@@ -261,22 +352,22 @@ class Dashboard:
                     s.start_run(run, input_text=stream.getvalue(), config=public_config(self.db, runner.config, self.catalog_config), image_id='dashboard-v1')
                     reports, _ = runner.run(run, batch, resolved, ())
                     count += sum(row.market_value is not None for _, report in reports for row in report.rows)
-                    job.update(message=f'已處理 {offset + len(batch)}/{len(holdings)} 檔，正在更新')
-                    self.put_job(job)
-            job.update(status='succeeded' if count == len(holdings) else 'partial' if count else 'failed',
-                       message=f'已完成：{count}/{len(holdings)} 檔有可用報價')
+                    attempted += len(batch)
+                    self.progress(job, f'已處理 {attempted}/{len(planned)} 檔，正在更新')
+            notes = []
+            if cut:
+                notes.append(f'{len(planned) - attempted} 檔未在時限內處理')
+            if deferred:
+                notes.append(f'{deferred} 檔超出本次上限')
+            message = f'已完成：{count}/{len(holdings)} 檔有可用報價'
+            if notes:
+                message += '；' + '、'.join(notes) + '，請再次更新取得其餘報價'
+            job.update(status='succeeded' if count == len(holdings) else 'partial' if count else 'failed', message=message)
         except StorageError:
             job.update(status='failed', message='報價程序忙碌或資料庫暫不可用；保留既有價格，請稍後重試。')
         except Exception:
             job.update(status='failed', message='報價來源或官方清單暫不可用；保留既有價格，請稍後重試。')
         finally:
+            # C4-6: quotes already written by finished batches stay; only the job ends.
             job['completed_at'] = now()
-            self.put_job(job)
-
-    def recover_jobs(self):
-        with Storage(self.db) as s:
-            rows = s.conn.execute(sql.SQL("SELECT document FROM {} WHERE document->>'status' IN ('queued','running')").format(s.table('refresh_jobs'))).fetchall()
-        for row in rows:
-            job = row['document']
-            job.update(status='failed', message='服務重啟中斷更新；請重新更新。', completed_at=now())
             self.put_job(job)

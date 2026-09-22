@@ -1,6 +1,6 @@
 # 雲端部署第一階段執行計畫
 
-> 最新進度（2026-09-22）：C1／C2／C3／C5 的程式交付皆已完成。**C3 四項已全部勾選，但真實 Access 過期與 Cloud Run 縮容後的恢復驗收併入 `C7-3`**，在該項通過前不得宣稱 C3 的雲端完成條件已達成。下一步為 C4（含先取得 C7-2 代理逾時量測）。詳見 [C3 證據](cloud-C3-evidence.md)與 [C5 證據](cloud-C5-evidence.md)；下方 09-20 摘要保留作為歷史狀態。
+> 最新進度（2026-09-22）：C1／C2／C3／C4／C5 的程式交付皆已完成。**C3 四項已全部勾選，但真實 Access 過期與 Cloud Run 縮容後的恢復驗收併入 `C7-3`**，在該項通過前不得宣稱 C3 的雲端完成條件已達成。**C4 同樣已全項勾選，但 `C4-1` 的 deadline 與單次檔數兩個數值仍未量測**（`C6-2` 部署前必須回填），容器終止與 rollout 的驗收併入 `C7-5`。下一步為 `C7-2` 的代理逾時量測，它同時解開 `C4-1` 的數值與 `C6-2` 的部署前提。詳見 [C3 證據](cloud-C3-evidence.md)、[C4 證據](cloud-C4-evidence.md)與 [C5 證據](cloud-C5-evidence.md)；下方 09-20 摘要保留作為歷史狀態。
 
 日期：2026-09-17；狀態：`D1` 已全項定案（Cloudflare Access ＋ Google，服務間以 HMAC 簽章）、`D2` 已定案（**Cloudflare Workers static assets**，單一 Worker 同時承載靜態檔與 `/api/` 代理；2026-09-17 由原訂的 Pages Functions 改採，理由見 `D2`）、`D3` 已定案（請求內同步完成，時間上限待實測回填）、`D4` 已定案（Cloud Run 與 Supabase 同置東京）、`D5` 已定案（假持股先行、上限 $10、不買網域）、`D6` 已定案（GitHub Actions 建置推送，以 Workload Identity Federation 免金鑰認證）。`D1`–`D6` 全數定案，**`C1` 已全部完成**（`C1-1`–`C1-9`；四項完成條件中「預算警示可收到通知」因零花費無法觸發，併入 `C7-7`，不構成阻擋）。**`C2` 已全部完成**（2026-09-18／09-20，`C2-1`–`C2-7` ＋ 補立的健康檢查端點；HTTP 層改為 FastAPI ＋ uvicorn，證據見 `docs/cloud-C2-evidence.md`）。下一步為 `C3`／`C4`／`C5`。
 
@@ -264,7 +264,11 @@ Cloud Run 的「CPU always allocated」可讓背景執行緒續跑，但需為�
    現行每批預算 300 秒（dashboard.py:256）。若邊緣確實卡在約 100 秒，調大 Cloud Run timeout 無法解決，必須縮小單次檔數，或回頭採選項 2。
 3. **concurrency 不可設為 1**。前端每 1.8 秒輪詢 job（static/app.js:86），這些輪詢與長請求是各自獨立的請求；若 `max=1` 且 concurrency 亦為 1，輪詢會全部排在長請求之後，等待期間完全沒有進度可顯示。此數字須與本決策一併定，不能留到 `C6-2` 才處理。
 
-- **待實測回填的數值**（決策已定，數字未定）：整體 deadline（目前每批 5 檔、每批 `cycle_budget_seconds=300`，dashboard.py:256,261，**整份清單沒有總時間上限**）、單次最多檔數、Cloud Run request timeout、`D2` 代理鏈的逾時，以及 Cloud Run concurrency 下限，須一併對齊後才寫進程式與部署設定。在 `C7-2` 與 `C7-6` 量測完成前，不得寫入憑推測得到的數字。
+   **2026-09-22 補記（`C4-1` 完成後）**：結論不變，但理由已經換了。`C4-1` 後前端是等待長請求本身，只有在另一個實例持有租約時才會回到輪詢，所以「等待期間沒有進度可顯示」已不再是主要理由。真正綁死這個數字的是**平台探測**：長請求佔住實例時 `/healthz` 仍須能被回應，否則實例會被判定不健康而遭終止。已寫入 `C6-2`。
+
+- **待實測回填的數值**（決策已定，數字未定）：整體 deadline（撰寫本節時為每批 5 檔、每批 `cycle_budget_seconds=300`，dashboard.py:256,261，**整份清單沒有總時間上限**）、單次最多檔數、Cloud Run request timeout、`D2` 代理鏈的逾時，以及 Cloud Run concurrency 下限，須一併對齊後才寫進程式與部署設定。在 `C7-2` 與 `C7-6` 量測完成前，不得寫入憑推測得到的數字。
+
+  **2026-09-22 補記（`C4-1` 完成後）**：上述「整份清單沒有總時間上限」已不再成立——`C4-1` 加上了整體 deadline 與單次檔數兩個設定鍵（`[scheduler] refresh_deadline_seconds`、`refresh_max_tickers`），機制完成。**但本項的要求未解除**：兩個鍵的預設值刻意沿用既有行為（300 秒、不設上限）而非量測值，`deploy/cloud.toml` 仍未寫入任何數字。`C7-2`／`C7-6` 量測後必須回填，`C6-2` 不得在回填前部署。另 `C6-2` 的 request timeout 必須大於 deadline，否則平台會在程式自己收尾前切斷請求。
 - **重新評估的觸發條件**：若 `C7-2` 量出的邊緣逾時，扣掉冷啟動後不足以在單次請求內完成一份可用的清單（連縮小檔數也不可行），則本決策作廢，回到選項 2 重新評估，並同步調整 `C4` 的工作生命週期設計。
 - **影響範圍**：`C4` 全部、`C6-2`（request timeout 與 concurrency）。
 
@@ -457,17 +461,21 @@ Dockerfile 三處 `company_ca` 掛載本來就是條件式（`if [ -f /run/secre
 
 ### C4　工作生命週期、單例假設與復原
 
+**2026-09-22 進度**：`C4-1`–`C4-6` 的程式與資料庫整合驗證全部完成，六項皆已勾選。**`C4-1` 的兩個數值仍未定**：機制已完成且可設定，deadline 與單次檔數的實際值待 `C7-2`／`C7-6` 量測，`C6-2` 不得在回填前部署。真實容器終止與重新部署的驗收由 `C7-5` 承接。見 [C4 證據](cloud-C4-evidence.md)。下列「目前」描述為開工前問題。
+
 - **目的**：移除「單一長駐程序」假設。Cloud Run 會縮容到零、會同時存在新舊 revision，目前的背景執行緒、行程內鎖與全站 advisory lock 在這個環境下都會出錯。
 - **前置**：`D3`、`C2`、`C5`。
 - **執行項目**：
-  - [ ] `C4-1` 依 `D3` 將 `refresh()` 改為請求內有時限完成（dashboard.py:207），設整體 deadline 與單次最多檔數。前端可沿用 job 查詢介面（static/app.js:114 的 `watch()` 每 1.8 秒輪詢），只需改善等待狀態顯示。
-  - [ ] `C4-2` 移除 Web 啟動時取得的全程序 advisory lock（web.py:314，取不到時於 web.py:316 結束）：新 revision 啟動時拿不到鎖會直接以 `parser.error` 結束，部署將失敗。
-  - [ ] `C4-3` 將 `Dashboard.mutex`（dashboard.py:95 建立、dashboard.py:208 使用）這個行程內 `threading.Lock` 換成資料庫層的原子認領；跨實例時記憶體鎖不具任何互斥效果。
-  - [ ] `C4-4` 改寫 `recover_jobs()`（dashboard.py:276，由 web.py:317 在取得上述 lease 後呼叫）：目前啟動就把所有 queued／running 的 job 標成失敗，在多實例或新舊版本重疊時會誤判其他存活實例正在執行的工作。改為 owner／lease／逾期回收，未確認過期不得宣告失敗。
-  - [ ] `C4-5` 保留 60 秒更新冷卻（dashboard.py:218 的判斷、dashboard.py:219 的回應）並確認它在多實例下仍然有效。
-  - [ ] `C4-6` 確認工作超時或容器被終止時，先前可用的報價仍保留，下一次請求能安全重新開始。
-- **完成條件**：更新途中終止容器或重新部署，job 不會永久停在 running，也不會把其他實例的工作標成失敗。
-- **證據**：中斷與重部署情境的 job 狀態紀錄。
+  - [x] `C4-1` 依 `D3` 將 `refresh()` 改為請求內有時限完成（dashboard.py:207），設整體 deadline 與單次最多檔數。前端可沿用 job 查詢介面（static/app.js:114 的 `watch()` 每 1.8 秒輪詢），只需改善等待狀態顯示。**機制已完成**：`refresh()` 在請求內跑完並回傳完成的 job，路由改回 200（另一實例持有租約時才回 202 讓前端輪詢）；整體 deadline 由 `[scheduler] refresh_deadline_seconds` 設定，每批預算取「剩餘時間」與 `cycle_budget_seconds` 的較小值並逐批重建，使單一 cycle 不可能活過 deadline；單次檔數由 `refresh_max_tickers` 設定，超出的檔數在完成訊息中明列而非默默丟棄。前端改為等待這個長請求，並把被截斷的連線與 Access 過期分開處理（見 `C3-3`）。**兩個數值刻意維持未定**：預設 300 秒沿用原本每批就已花掉的預算、單次不設上限，皆非新的推測值；`D3` 禁止在 `C7-2`／`C7-6` 量測前寫入猜測數字。
+  - [x] `C4-2` 移除 Web 啟動時取得的全程序 advisory lock（web.py:314，取不到時於 web.py:316 結束）：新 revision 啟動時拿不到鎖會直接以 `parser.error` 結束，部署將失敗。**已移除**，啟動不再取任何鎖，也不再於啟動時掃描 job。實測同一 schema 可同時跑兩個服務且各自 `/healthz` 回 200，資料庫端無任何 advisory lock。
+  - [x] `C4-3` 將 `Dashboard.mutex`（dashboard.py:95 建立、dashboard.py:208 使用）這個行程內 `threading.Lock` 換成資料庫層的原子認領；跨實例時記憶體鎖不具任何互斥效果。**已改為 `claim()`**：單一交易內以 `pg_try_advisory_xact_lock` 取得認領權，交易內完成逾期回收、冷卻判斷與寫入新 job。交易範圍的鎖由 commit、rollback 與連線中斷一併釋放，不會有任何東西活過取得它的程序。
+  - [x] `C4-4` 改寫 `recover_jobs()`（dashboard.py:276，由 web.py:317 在取得上述 lease 後呼叫）：目前啟動就把所有 queued／running 的 job 標成失敗，在多實例或新舊版本重疊時會誤判其他存活實例正在執行的工作。改為 owner／lease／逾期回收，未確認過期不得宣告失敗。**已改寫**：job 文件內記 `owner` 與 `lease_expires_at`，每次進度寫入即續約（進度寫入就是唯一的心跳）。只有租約真的到期才回收；租約未到期一律不動。改在 `claim()` 內回收而非啟動時，因為啟動時無從分辨別的存活實例與被遺棄的工作。租約長度由設定導出（每批預算＋單次操作逾時＋30 秒緩衝），必然大於 60 秒冷卻，因此回收後不會立刻撞到自己的冷卻。
+  - [x] `C4-5` 保留 60 秒更新冷卻（dashboard.py:218 的判斷、dashboard.py:219 的回應）並確認它在多實例下仍然有效。**已保留**，判斷讀的是 job 列而非行程記憶體，已實測第二個實例同樣看得到冷卻並回 429。
+  - [x] `C4-6` 確認工作超時或容器被終止時，先前可用的報價仍保留，下一次請求能安全重新開始。**已確認**：deadline 只停止後續批次，已完成批次寫入的報價不受影響；逾時的 job 只改自己的狀態，不碰 `portfolio` 也不刪 `quotes`。已實測被 deadline 截斷後 `quotes` 筆數與持股文件皆不變。
+- **完成條件**（2026-09-22 拆為兩段，理由同 `C3`）：
+  - **程式面（已達成）**：job 不會永久停在 running（租約到期即回收，讀取端亦不會顯示死掉的 running），也不會把其他實例的工作標成失敗（租約未到期一律不動）。以隔離 PostgreSQL 的整合測試驗證。
+  - **雲端面（待 `C7-5`）**：真的在更新途中終止容器或重新部署後的 job 狀態。此項需要 Cloud Run 的實際縮容與 rollout，本機造不出來。
+- **證據**：`docs/cloud-C4-evidence.md`，含中斷與多實例情境的 job 狀態紀錄。
 
 ### C5　Supabase 連線、TLS 與 schema
 
@@ -490,7 +498,7 @@ Dockerfile 三處 `company_ca` 掛載本來就是條件式（`if [ -f /run/secre
 - **順序規則（2026-09-20 補立，硬性）**：**`C3-1` 完成前不得把 Cloud Run 接上任何真實資料。** 依 `D1`，Cloud Run 必須允許未驗證呼叫（Cloudflare Worker 以一般 HTTPS 呼叫它），因此 `run.app` 網址一旦外流，**唯一的關卡就是 HMAC 驗簽**；`C3-1` 未完成時那道關卡不存在，等同把資料庫內容開在公網上。`D5` 的「假持股先行」已涵蓋此風險，但該規則的理由是成本與資料價值，與本條的理由不同，故另立。另：`C5-3` 的 Supabase 憑證鏈確認亦須早於 `C6-2`，否則首次部署即連不上資料庫。
 - **執行項目**：
   - [ ] `C6-1` 依 `D6` 以 GitHub Actions 建置 linux/amd64 並推送 Artifact Registry，沿用 lockfile 與非 root 設計；移除公司專用 `company_ca_file` 與 relaxed TLS 設定（config.example.toml 的 `[tls]`）。runner 不傳入 `company_ca` build secret，Dockerfile 的條件式掛載會自動跳過，不需改 Dockerfile。workflow 權限最小化：預設 `contents: read`，僅需換取 GCP 憑證的 job 才加 `id-token: write`。映像路徑固定為 `asia-northeast1-docker.pkg.dev/finpo-508709/finpo/stock-quote:<tag>`——repository 以專案命名、image 以服務命名，使同一財務系統的其他服務共用同一 repository；Artifact Registry 不支援 repository 改名，此路徑為終局。**由 `C1-9` 帶出的三條**：（a）workflow 引用的 action 須釘 commit SHA 而非可變 tag——帶 `id-token: write` 的 workflow 若用到被汙染的 action，等同交出 deploy SA 權限；（b）WIF provider 目前只限定 `assertion.repository`、未限定 ref，任何分支都能換到憑證，若部署只該由 `main` 觸發須另加 `assertion.ref` 條件或在 workflow 層限制；（c）須設 Artifact Registry cleanup policy 只保留最近數個 tag——實測（`C2-1`）第一個 tag 約 125 MB、其後每個增量 tag 約 82 MB，約第 6 個即超出 0.5 GB 免費額度，建議只留最近 3 個。**另須指定 `--target web`**（`C2-4` 新增的 stage）：預設目標 `runtime` 的 ENTRYPOINT 是 CLI，部署上去不會啟動服務。
-  - [ ] `C6-2` 部署設定：1 vCPU／1 GiB、min=0、max=1，concurrency 依 `D3` 設定（**不可為 1**，須容納更新期間並行的 job 輪詢），request timeout 依 `D3` 對齊；`DB_PASSWORD` 與必要 provider key 放 Secret Manager（`db-password` 已於 `C1-3` 建立並授權給 `finpo-runtime`）；簽章秘密以 `proxy-hmac-secret` 與 `proxy-hmac-secret-prev` 兩個環境變數掛載（皆參照 `latest`），兩組於 `C1-7` 已建立，因此輪替時不需變更部署設定；日誌輸出 stdout／stderr 並限制內容與保留量。若設定 startup／liveness probe，**指向 `C2-4` 新增的 `GET /healthz`，不可指向任何 `/api/` 路徑**（`C3-1` 上線後探測無法簽章，會全數 401）；`web` 映像已自帶啟動命令，**不需覆寫 command／args**。**另須設定 `C2-2` 的兩個環境變數**：`WEB_ALLOWED_HOSTS`（Cloud Run 服務主機名，或明確設為 `*`）與 `WEB_ALLOWED_ORIGINS`（前端 Worker 的 `https://` 來源）；兩者未設定時服務會套用本機預設值而把所有雲端請求判 403。
+  - [ ] `C6-2` 部署設定：1 vCPU／1 GiB、min=0、max=1，concurrency 依 `D3` 設定（**不可為 1**；`C4-1` 完成後更新期間通常沒有並行輪詢，但長請求佔住實例時 `/healthz` 探測仍須能被回應，否則實例會被判定不健康而遭終止），request timeout 依 `D3` 對齊且**必須大於 `refresh_deadline_seconds`**，否則平台會在程式自己收尾前切斷請求；**部署前必須先把 `C4-1` 的 `refresh_deadline_seconds` 與 `refresh_max_tickers` 依 `C7-2`／`C7-6` 的量測值寫進 `deploy/cloud.toml`**；`DB_PASSWORD` 與必要 provider key 放 Secret Manager（`db-password` 已於 `C1-3` 建立並授權給 `finpo-runtime`）；簽章秘密以 `proxy-hmac-secret` 與 `proxy-hmac-secret-prev` 兩個環境變數掛載（皆參照 `latest`），兩組於 `C1-7` 已建立，因此輪替時不需變更部署設定；日誌輸出 stdout／stderr 並限制內容與保留量。若設定 startup／liveness probe，**指向 `C2-4` 新增的 `GET /healthz`，不可指向任何 `/api/` 路徑**（`C3-1` 上線後探測無法簽章，會全數 401）；`web` 映像已自帶啟動命令，**不需覆寫 command／args**。**另須設定 `C2-2` 的兩個環境變數**：`WEB_ALLOWED_HOSTS`（Cloud Run 服務主機名，或明確設為 `*`）與 `WEB_ALLOWED_ORIGINS`（前端 Worker 的 `https://` 來源）；兩者未設定時服務會套用本機預設值而把所有雲端請求判 403。
   - [ ] `C6-3` 以獨立管理者執行 `python -m stock_quote_fetcher.cloud_db bootstrap-sql` 產生的 SQL，再以 runtime 執行 `web --refresh-catalog`。C5 已先完成首次 schema／空持股初始化並驗證可重跑；C6 仍須完成部署環境的一次性執行程序與官方清單更新。**不得以 runtime 執行 migration／web --initialize**，其 CREATE 權限已於 C5-2 撤除；Web 啟動仍不自動 migration。
   - [ ] `C6-4` 記錄映像 digest、部署設定與 secret 版本，確認可回滾。digest 由 `D6` 的 workflow 輸出並留存於 run log，回滾即以該 digest 手動觸發重新部署。資料庫 migration 需向後相容：回滾映像不等於回滾資料庫。
 - **完成條件**：服務可由記錄的映像 digest 重新部署並啟動成功，初始化步驟可獨立重跑。
@@ -505,7 +513,7 @@ Dockerfile 三處 `company_ca` 掛載本來就是條件式（`if [ -f /run/secre
   - [ ] `C7-2` 依 `D2` 在同一 Worker 內實作 `/api/*` 代理，`assets.run_worker_first` 僅列 `/api/*`，並以實際請求核對靜態檔路徑不會啟動 Worker；驗證 Worker 端 WebCrypto 與後端 Python 對同一 canonical string 產生相同簽章；以故意延遲回應的測試端點量出代理的實際逾時上限，並對齊前端、代理與後端的逾時。**`C2-2` 追加的必辦事項：Worker 轉發時必須原樣帶上瀏覽器的 `Origin` 標頭**，否則後端會把所有寫入請求判 403；理由是 HMAC 簽章擋不住「惡意網站以 `credentials:'include'` 觸發、Access 放行、Worker 照簽」這條跨站路徑，Origin 白名單是該路徑唯一的防線（見 `docs/cloud-C2-evidence.md` 的 `C2-2`）。
   - [ ] `C7-3` 啟用入口驗證，並驗證無法繞過代理直接呼叫 `run.app`。後端驗證需依賴可靠簽章或憑證，不得只檢查可偽造的標頭。另須實測：未授權的 Google 帳號被 Access 拒絕、無痕視窗開啟會導向 Google 登入、session 過期後前端可自行恢復。**本項承接 `C3-3` 的雲端驗收**：`C3-3` 的勾選只涵蓋程式與模擬測試，C3 完成條件中「閒置至服務縮容後再操作，不需手動重新整理即可繼續使用」要在此處取得實測證據。此處未過即視為 C3 尚未收尾，不得因 `C3-3` 已勾選而略過。
   - [ ] `C7-4` 功能驗收：上傳 Excel、預覽、儲存、版本衝突（409）、報價更新、缺價／失敗、查詢結果與前端提示。使用 `D5` 決定的資料。
-  - [ ] `C7-5` 持久性驗收：關閉瀏覽器、等待縮容後重開，確認持股仍在；更新中途終止與重新部署，確認 job 不永久卡住。
+  - [ ] `C7-5` 持久性驗收：關閉瀏覽器、等待縮容後重開，確認持股仍在；更新中途終止與重新部署，確認 job 不永久卡住。**本項承接 `C4` 的雲端完成條件**：`C4` 的勾選只涵蓋程式與資料庫整合測試，真實容器終止與 rollout 下的 job 狀態要在此處取得實測證據。
   - [ ] `C7-6` 外部來源驗收：實測台股上市、上櫃、美股與 ETF 從 GCP 出口抓價，記錄 429／封鎖／逾時與品質旗標。**公司網路測試通過不能證明 GCP 出口可用。**
   - [ ] `C7-7` 營運驗收：DB 匯出與還原演練、前版映像回滾、計費與 DB 容量檢查、冷啟動與抓價耗時量測。
 - **完成條件**：評估文件第 6 節 C 的 8 項全部通過，且量測數據取代先前的估算假設。
@@ -532,7 +540,7 @@ flowchart LR
 | 項目 | 現況 | 何時必須解決 |
 |---|---|---|
 | ~~共享秘密輪替的過渡期處理~~ | **已解決**：`C1-7` 定案兩組 secret＋驗簽接受一組秘密；程序見 `docs/cloud-C1-evidence.md` | `C3-1` 依此實作 |
-| 抓價整體 deadline 與單次上限 | 尚無量測，目前僅有每批 300 秒的批次預算；上限受 `C7-2` 的邊緣逾時實測值封頂 | `C4` 開始前；`C7-6` 後回填實測值 |
+| 抓價整體 deadline 與單次上限 | **機制已完成（`C4-1`）**，兩個數值仍未量測：`[scheduler] refresh_deadline_seconds` 預設 300 秒、`refresh_max_tickers` 預設不設限，皆沿用既有行為而非推測值；上限受 `C7-2` 的邊緣逾時實測值封頂 | `C6-2` 部署前必須回填；`C7-2`／`C7-6` 量測 |
 | Worker 對外請求的實際逾時上限 | 未測；常見說法為邊緣約 100 秒切斷（524），若屬實則與每批 300 秒預算衝突 | `C7-2`；最晚 `D3` 定 deadline 前 |
 | ~~自動產生的 `_routes.json` 是否只涵蓋 `/api/*`~~ | **已解除**：`D2` 改採 Workers static assets 後，改以 wrangler 的 `run_worker_first` 明文宣告，無自動產生的失敗模式 | — |
 | ~~Access 能否保護免費子網域（含 preview URL）~~ | **已解決**：`C1-6` 實測 `workers.dev` 可受 Worker-level Access 保護，未登入時靜態檔不送出、`/api/*` 亦在保護傘內，`D5` 的「不買網域」成立 | — |

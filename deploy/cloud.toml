@@ -21,8 +21,13 @@
 # Omitted on purpose, with their defaults left in force:
 #   [providers]  valuation defaults to yahoo, and Dashboard clears comparison anyway
 #                (dashboard.py:96), so the cloud service calls no keyed provider.
-#   [scheduler]  D3's deadline and batch size are still unmeasured; C7-2 and C7-6 fill
-#                them in here. Writing guessed numbers now would look like decisions.
+#   [scheduler]  refresh_deadline_seconds and refresh_max_tickers (C4-1) are still
+#                unmeasured. C7-2's edge timeout and C7-6's fetch timings fill them in
+#                here, and C6-2 must not deploy before they do. The code defaults bound a
+#                refresh at 300s with no ticker cap; 300s reuses the per-batch budget the
+#                dashboard already spent, so it is not a claim about the edge, which is
+#                commonly said to cut at about 100s. Writing a guessed number here now
+#                would look like a decision.
 #   database timeout fields retain the defaults (connect 10s / statement 10s / lock 3s).
 #   C5-4 applies session values after connecting and verifies each with SHOW.
 

@@ -49,3 +49,16 @@ test('session endpoint failure does not recurse',async()=>{
  const s=setup([response(401,{code:'unauthorized'}),response(401,{code:'unauthorized',message:'denied'})]);
  await assert.rejects(s.run("api('/api/portfolio')"),/denied/);assert.equal(s.calls.length,2);
 });
+test('a cut-short long refresh reports the cut instead of reloading',async()=>{
+ for(const failure of [new TypeError('network'),response(0,{},'opaqueredirect')]){
+ const s=setup([failure]);
+ await assert.rejects(s.run("api('/api/portfolio/refresh','POST',{},true,false)"),/連線時限/);
+ assert.equal(s.reloads(),0);assert.equal(s.calls.length,1);
+ }
+});
+test('a refresh cut short leaves no login draft behind',async()=>{
+ const s=setup([new TypeError('network')]);
+ s.run("dirty=true;draft=[{ticker:'TEST'}];saved={revision:2}");
+ await assert.rejects(s.run("api('/api/portfolio/refresh','POST',{},true,false)"));
+ assert.equal(s.storage.get('portfolio-login-draft'),undefined);
+});
