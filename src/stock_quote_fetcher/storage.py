@@ -8,6 +8,7 @@ from hashlib import sha256
 from importlib.metadata import version
 from importlib.resources import files
 import json
+import re
 from uuid import uuid4
 
 import psycopg
@@ -44,7 +45,8 @@ def lock_key(schema: str) -> int:
 def configuration_snapshot(config: dict) -> tuple[dict, str]:
     # Explicit public sections/keys only. Never copy arbitrary environment or secrets.
     allowed = {
-        'database': {'host','port','name','schema','user','connect_timeout','statement_timeout_ms','lock_timeout_ms'},
+        'database': {'host','port','name','schema','user','connect_timeout','statement_timeout_ms','lock_timeout_ms',
+                     'sslmode','sslrootcert'},
         'providers': {'valuation','comparison'},
         'scheduler': {'poll_interval_seconds','operation_timeout_seconds','cycle_budget_seconds','max_retries',
                       'campaign_duration_days','post_close_observation_minutes','heartbeat_interval_seconds'},
@@ -71,6 +73,14 @@ def migration_sources():
     return [(item.name, item.read_text(encoding='utf-8')) for item in sorted(root.iterdir(), key=lambda item: item.name) if item.name.endswith('.sql')]
 
 
+def timeout_ms(value):
+    """SHOW uses normalized units (e.g. 10000ms becomes 10s)."""
+    match = re.fullmatch(r'(\d+)(ms|s|min|h|d)?', value)
+    if not match:
+        raise StorageError('資料庫逾時參數回傳格式無效。')
+    return int(match[1]) * {None: 1, 'ms': 1, 's': 1000, 'min': 60000, 'h': 3600000, 'd': 86400000}[match[2]]
+
+
 class Storage:
     def __init__(self, config: DatabaseConfig):
         self.config = config
@@ -83,17 +93,38 @@ class Storage:
         if self.conn is not None:
             raise StorageError('Storage session 不可重複開啟。')
         c = self.config
+        tls = {'sslmode': c.sslmode} | ({'sslrootcert': c.sslrootcert} if c.sslmode.startswith('verify') else {})
         try:
             self.conn = psycopg.connect(host=c.host, port=c.port, dbname=c.name, user=c.user,
-                password=c.password, connect_timeout=c.connect_timeout, autocommit=True, row_factory=dict_row,
-                options=f'-c timezone=UTC -c statement_timeout={c.statement_timeout_ms} -c lock_timeout={c.lock_timeout_ms}')
+                password=c.password, connect_timeout=c.connect_timeout, autocommit=True, row_factory=dict_row, **tls)
+            # Session poolers may silently discard startup options. Set on the live
+            # session, then verify the effective values instead of trusting acknowledgement.
+            self.conn.execute(sql.SQL('SET statement_timeout TO {}').format(sql.Literal(c.statement_timeout_ms)))
+            self.conn.execute(sql.SQL('SET lock_timeout TO {}').format(sql.Literal(c.lock_timeout_ms)))
+            self.conn.execute("SET timezone TO 'UTC'")
             # Explicitly qualified application SQL; never trust a caller's search_path.
             self.conn.execute("SET search_path TO pg_catalog")
-            return self
-        except psycopg.Error:
+            actual = {name: self.conn.execute(sql.SQL('SHOW {}').format(sql.Identifier(name))).fetchone()[name]
+                      for name in ('statement_timeout', 'lock_timeout', 'TimeZone', 'search_path')}
+            if (timeout_ms(actual['statement_timeout']) != c.statement_timeout_ms
+                    or timeout_ms(actual['lock_timeout']) != c.lock_timeout_ms
+                    or actual['TimeZone'] != 'UTC' or actual['search_path'] != 'pg_catalog'):
+                raise StorageError('資料庫 session 設定未生效；拒絕使用此連線。')
+        except (psycopg.Error, StorageError) as exc:
             if self.conn:
                 self.conn.close()
+                self.conn = None
+            if isinstance(exc, StorageError):
+                raise
             raise StorageError('資料庫連線失敗；請核對網路、帳號與環境設定。') from None
+        # libpq refuses a plaintext connection under require/verify-*, so this should be
+        # unreachable. It is checked anyway because C5-4 found the pooler silently ignoring
+        # connection settings: a setting sent is not a setting in force.
+        if c.sslmode != 'disable' and not self.conn.pgconn.ssl_in_use:
+            self.conn.close()
+            self.conn = None
+            raise StorageError('連線未使用 TLS，與 database.sslmode 設定不符。')
+        return self
 
     def __exit__(self, *args):
         if self.conn:
@@ -349,7 +380,7 @@ class Storage:
         with self.transaction(writer=False, readonly=True):
             rows = self.conn.execute(sql.SQL('''SELECT * FROM {} WHERE instrument_id=%s
                 AND provider=%s AND ticker=%s AND currency=%s AND market=%s
-                ORDER BY received_at DESC LIMIT 20''').format(self.table('quotes')),
+                ORDER BY received_at DESC,id DESC LIMIT 20''').format(self.table('quotes')),
                 (instrument.instrument_id,provider,instrument.ticker,instrument.currency,instrument.market.value)).fetchall()
         return [(row['id'],Quote(**{key:row[key] for key in Quote.__dataclass_fields__})) for row in rows]
 

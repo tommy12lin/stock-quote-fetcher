@@ -11,6 +11,11 @@ class ConfigurationError(ValueError):
     pass
 
 
+# libpq's prefer and allow are deliberately absent: they encrypt when the server offers
+# TLS and fall back to plaintext when it does not, without telling anyone (C5-3).
+SSLMODES = ("disable", "require", "verify-ca", "verify-full")
+
+
 @dataclass(frozen=True)
 class DatabaseConfig:
     host: str = "postgres"
@@ -22,6 +27,10 @@ class DatabaseConfig:
     connect_timeout: int = 10
     statement_timeout_ms: int = 10000
     lock_timeout_ms: int = 3000
+    # Secure by default: a deployment that says nothing gets a verified TLS connection,
+    # and a local database without TLS has to say so (DB_SSLMODE=disable).
+    sslmode: str = "verify-full"
+    sslrootcert: str = "system"
 
     def __post_init__(self):
         if not isinstance(self.schema, str) or not re.fullmatch(r"[a-z_][a-z0-9_]{0,62}", self.schema) or self.schema.startswith("pg_") or self.schema in {"public", "information_schema"}:
@@ -32,6 +41,10 @@ class DatabaseConfig:
                 raise ConfigurationError(f"database.{name} 超出允許範圍。")
         if any(not isinstance(v, str) or not v or "\x00" in v for v in (self.host, self.name, self.user, self.password)):
             raise ConfigurationError("資料庫連線設定不完整；請由 DB_PASSWORD 注入密碼。")
+        if self.sslmode not in SSLMODES:
+            raise ConfigurationError(f"database.sslmode 僅接受 {'／'.join(SSLMODES)}；prefer 與 allow 會在對方不提供 TLS 時靜默改送明文。")
+        if self.sslmode.startswith("verify") and (not isinstance(self.sslrootcert, str) or not self.sslrootcert):
+            raise ConfigurationError("database.sslrootcert 不可為空；verify-ca／verify-full 需要信任根，system 表示作業系統信任庫。")
 
 
 def runtime_image_id(environ=None) -> str:
@@ -60,11 +73,12 @@ def load_database_config(path: Path, environ=None) -> DatabaseConfig:
     env = os.environ if environ is None else environ
     document = _load_document(path)
     raw = document.get("database", {})
-    allowed = {"host", "port", "name", "schema", "user", "connect_timeout", "statement_timeout_ms", "lock_timeout_ms"}
+    allowed = {"host", "port", "name", "schema", "user", "connect_timeout", "statement_timeout_ms", "lock_timeout_ms",
+               "sslmode", "sslrootcert"}
     if not isinstance(raw, dict) or set(raw) - allowed:
         raise ConfigurationError("database 含不支援的欄位；密碼只能透過環境注入。")
     values = dict(raw)
-    for key in ("host", "port", "name", "schema", "user"):
+    for key in ("host", "port", "name", "schema", "user", "sslmode", "sslrootcert"):
         if f"DB_{key.upper()}" in env:
             values[key] = env[f"DB_{key.upper()}"]
     if isinstance(values.get("port"), str):

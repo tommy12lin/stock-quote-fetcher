@@ -24,6 +24,9 @@ services:
       DB_NAME: ${DB_NAME:-stock_quote_fetcher}
       DB_SCHEMA: ${DB_SCHEMA:-app}
       DB_USER: ${DB_USER:-stock_quote_app}
+      # 本機資料庫在私有 compose 網路上且未啟用 TLS，因此明確關閉；程式預設為 verify-full，
+      # 遠端資料庫（Supabase）不得覆寫成 disable（C5-3）。
+      DB_SSLMODE: ${DB_SSLMODE:-disable}
       # 容器時區固定 UTC；開盤判斷一律由程式依市場時區計算，不依賴 TZ。
       TZ: UTC
       # 執行環境注入實際映像 ID；留空時 run 記錄退回映像內建的 APP_BASE_IMAGE。

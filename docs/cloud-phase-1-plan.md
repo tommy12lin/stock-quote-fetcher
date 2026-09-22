@@ -1,6 +1,8 @@
 # 雲端部署第一階段執行計畫
 
-日期：2026-09-17；狀態：`D1` 已全項定案（Cloudflare Access ＋ Google，服務間以 HMAC 簽章）、`D2` 已定案（**Cloudflare Workers static assets**，單一 Worker 同時承載靜態檔與 `/api/` 代理；2026-09-17 由原訂的 Pages Functions 改採，理由見 `D2`）、`D3` 已定案（請求內同步完成，時間上限待實測回填）、`D4` 已定案（Cloud Run 與 Supabase 同置東京）、`D5` 已定案（假持股先行、上限 $10、不買網域）、`D6` 已定案（GitHub Actions 建置推送，以 Workload Identity Federation 免金鑰認證）。`D1`–`D6` 全數定案，**`C1` 已全部完成**（`C1-1`–`C1-9`；四項完成條件中「預算警示可收到通知」因零花費無法觸發，併入 `C7-7`，不構成阻擋）。下一步為 `C2`／`C5`。
+> 最新進度（2026-09-22）：C1／C2／C5 已完成。C3-1／C3-2／C3-4 已完成本機實作與驗證；C3-3 程式完成，真實 Access／縮容驗收待 C7。下一步為 C4（含先取得 C7-2 代理逾時量測）。詳見 [C3 證據](cloud-C3-evidence.md)與 [C5 證據](cloud-C5-evidence.md)；下方 09-20 摘要保留作為歷史狀態。
+
+日期：2026-09-17；狀態：`D1` 已全項定案（Cloudflare Access ＋ Google，服務間以 HMAC 簽章）、`D2` 已定案（**Cloudflare Workers static assets**，單一 Worker 同時承載靜態檔與 `/api/` 代理；2026-09-17 由原訂的 Pages Functions 改採，理由見 `D2`）、`D3` 已定案（請求內同步完成，時間上限待實測回填）、`D4` 已定案（Cloud Run 與 Supabase 同置東京）、`D5` 已定案（假持股先行、上限 $10、不買網域）、`D6` 已定案（GitHub Actions 建置推送，以 Workload Identity Federation 免金鑰認證）。`D1`–`D6` 全數定案，**`C1` 已全部完成**（`C1-1`–`C1-9`；四項完成條件中「預算警示可收到通知」因零花費無法觸發，併入 `C7-7`，不構成阻擋）。**`C2` 已全部完成**（2026-09-18／09-20，`C2-1`–`C2-7` ＋ 補立的健康檢查端點；HTTP 層改為 FastAPI ＋ uvicorn，證據見 `docs/cloud-C2-evidence.md`）。下一步為 `C3`／`C4`／`C5`。
 
 本文件把 [雲端部署評估](cloud-deployment-assessment.md) 第一階段（Cloudflare 靜態前端＋Cloud Run Python API＋Supabase PostgreSQL）拆成可逐項確認與逐步交付的工作。評估文件負責「為什麼選這個架構」與成本、風險；本文件負責「要先決定什麼」與「按什麼順序做、做完怎麼算數」。
 
@@ -422,25 +424,31 @@ Dockerfile 三處 `company_ca` 掛載本來就是條件式（`if [ -f /run/secre
 - **目的**：讓程式能在「由平台指定 port、隨時縮容、可能同時存在新舊版本」的環境啟動並接受正常 HTTPS 請求。目前的 HTTP 層是本機 POC 設計，不改連啟動與回應都不會成立。
 - **前置**：`D1`、`D2`。
 - **執行項目**：
-  - [ ] `C2-1` 將 `ThreadingHTTPServer`（web.py:15）換成成熟的 WSGI／ASGI 層，沿用既有路由與 `Dashboard` 邏輯。新增依賴須同步更新 `uv.lock` 並維持 `--frozen` 建置。
-  - [ ] `C2-2` Host／Origin 白名單改為可設定：現在寫死 `localhost`／`127.0.0.1` 且 Origin 只接受 `http://`（web.py:61,66），任何雲端 HTTPS 網址都會被判 403。需保留本機模式，並明確定義代理標頭的信任範圍。
-  - [ ] `C2-3` 啟動時綁定 `0.0.0.0` 並讀取平台提供的 `PORT`：目前 `--port` 預設 8765，且只有 `--container` 才監聽全介面（web.py:123-124）。
-  - [ ] `C2-4` 新增 Web 啟動配置：Dockerfile 的 ENTRYPOINT 是 `stock-poc`、CMD 是 `--help`，直接部署原映像不會啟動 Web。可加 image target 或在 Cloud Run 覆寫 command／args。
-  - [ ] `C2-5` 讓雲端設定檔進得了映像：`.dockerignore` 先排除全部、只放行 `pyproject.toml`／`uv.lock`／`README.md`／`src`。`DB_` 開頭環境變數可覆寫資料庫設定（config.py 的 `load_database_config`），但 `providers`／`scheduler`／`instruments`／`tls` 只能從 TOML 讀，因此仍需一份不含秘密的雲端 config 進入映像或以唯讀方式掛載。
-  - [ ] `C2-6` 決定 Python 端是否繼續提供 `/`、`/app.js`、`/style.css`（web.py:82）。前端搬到 Cloudflare 後，Python 回應的 CSP 不會套用到該靜態頁，安全標頭改由 Cloudflare 配置。
-  - [ ] `C2-7` 確認最終映像內 `static/` 與 `migrations/` 皆可讀取（web.py 與 storage.py 以套件資源方式載入）。
+  - [x] `C2-1` 將 `ThreadingHTTPServer`（web.py:15）換成成熟的 WSGI／ASGI 層，沿用既有路由與 `Dashboard` 邏輯。新增依賴須同步更新 `uv.lock` 並維持 `--frozen` 建置。實際採 **FastAPI ＋ uvicorn**（`fastapi==0.141.1`、`uvicorn==0.53.0`，不採 `uvicorn[standard]`）；依賴以 `--only-binary :all:` 及映像內 `--no-cache` 建置雙重確認無原始碼編譯；新增 `tests/test_web.py`（23 項），容器內全套件 227 passed／0 failed。四項刻意的行為變更與三項未驗證事項見 `docs/cloud-C2-evidence.md`。
+  - [x] `C2-2` Host／Origin 白名單改為可設定：現在寫死 `localhost`／`127.0.0.1` 且 Origin 只接受 `http://`（web.py:61,66），任何雲端 HTTPS 網址都會被判 403。需保留本機模式，並明確定義代理標頭的信任範圍。實作為兩個環境變數 `WEB_ALLOWED_HOSTS`（可設 `*` 明確停用 Host 檢查）與 `WEB_ALLOWED_ORIGINS`（**不接受萬用字元**），未設定時完全等同原本的 loopback 行為；格式錯誤於啟動時即失敗，不留到請求時才顯現。**代理標頭一律不信任**：`X-Forwarded-*`／`Forwarded` 不參與任何判斷，uvicorn 亦設 `proxy_headers=False`。理由與 `C7-2` 的連帶要求見 `docs/cloud-C2-evidence.md`。
+  - [x] `C2-3` 啟動時綁定 `0.0.0.0` 並讀取平台提供的 `PORT`：目前 `--port` 預設 8765，且只有 `--container` 才監聽全介面（web.py:123-124）。優先序為 `--port` ＞ `PORT` ＞ `8765`，無效的 `PORT` 於啟動時即失敗；`--container` **維持明確開關**不改自動偵測，但已烘進 `web` 映像的 ENTRYPOINT，部署端不需記得加。
+  - [x] `C2-4` 新增 Web 啟動配置：Dockerfile 的 ENTRYPOINT 是 `stock-poc`、CMD 是 `--help`，直接部署原映像不會啟動 Web。可加 image target 或在 Cloud Run 覆寫 command／args。**採 image target**：新增 `stock-web` 進入點與 Dockerfile 的 `web` stage（`ENTRYPOINT ["stock-web", "--container"]`），Dockerfile 改為共用 `base` ＋ `web`／`runtime` 兩個末端，`web` 刻意排在 `runtime` 之前以維持 `docker build .` 的預設目標不變。**`C6-1` 建置時須指定 `--target web`。**
+  - [x] **健康檢查端點**（原無此項，`C2-1` 期間發現完成條件缺對應交付）：新增 `GET /healthz`，只回 `{"status": "ok"}`，不碰資料庫、不 migration、不抓行情；路徑刻意在 `/api/` 之外，使 `C3-1` 的驗簽不必為它開例外；`Guard` 對該路徑豁免。實測**資料庫整個停掉後健康檢查仍回 200、同時 API 回 503**。
+  - [x] `C2-5` 讓雲端設定檔進得了映像：`.dockerignore` 先排除全部、只放行 `pyproject.toml`／`uv.lock`／`README.md`／`src`。`DB_` 開頭環境變數可覆寫資料庫設定（config.py 的 `load_database_config`），但 `providers`／`scheduler`／`instruments`／`tls` 只能從 TOML 讀，因此仍需一份不含秘密的雲端 config 進入映像或以唯讀方式掛載。**採「進映像」**：`deploy/cloud.toml` → `/app/cloud.toml`，由 `web` stage `COPY`（`--chmod=0644` 以求建置可重現），`--config` 烘進 ENTRYPOINT。未採 Secret Manager 掛檔，因為該檔**依 `config.py` 的欄位白名單本來就不可能含秘密**，且設定離開 git 會失去審查軌跡與原子回滾。實際內容只有 `[instruments] max_age_hours = 168`，其餘沿用預設；`[scheduler]` 待 `C7-2`／`C7-6` 回填。理由與驗證見 `docs/cloud-C2-evidence.md`。
+  - [x] `C2-6` 決定 Python 端是否繼續提供 `/`、`/app.js`、`/style.css`（web.py:82）。前端搬到 Cloudflare 後，Python 回應的 CSP 不會套用到該靜態頁，安全標頭改由 Cloudflare 配置。**決定：不提供**，三條路由已移除，Python 端的 CSP 同步收緊為 `default-src 'none'`。`src/.../static/` 的檔案保留（是 `C7-1` 要部署的來源），但 Python 已不讀取，故 `C2-7` 的範圍縮為只剩 `migrations/`。**代價：本機目前沒有可用的頁面開啟路徑**（另起 server 會因 Origin 不符被 `C2-2` 的檢查擋下寫入），三個選項見 `docs/cloud-C2-evidence.md`。
+  - [x] `C2-7` 確認最終映像內 `static/` 與 `migrations/` 皆可讀取（web.py 與 storage.py 以套件資源方式載入）。**範圍已縮為 `migrations/`**：`C2-6` 決定後 Python 不再讀 `static/`（該目錄仍隨套件出貨，是 `C7-1` 要部署到 Cloudflare 的來源）。以容器內 `--initialize` 實際套用 migration ＋ 單元測試列舉讀取套件資源，雙重確認。
 - **完成條件**：容器以指定 port 啟動，健康檢查可通過，且健康檢查不觸發 migration 或任何外部行情抓取。
 - **證據**：以雲端等價參數在本機啟動容器的輸出、健康檢查回應。
+- **已知缺口（2026-09-18 於 `C2-1` 期間發現，同日補上）**：完成條件要求健康檢查，但 `C2-1`–`C2-7` 原本沒有任何一項會產生健康檢查端點。已於 `C2-3`／`C2-4` 一併補上 `GET /healthz` 並另立項目，完成條件三項皆已取得證據（見 `docs/cloud-C2-evidence.md` 的端到端驗證）。
 
 ### C3　認證與 session token
+
+**2026-09-21 進度**：C3-1／C3-2／C3-4 已實作且通過本機測試；C3-3 程式與模擬測試已完成，真實 Access 過期與 Cloud Run 縮容驗收仍待 C7，尚不宣稱雲端完成條件已通過。見 [C3 證據](cloud-C3-evidence.md)。下列「目前」描述為開工前問題。
+
+**部署契約**：Secret Manager 的 `proxy-hmac-secret` → `PROXY_HMAC_SECRET`（必填）；`proxy-hmac-secret-prev` → `PROXY_HMAC_SECRET_PREV`（選填）。各非空秘密至少 32 bytes。缺少 current 時 API 拒絕啟動；初始化／清單更新命令不需要此秘密。
 
 - **目的**：把「只擋跨站寫入」升級為「擋未授權存取」，並解除 token 與程序生命週期綁死的問題。
 - **前置**：`D1`、`C2`。
 - **執行項目**：
-  - [ ] `C3-1` 依 `D1` 的 HMAC 簽章規格實作後端驗證：所有 API（含 GET）都要通過驗證，不能只保護前端頁面；以 `hmac.compare_digest()` 比對、對原始 body bytes 計算 digest、先檢查時間窗再驗簽。
-  - [ ] `C3-2` 改掉每程序各自產生的 token：目前 token 是啟動時的 `secrets.token_urlsafe(32)`（web.py:147），冷啟動或換 revision 後，已開著的頁面再送 PUT 會被判 403。改為無狀態簽章並處理過期重取；固定秘密不得放進 JavaScript。
+  - [x] `C3-1` 依 `D1` 的 HMAC 簽章規格實作後端驗證：所有 API（含 GET）都要通過驗證，不能只保護前端頁面；以 `hmac.compare_digest()` 比對、對原始 body bytes 計算 digest、先檢查時間窗再驗簽。
+  - [x] `C3-2` 改掉每程序各自產生的 token：原本 token 是啟動時的 `secrets.token_urlsafe(32)`，現已改為用途區隔的無狀態簽章，效期一小時，支援過期重取；固定秘密不放進 JavaScript。
   - [ ] `C3-3` 前端對應調整：目前啟動時取一次 token（static/app.js:93），需支援 401／403 後重新取得並重試一次；另需處理 Access session 過期——此時 `fetch()` 會因跨網域轉址而失敗而非回 401，應偵測後整頁重新載入以觸發 Google 登入。前端不實作登入表單。
-  - [ ] `C3-4` 確認未授權請求的回應不洩漏內部資訊，且失敗訊息與既有錯誤處理風格一致。
+  - [x] `C3-4` 確認未授權請求的回應不洩漏內部資訊，且失敗訊息與既有錯誤處理風格一致。
 - **完成條件**：未帶有效憑證的 GET／PUT／POST 一律被拒；瀏覽器閒置至服務縮容後再操作，不需手動重新整理即可繼續使用。
 - **證據**：授權與未授權請求的對照紀錄。
 
@@ -464,11 +472,11 @@ Dockerfile 三處 `company_ca` 掛載本來就是條件式（`if [ -f /run/secre
 - **前置**：`C1`。
 - **執行項目**：
   - [x] `C5-1` 使用 **session pooler**。`Storage.acquire_lock()` 依賴 session 層 advisory lock（storage.py:135），transaction pooler 不適用；這是連線模式的決定性理由，不能只因為 Cloud Run 是 serverless 就選 transaction 模式。**已實測（2026-09-16）**：session pooler 下 A 取鎖後執行其他語句，B 仍取不到，釋放後 B 可取得，行為符合預期，`C4-3` 的前提成立。
-  - [ ] `C5-2` 由管理者先建立 schema 並授權：`migrate()`（storage.py:159）只建表，**不負責 CREATE SCHEMA**。migration 帳號需要 CREATE，runtime 只保留必要權限。
-  - [ ] `C5-3` 明確設定 TLS：`DatabaseConfig` 沒有 sslmode 欄位，`psycopg.connect()` 也未指定（config.py、storage.py:89），目前等同沿用 libpq 預設，不做主機憑證驗證。以 `PGSSLMODE`／`PGSSLROOTCERT` 注入，或新增明確設定欄位；優先驗證 `verify-full`。
-  - [ ] `C5-4` **已量測（2026-09-16，見 `docs/cloud-C1-evidence.md`）**：session pooler 接受連線但**靜默忽略** startup options（storage.py:89 的 `timezone`／`statement_timeout`／`lock_timeout`），實際值為 `statement_timeout=2min`、`lock_timeout=0`。待實作：改為連線建立後執行對應 `SET`，`SET` 後以 `SHOW` 核對實際值，並重測逾時行為。**不可只送出 `SET` 就視為成功**，忽略是靜默的。
-  - [ ] `C5-5` 處理雙 schema fallback：`catalog()`（dashboard.py:117）與 `valuation()`（dashboard.py:183）都會回退查詢舊 POC 的來源 schema。雲端不搬 POC 資料，建議移除此 fallback；若保留，兩個 schema 都必須初始化。另注意儀表板 `--schema` 不得與來源 `database.schema` 相同，現有程式會直接拒絕（dashboard.py 的 `Dashboard.__init__`）。
-  - [ ] `C5-6` 訂定證據資料保存期與清理方式，並實測表與索引的實際容量，不只看報價筆數。
+  - [x] `C5-2` 管理者完成 dashboard schema、三版 migration 與兩張儀表板表初始化；runtime 僅有 USAGE、業務表 SELECT／INSERT／UPDATE、migration 紀錄 SELECT，無 CREATE／DELETE／TRUNCATE。14 張表啟用 RLS，政策限定既有 runtime 角色；撤除舊 app schema 存取權。雲端實測讀写及權限反面測試通過。
+  - [x] `C5-3` 明確設定 TLS，預設 verify-full。**2026-09-22 實測**：系統信任庫不能驗證目前 pooler 憑證鏈；改用官方 Supabase CA，已由實際非 root Web 映像驗證。公開 CA 隨映像出貨於 `/app/supabase-ca.crt`，`deploy/cloud.toml` 指定該路徑，不降級至 require。
+  - [x] `C5-4` 移除被 pooler 靜默忽略的 startup options，連線後 SET 並 SHOW 核對 UTC、statement_timeout、lock_timeout 與 search_path；不符即關閉連線。Supabase 實測預設為 10s／3s；短時限測試分別取得 SQLSTATE 57014／55P03。
+  - [x] `C5-5` 移除 catalog／valuation 對舊 POC schema 的 fallback，解除 database.schema 與 dashboard schema 不得相同的限制；雲端 runtime 對 app schema 無權仍可操作。只需初始化 dashboard，未搬移 POC 資料。
+  - [x] `C5-6` 證據預設保存 30 天；管理工具預設 dry-run、明確 --apply 才清理。保留最新 20 筆快取候選及其引用鏈、進行中工作、campaign 與最新兩代清單。隔離 DB 清理與重跑測試通過，雲端已量測每表／索引容量，dashboard 合計 401,408 bytes；沒有清除雲端資料。
 - **完成條件**：以 runtime 角色完成一次連線、權限檢查、寫入與讀取，TLS 驗證通過，鎖行為與逾時符合預期。
 - **證據**：連線參數（去識別）、TLS 驗證結果、鎖與逾時測試輸出。
 
@@ -476,10 +484,11 @@ Dockerfile 三處 `company_ca` 掛載本來就是條件式（`if [ -f /run/secre
 
 - **目的**：產出可回滾的映像與可重現的部署設定，並把資料庫初始化從服務啟動路徑移除。
 - **前置**：`C2`–`C5`、`D5`、`D6`。
+- **順序規則（2026-09-20 補立，硬性）**：**`C3-1` 完成前不得把 Cloud Run 接上任何真實資料。** 依 `D1`，Cloud Run 必須允許未驗證呼叫（Cloudflare Worker 以一般 HTTPS 呼叫它），因此 `run.app` 網址一旦外流，**唯一的關卡就是 HMAC 驗簽**；`C3-1` 未完成時那道關卡不存在，等同把資料庫內容開在公網上。`D5` 的「假持股先行」已涵蓋此風險，但該規則的理由是成本與資料價值，與本條的理由不同，故另立。另：`C5-3` 的 Supabase 憑證鏈確認亦須早於 `C6-2`，否則首次部署即連不上資料庫。
 - **執行項目**：
-  - [ ] `C6-1` 依 `D6` 以 GitHub Actions 建置 linux/amd64 並推送 Artifact Registry，沿用 lockfile 與非 root 設計；移除公司專用 `company_ca_file` 與 relaxed TLS 設定（config.example.toml 的 `[tls]`）。runner 不傳入 `company_ca` build secret，Dockerfile 的條件式掛載會自動跳過，不需改 Dockerfile。workflow 權限最小化：預設 `contents: read`，僅需換取 GCP 憑證的 job 才加 `id-token: write`。映像路徑固定為 `asia-northeast1-docker.pkg.dev/finpo-508709/finpo/stock-quote:<tag>`——repository 以專案命名、image 以服務命名，使同一財務系統的其他服務共用同一 repository；Artifact Registry 不支援 repository 改名，此路徑為終局。**由 `C1-9` 帶出的三條**：（a）workflow 引用的 action 須釘 commit SHA 而非可變 tag——帶 `id-token: write` 的 workflow 若用到被汙染的 action，等同交出 deploy SA 權限；（b）WIF provider 目前只限定 `assertion.repository`、未限定 ref，任何分支都能換到憑證，若部署只該由 `main` 觸發須另加 `assertion.ref` 條件或在 workflow 層限制；（c）須設 Artifact Registry cleanup policy 只保留最近數個 tag，Python 映像每 tag 約 200–400 MB，累積數個即逼近 0.5 GB 免費額度。
-  - [ ] `C6-2` 部署設定：1 vCPU／1 GiB、min=0、max=1，concurrency 依 `D3` 設定（**不可為 1**，須容納更新期間並行的 job 輪詢），request timeout 依 `D3` 對齊；`DB_PASSWORD` 與必要 provider key 放 Secret Manager（`db-password` 已於 `C1-3` 建立並授權給 `finpo-runtime`）；簽章秘密以 `proxy-hmac-secret` 與 `proxy-hmac-secret-prev` 兩個環境變數掛載（皆參照 `latest`），兩組於 `C1-7` 已建立，因此輪替時不需變更部署設定；日誌輸出 stdout／stderr 並限制內容與保留量。
-  - [ ] `C6-3` 以一次性容器或 Cloud Run Job 執行 migration、`web --initialize`（web.py:126）與官方清單更新（`--refresh-catalog`，web.py:127），**不在每次 Web 啟動自動 migration**。
+  - [ ] `C6-1` 依 `D6` 以 GitHub Actions 建置 linux/amd64 並推送 Artifact Registry，沿用 lockfile 與非 root 設計；移除公司專用 `company_ca_file` 與 relaxed TLS 設定（config.example.toml 的 `[tls]`）。runner 不傳入 `company_ca` build secret，Dockerfile 的條件式掛載會自動跳過，不需改 Dockerfile。workflow 權限最小化：預設 `contents: read`，僅需換取 GCP 憑證的 job 才加 `id-token: write`。映像路徑固定為 `asia-northeast1-docker.pkg.dev/finpo-508709/finpo/stock-quote:<tag>`——repository 以專案命名、image 以服務命名，使同一財務系統的其他服務共用同一 repository；Artifact Registry 不支援 repository 改名，此路徑為終局。**由 `C1-9` 帶出的三條**：（a）workflow 引用的 action 須釘 commit SHA 而非可變 tag——帶 `id-token: write` 的 workflow 若用到被汙染的 action，等同交出 deploy SA 權限；（b）WIF provider 目前只限定 `assertion.repository`、未限定 ref，任何分支都能換到憑證，若部署只該由 `main` 觸發須另加 `assertion.ref` 條件或在 workflow 層限制；（c）須設 Artifact Registry cleanup policy 只保留最近數個 tag——實測（`C2-1`）第一個 tag 約 125 MB、其後每個增量 tag 約 82 MB，約第 6 個即超出 0.5 GB 免費額度，建議只留最近 3 個。**另須指定 `--target web`**（`C2-4` 新增的 stage）：預設目標 `runtime` 的 ENTRYPOINT 是 CLI，部署上去不會啟動服務。
+  - [ ] `C6-2` 部署設定：1 vCPU／1 GiB、min=0、max=1，concurrency 依 `D3` 設定（**不可為 1**，須容納更新期間並行的 job 輪詢），request timeout 依 `D3` 對齊；`DB_PASSWORD` 與必要 provider key 放 Secret Manager（`db-password` 已於 `C1-3` 建立並授權給 `finpo-runtime`）；簽章秘密以 `proxy-hmac-secret` 與 `proxy-hmac-secret-prev` 兩個環境變數掛載（皆參照 `latest`），兩組於 `C1-7` 已建立，因此輪替時不需變更部署設定；日誌輸出 stdout／stderr 並限制內容與保留量。若設定 startup／liveness probe，**指向 `C2-4` 新增的 `GET /healthz`，不可指向任何 `/api/` 路徑**（`C3-1` 上線後探測無法簽章，會全數 401）；`web` 映像已自帶啟動命令，**不需覆寫 command／args**。**另須設定 `C2-2` 的兩個環境變數**：`WEB_ALLOWED_HOSTS`（Cloud Run 服務主機名，或明確設為 `*`）與 `WEB_ALLOWED_ORIGINS`（前端 Worker 的 `https://` 來源）；兩者未設定時服務會套用本機預設值而把所有雲端請求判 403。
+  - [ ] `C6-3` 以獨立管理者執行 `python -m stock_quote_fetcher.cloud_db bootstrap-sql` 產生的 SQL，再以 runtime 執行 `web --refresh-catalog`。C5 已先完成首次 schema／空持股初始化並驗證可重跑；C6 仍須完成部署環境的一次性執行程序與官方清單更新。**不得以 runtime 執行 migration／web --initialize**，其 CREATE 權限已於 C5-2 撤除；Web 啟動仍不自動 migration。
   - [ ] `C6-4` 記錄映像 digest、部署設定與 secret 版本，確認可回滾。digest 由 `D6` 的 workflow 輸出並留存於 run log，回滾即以該 digest 手動觸發重新部署。資料庫 migration 需向後相容：回滾映像不等於回滾資料庫。
 - **完成條件**：服務可由記錄的映像 digest 重新部署並啟動成功，初始化步驟可獨立重跑。
 - **證據**：映像 digest、部署設定輸出、初始化執行紀錄。
@@ -490,7 +499,7 @@ Dockerfile 三處 `company_ca` 掛載本來就是條件式（`if [ -f /run/secre
 - **前置**：`C6`、`D1`、`D2`。
 - **執行項目**：
   - [ ] `C7-1` 依 `D2` 以 Workers static assets 部署既有三個靜態檔（`assets.directory` 指向 `static/`），於 Cloudflare 端配置安全標頭（CSP、`X-Content-Type-Options`、`Referrer-Policy` 等）。
-  - [ ] `C7-2` 依 `D2` 在同一 Worker 內實作 `/api/*` 代理，`assets.run_worker_first` 僅列 `/api/*`，並以實際請求核對靜態檔路徑不會啟動 Worker；驗證 Worker 端 WebCrypto 與後端 Python 對同一 canonical string 產生相同簽章；以故意延遲回應的測試端點量出代理的實際逾時上限，並對齊前端、代理與後端的逾時。
+  - [ ] `C7-2` 依 `D2` 在同一 Worker 內實作 `/api/*` 代理，`assets.run_worker_first` 僅列 `/api/*`，並以實際請求核對靜態檔路徑不會啟動 Worker；驗證 Worker 端 WebCrypto 與後端 Python 對同一 canonical string 產生相同簽章；以故意延遲回應的測試端點量出代理的實際逾時上限，並對齊前端、代理與後端的逾時。**`C2-2` 追加的必辦事項：Worker 轉發時必須原樣帶上瀏覽器的 `Origin` 標頭**，否則後端會把所有寫入請求判 403；理由是 HMAC 簽章擋不住「惡意網站以 `credentials:'include'` 觸發、Access 放行、Worker 照簽」這條跨站路徑，Origin 白名單是該路徑唯一的防線（見 `docs/cloud-C2-evidence.md` 的 `C2-2`）。
   - [ ] `C7-3` 啟用入口驗證，並驗證無法繞過代理直接呼叫 `run.app`。後端驗證需依賴可靠簽章或憑證，不得只檢查可偽造的標頭。另須實測：未授權的 Google 帳號被 Access 拒絕、無痕視窗開啟會導向 Google 登入、session 過期後前端可自行恢復。
   - [ ] `C7-4` 功能驗收：上傳 Excel、預覽、儲存、版本衝突（409）、報價更新、缺價／失敗、查詢結果與前端提示。使用 `D5` 決定的資料。
   - [ ] `C7-5` 持久性驗收：關閉瀏覽器、等待縮容後重開，確認持股仍在；更新中途終止與重新部署，確認 job 不永久卡住。
@@ -526,7 +535,7 @@ flowchart LR
 | ~~Access 能否保護免費子網域（含 preview URL）~~ | **已解決**：`C1-6` 實測 `workers.dev` 可受 Worker-level Access 保護，未登入時靜態檔不送出、`/api/*` 亦在保護傘內，`D5` 的「不買網域」成立 | — |
 | Worker-level Access 不支援 WebSocket | 已知行為；本階段以 `fetch` 輪詢，不受影響，但封死日後改用 WebSocket 推播的選項 | 若日後要改推播，需改用 hostname-based Access |
 | Supabase Free 專案閒置 7 天被暫停 | 已知行為；每日更新不會觸發，驗收若中斷一週以上會誤判為程式故障 | `C7` 期間留意 |
-| ~~pooler 是否接受 startup options~~ | **已量測**：連線被接受但參數**靜默忽略**（實際為 `statement_timeout=2min`、`lock_timeout=0`）。處置已定：改為連線後 `SET` 並以 `SHOW` 核對。本機直連會生效，故此問題只在雲端出現 | `C5-4` 實作 |
+| ~~pooler 是否接受 startup options~~ | **已解決（2026-09-22）**：連線後 SET＋SHOW 已實作，Supabase 上已驗證設定值與實際兩種逾時 | C5-4 完成，證據見 cloud-C5-evidence.md |
 | 行情來源對 GCP 出口的接受度 | 未測；技術上可抓取不等同取得授權 | `C7-6`；公開展示前另需核對使用條款 |
 | ~~Supabase Free plan 能否指定 `ap-northeast-1`~~ | **已解決**：`C1-4` 實測可指定東京，`D4` 成立，Artifact Registry 不需重建 | — |
 | ~~WIF provider 未綁定 repository 等同公開授予 GCP 寫入權~~ | **已處置**：`C1-9` 的 provider attribute condition 為 `assertion.repository == 'tommy12lin/stock-quote-fetcher'`，SA binding 亦以 `principalSet` 限定同一 repository。**惟阻擋效力僅由設定查核確認，未做反面測試** | — |

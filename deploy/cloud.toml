@@ -1,0 +1,40 @@
+# Cloud Run configuration, baked into the web image at /app/cloud.toml (C2-5).
+#
+# Only values that differ from the code defaults belong here. Every field in
+# config.py has a default and every section may be omitted, so a short file is
+# the correct outcome, not an unfinished one.
+#
+# What must NOT be here:
+#   - Secrets of any kind. config.py rejects unknown fields with "秘密只能透過環境注入",
+#     and this file ships inside a public repository and a public image layer.
+#   - The Supabase pooler host and role name. They identify the project and stay in
+#     DB_HOST / DB_USER (deployment settings), never in the repository.
+#   - [tls]. The cloud has no company CA and no relaxed providers; the defaults are
+#     already empty, so the section is omitted rather than written as empty (C6-1).
+#
+# Supplied by the environment instead (C6-2):
+#   DB_HOST, DB_PORT, DB_NAME, DB_SCHEMA, DB_USER   plain deployment settings
+#   DB_PASSWORD                                     Secret Manager
+#   PORT                                            the platform
+#   WEB_ALLOWED_HOSTS, WEB_ALLOWED_ORIGINS          C2-2
+#
+# Omitted on purpose, with their defaults left in force:
+#   [providers]  valuation defaults to yahoo, and Dashboard clears comparison anyway
+#                (dashboard.py:96), so the cloud service calls no keyed provider.
+#   [scheduler]  D3's deadline and batch size are still unmeasured; C7-2 and C7-6 fill
+#                them in here. Writing guessed numbers now would look like decisions.
+#   database timeout fields retain the defaults (connect 10s / statement 10s / lock 3s).
+#   C5-4 applies session values after connecting and verifies each with SHOW.
+
+[database]
+# Public Supabase CA, verified against the live session pooler (C5-3).
+sslmode = "verify-full"
+sslrootcert = "/app/supabase-ca.crt"
+
+[instruments]
+# A week, against the 24-hour default. D3 completes refreshes inside the request, and a
+# catalog judged stale makes run_job fetch the whole official listing first
+# (dashboard.py), adding an unbounded external fetch to a request that already has a
+# deadline. A longer window keeps that off the critical path; the listing is also
+# refreshable on demand from the dashboard.
+max_age_hours = 168

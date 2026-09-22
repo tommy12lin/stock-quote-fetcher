@@ -10,14 +10,17 @@ readme = "README.md"
 requires-python = ">=3.14.7,<3.15"
 dependencies = [
     "exchange-calendars==4.13.2",
+    "fastapi==0.141.1",
     "httpx==0.28.1",
     "psycopg[binary]==3.3.5",
     "tzdata==2026.3",
+    "uvicorn==0.53.0",
     "yfinance==1.7.0",
 ]
 
 [project.scripts]
 stock-poc = "stock_quote_fetcher.cli:main"
+stock-web = "stock_quote_fetcher.web:main"
 
 [dependency-groups]
 dev = ["pytest==9.1.1"]

@@ -36,7 +36,7 @@ ENV PATH=/app/.venv/bin:${PATH}
 WORKDIR /work
 ENTRYPOINT ["/app/.venv/bin/python", "-m", "pytest"]
 
-FROM ${BASE_IMAGE} AS runtime
+FROM ${BASE_IMAGE} AS base
 ARG BASE_IMAGE
 ARG APP_UID=10001
 ARG APP_GID=10001
@@ -52,6 +52,22 @@ RUN groupadd --gid ${APP_GID} app \
 COPY --from=builder --chown=root:root /app/.venv /app/.venv
 WORKDIR /app
 USER app:app
+
+# Web 服務映像（C2-4）：代管平台只會啟動容器、不下命令，因此啟動方式必須烘在映像裡，
+# 不依賴部署設定覆寫 command／args。--container 為必要：Cloud Run 要求監聽 0.0.0.0，
+# port 由 PORT 環境變數提供（C2-3），平台未提供時退回 8765。
+# 本 stage 刻意排在 runtime 之前，使 `docker build .` 的預設目標維持 runtime 不變。
+FROM base AS web
+# C2-5：設定檔隨映像出貨，與程式同版本、同一次回滾。root 擁有、應用帳號唯讀。
+# --chmod 明寫：COPY 沿用來源檔權限，Windows 與 Linux runner 會給出不同的模式位元，
+# 使同一份程式在兩處建出不同的層。釘死為 0644 讓建置可重現。
+COPY --chown=root:root --chmod=0644 deploy/cloud.toml /app/cloud.toml
+COPY --chown=root:root --chmod=0644 deploy/supabase-ca.crt /app/supabase-ca.crt
+# --container 與 --config 放在 ENTRYPOINT 而非 CMD：若放 CMD，任何附加參數都會把它們
+# 整組取代而靜默失去監聽介面或設定檔，表徵是平台判定啟動失敗但程式看似正常。
+ENTRYPOINT ["/app/.venv/bin/stock-web", "--container", "--config", "/app/cloud.toml"]
+
+FROM base AS runtime
 # 只用 exec form：CLI 必須是 PID 1，docker stop 的 SIGTERM 才會直接送到 monitor 的處理器。
 ENTRYPOINT ["/app/.venv/bin/stock-poc"]
 CMD ["--help"]

@@ -1,6 +1,6 @@
 # 台美股報價與持股市值 POC
 
-本機網頁第一版已新增：開啟 <http://localhost:8765/> 上傳 Excel、保存持股、查看市值／成本／損益與配置圖。啟動命令與驗證見 [持股儀表板第一版](docs/dashboard-v1.md)；網頁使用獨立 Compose 與 schema，既有 CLI／monitor 維持原流程。
+本機網頁第一版已新增：上傳 Excel、保存持股、查看市值／成本／損益與配置圖。啟動命令與驗證見 [持股儀表板第一版](docs/dashboard-v1.md)；網頁使用獨立 Compose 與 schema，既有 CLI／monitor 維持原流程。**自 `C2-1`／`C2-6` 起，Python 端改為 ASGI（FastAPI＋uvicorn）且只提供 `/api/`，不再供應 `/`、`/app.js`、`/style.css`**，靜態檔改由 Cloudflare 供應；`http://localhost:8765/` 因此不再能直接開啟頁面，本機開啟方式見 [C2 執行紀錄](docs/cloud-C2-evidence.md)。
 
 以 Python 與 Docker Container 驗證台美股盤中報價的可取得性、資料時效與持續運行可靠性。使用 CSV 輸入持股，透過指令操作，分別呈現 TWD 與 USD 市值小計。
 
