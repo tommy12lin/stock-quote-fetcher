@@ -375,6 +375,17 @@ class Storage:
                 (status, now(), elapsed_ms, error_code, response_hash, Jsonb(evidence), identity))
         return quote_id if quote else None
 
+    def latest_quote_times(self, instrument_ids, provider):
+        """Most recent received_at per instrument, for ordering work by staleness."""
+        ids = list(instrument_ids)
+        if not ids:
+            return {}
+        with self.transaction(writer=False, readonly=True):
+            rows = self.conn.execute(sql.SQL("""SELECT instrument_id, max(received_at) AS latest FROM {}
+                WHERE provider=%s AND instrument_id = ANY(%s) GROUP BY instrument_id""").format(self.table('quotes')),
+                (provider, ids)).fetchall()
+        return {row['instrument_id']: row['latest'] for row in rows}
+
     def cached_quotes(self, instrument, provider):
         """Candidate history is revalidated by the caller against today's calendar."""
         with self.transaction(writer=False, readonly=True):

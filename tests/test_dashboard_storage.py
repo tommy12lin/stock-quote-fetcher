@@ -1,5 +1,7 @@
 """Portfolio transactions on the same disposable DB fixture as CLI integration tests."""
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
+from uuid import uuid4
 
 import pytest
 from psycopg import sql
@@ -8,6 +10,7 @@ from test_storage import db
 from stock_quote_fetcher.dashboard import Dashboard, LOST_MESSAGE
 from stock_quote_fetcher.config import QuoteConfig, InstrumentCatalogConfig, RefreshConfig
 from stock_quote_fetcher.instruments import CatalogInstrument
+from stock_quote_fetcher.models import Quote, FetchResult, FetchStatus
 from stock_quote_fetcher.storage import Storage
 from stock_quote_fetcher.web_input import WebError
 
@@ -45,6 +48,42 @@ def stamp(seconds):
 def quote_count(service):
     with Storage(service.db) as s:
         return s.conn.execute(sql.SQL('SELECT count(*) AS n FROM {}').format(s.table('quotes'))).fetchone()['n']
+
+
+TWO = (CatalogInstrument('us:NASDAQ:AAPL','AAPL','US','USD','NASDAQ','stock','Apple',{'yahoo':'AAPL'}),
+       CatalogInstrument('us:NASDAQ:MSFT','MSFT','US','USD','NASDAQ','stock','Microsoft',{'yahoo':'MSFT'}))
+
+
+def seed_quote(service, instrument_id, ticker, received_at):
+    """One real stored quote, so staleness ordering is read from the table it will use."""
+    with Storage(service.db) as s:
+        s.acquire_lock()
+        run, cycle, attempt = uuid4(), uuid4(), uuid4()
+        s.start_run(run, input_text=f'ticker,quantity,buy_price\n{ticker},1,1\n', config={}, image_id='test-image')
+        s.start_cycle(cycle, run, market='US', scheduled_at=received_at)
+        s.start_attempt(attempt, cycle, provider='yahoo', instrument_id=instrument_id, ticker=ticker, attempt_number=1)
+        q = Quote(instrument_id, ticker, ticker, 'US', 'USD', 'yahoo', Decimal('10'), 'last_trade',
+                  received_at, received_at, None, 'regular', 'second', asset_type='stock')
+        s.finish_attempt(attempt, FetchResult(instrument_id, 'yahoo', FetchStatus.SUCCESS, q),
+                         elapsed_ms=10, quote_id=uuid4())
+
+
+def two_holdings(service, monkeypatch):
+    monkeypatch.setattr(service, 'catalog', lambda: TWO)
+    request = body()
+    request['rows'] = [{'ticker':'AAPL','quantity':'2','buy_price':'8'},
+                       {'ticker':'MSFT','quantity':'1','buy_price':'9'}]
+    service.save(request)
+    return request
+
+
+def ordered_tickers(service):
+    from stock_quote_fetcher.web_input import validate_rows
+    p = service.get()
+    holdings = validate_rows(p['rows'])
+    resolved, _ = service.resolve(holdings)
+    with Storage(service.db) as s:
+        return [h.ticker for h in service.order_by_staleness(holdings, resolved, s)]
 
 
 def body(revision=0):
@@ -189,14 +228,31 @@ def test_refresh_stops_at_the_deadline_and_keeps_stored_quotes(service, monkeypa
 
 
 def test_tickers_beyond_the_cap_are_reported_not_dropped(service, monkeypatch):
-    entries = (CatalogInstrument('us:NASDAQ:AAPL','AAPL','US','USD','NASDAQ','stock','Apple',{'yahoo':'AAPL'}),
-               CatalogInstrument('us:NASDAQ:MSFT','MSFT','US','USD','NASDAQ','stock','Microsoft',{'yahoo':'MSFT'}))
-    monkeypatch.setattr(service, 'catalog', lambda: entries)
-    request = body()
-    request['rows'] = [{'ticker':'AAPL','quantity':'2','buy_price':'8'},
-                       {'ticker':'MSFT','quantity':'1','buy_price':'9'}]
-    service.save(request)
+    two_holdings(service, monkeypatch)
     cut_the_clock(monkeypatch)
     service.refresh_config = RefreshConfig(deadline_seconds=1, max_tickers=1)
     message = service.refresh()['message']
     assert '0/2 檔有可用報價' in message and '1 檔超出本次上限' in message
+
+
+def test_never_quoted_holdings_are_the_stalest(service, monkeypatch):
+    two_holdings(service, monkeypatch)
+    seed_quote(service, 'us:NASDAQ:AAPL', 'AAPL', datetime.now(UTC))
+    # MSFT has no quote at all, so it must come before an AAPL quoted a moment ago.
+    assert ordered_tickers(service) == ['MSFT', 'AAPL']
+
+
+def test_order_rotates_so_a_capped_refresh_reaches_every_holding(service, monkeypatch):
+    """The defect this guards: slicing a fixed order left the tail permanently stale."""
+    two_holdings(service, monkeypatch)
+    seed_quote(service, 'us:NASDAQ:AAPL', 'AAPL', datetime.now(UTC) - timedelta(hours=2))
+    seed_quote(service, 'us:NASDAQ:MSFT', 'MSFT', datetime.now(UTC) - timedelta(minutes=5))
+    assert ordered_tickers(service) == ['AAPL', 'MSFT']
+    # A capped refresh would take AAPL. Once AAPL is fresh, MSFT becomes the stalest.
+    seed_quote(service, 'us:NASDAQ:AAPL', 'AAPL', datetime.now(UTC))
+    assert ordered_tickers(service) == ['MSFT', 'AAPL']
+
+
+def test_equal_staleness_keeps_the_saved_order(service, monkeypatch):
+    two_holdings(service, monkeypatch)
+    assert ordered_tickers(service) == ['AAPL', 'MSFT']

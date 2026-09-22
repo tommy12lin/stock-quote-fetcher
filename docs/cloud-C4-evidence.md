@@ -1,12 +1,12 @@
 # C4 執行紀錄：工作生命週期、單例假設與復原
 
-日期：2026-09-22。範圍：[第一階段計畫](cloud-phase-1-plan.md) 的 C4。此次修改本機工作樹並以隔離的拋棄式 PostgreSQL 驗證，沒有部署、沒有連線 Supabase、沒有讀取真實秘密。
+日期：2026-09-22，同日補正一項缺陷（見「部分更新無法收斂」）。範圍：[第一階段計畫](cloud-phase-1-plan.md) 的 C4。此次修改本機工作樹並以隔離的拋棄式 PostgreSQL 驗證，沒有部署、沒有連線 Supabase、沒有讀取真實秘密。
 
 ## 進度
 
 | 項目 | 狀態 |
 |---|---|
-| C4-1 請求內有時限完成 | 機制完成並驗證；**deadline 與單次檔數兩個數值仍未量測** |
+| C4-1 請求內有時限完成 | 機制完成並驗證，含 09-22 的收斂補正；**deadline 與單次檔數兩個數值仍未量測** |
 | C4-2 移除全程序 advisory lock | 完成，已實測兩個服務可在同一 schema 並存 |
 | C4-3 資料庫層原子認領 | 完成，已實測第二實例不會重複認領 |
 | C4-4 owner／lease／逾期回收 | 完成，已實測未到期的租約不被標成失敗 |
@@ -22,6 +22,7 @@
 - **讀取端（C4-4）**：`job()` 對租約已到期的 queued／running 一律呈現為 failed，即使尚未有人掃過。輪詢的人不會看著一個死掉的 job 一直停在 running。
 - **不需要 DDL**：租約寫在既有的 `document` jsonb 內。C5-2 已撤除 runtime 的 CREATE 權限，任何新欄位或新表都得走管理者的 bootstrap，這裡刻意避開。
 - **時限（C4-1）**：`refresh()` 在請求內跑完並回傳完成的 job。整體 deadline 為 `[scheduler] refresh_deadline_seconds`；每批預算取「剩餘時間」與 `cycle_budget_seconds` 的較小值，且 runner 逐批重建，使單一 cycle 不可能活過 deadline。單次檔數為 `refresh_max_tickers`，超出的檔數在完成訊息中明列。冷卻期間的來源退避由 storage 重建，逐批重讀不會遺失。
+- **處理順序（C4-1，09-22 補正）**：切片之前先依「最後取得報價的時間」由舊到新排序，從未取得過報價者視為最舊。這是讓部分更新能夠收斂的關鍵；理由見下節。排序相同者維持存檔順序，結果是決定性的。
 - **設定位置**：兩個鍵放在 `[scheduler]`，但**不**進入 `QuoteConfig`。它們限制的是 HTTP 請求而非一個報價 cycle，且加進 `QuoteConfig` 會改變 `configuration_snapshot` 的摘要，而 campaign 比對依賴該摘要。代價是這兩個值不會進入 run 的設定快照。
 - **HTTP（C4-1）**：`POST /api/portfolio/refresh` 與 `/api/catalog/refresh` 改回 **200 附完成的 job**。只有一種情況仍回 202：另一個實例持有有效租約，回傳它那個未完成的 job 讓前端輪詢。
 - **前端（C4-1）**：改為等待這個長請求並顯示「請保持分頁開啟」。被代理或邊緣截斷的長請求在 `fetch()` 眼中與 Access 轉址完全相同，因此這一個呼叫關掉整頁重載（`reloadOnRedirect=false`），改回報「未能在連線時限內完成」；真正的登入失效由下一個呼叫接手處理。若不這樣分開，一次更新逾時會被誤判成登入過期而重載整頁。
@@ -33,8 +34,8 @@
 
 | 檢查 | 結果 |
 |---|---|
-| 完整 Python 套件（含資料庫整合） | **358 passed、0 skipped** |
-| `tests/test_dashboard_storage.py` | 16 passed |
+| 完整 Python 套件（含資料庫整合） | **361 passed、0 skipped**（含 09-22 補正的三個案例） |
+| `tests/test_dashboard_storage.py` | 19 passed |
 | `node --test tests/web_session.test.cjs` | 8 passed |
 | `node --check src/stock_quote_fetcher/static/app.js` | 通過 |
 
@@ -77,6 +78,51 @@ SELECT count(*) FROM pg_stat_activity WHERE usename='c4demo';        -- 0
 ```
 
 沒有任何 advisory lock，也沒有常駐連線，確認啟動租約確實移除。此 schema 與角色為此次驗證另建，用畢清除。
+
+## 2026-09-22 補正：部分更新無法收斂
+
+### 缺陷
+
+`run_job` 原本這樣挑要處理的標的：
+
+```python
+planned = holdings[:limit] if limit else holdings
+for offset in range(0, len(planned), BATCH_SIZE):
+```
+
+每次都從持股清單的**第一筆**開始，順序是使用者存檔的順序，沒有游標也沒有依新鮮度排序。`QuoteRunner` 也不會跳過「已經很新」的標的，它每次都照抓。兩者相加的後果是：
+
+- **deadline 截斷時**：再按一次更新，抓的還是同一批前面的標的。清單尾端永遠輪不到。
+- **設了 `refresh_max_tickers` 時更嚴重**：那是硬切片，超過上限的標的**永遠不會被抓到**，不是「這次沒輪到」。
+
+完成訊息卻寫著「請再次更新取得其餘報價」，這句話在當時是**錯的**——再次更新拿不到其餘報價。
+
+### 為什麼當時沒被抓到
+
+C4 的測試都只跑一次更新。「一次更新會不會漏」有測（`test_refresh_stops_at_the_deadline_and_keeps_stored_quotes`、`test_tickers_beyond_the_cap_are_reported_not_dropped`），但「連續兩次更新合起來會不會收斂」沒有測。單次行為正確，整體卻不收斂，這個落差整組測試看不出來。
+
+影響程度取決於 deadline 與持股數的比值。預設 300 秒時一般跑得完，不會顯現；但 `C7-2` 正好可能把 deadline 壓到 100 秒以下，屆時持股超過一兩批（5–10 檔）的人，清單尾端就再也更新不到。也就是說這個缺陷會**正好在調整 deadline 之後才開始咬人**，那時很容易被誤判成抓價來源的問題。
+
+### 修正
+
+切片前先依最後報價時間由舊到新排序：
+
+- 新增 `Storage.latest_quote_times(instrument_ids, provider)`，單一唯讀查詢取回每個 instrument 的 `max(received_at)`，不是逐檔查詢。
+- 新增 `Dashboard.order_by_staleness()`，從未取得過報價者排最前（視為最舊），排序相同者維持存檔順序。
+- 先 `resolve()` 全部持股再排序再切片；原本是先切片才 resolve。
+- 完成訊息改為「再次更新會優先處理這些標的」，這句現在才成立。
+
+依新鮮度優先本來就比依存檔順序更合理：要更新的本來就該是最舊的那幾檔。
+
+### 驗證
+
+| 案例 | 驗證的性質 |
+|---|---|
+| `test_never_quoted_holdings_are_the_stalest` | 從未報價者排在「剛剛才報價過」之前 |
+| `test_order_rotates_so_a_capped_refresh_reaches_every_holding` | AAPL 最舊時排前；AAPL 更新後換 MSFT 排前，證明會輪替 |
+| `test_equal_staleness_keeps_the_saved_order` | 同樣新鮮度時順序決定性，不會亂跳 |
+
+三個案例都以**實際寫進 `quotes` 表的報價**驅動，不是替身，因此驗到的是排序真正會讀的那張表。修正後完整套件 **361 passed、0 skipped**。
 
 ## 尚未驗證與刻意未定
 

@@ -305,6 +305,18 @@ class Dashboard:
         self.run_job(job, p)
         return job
 
+    def order_by_staleness(self, holdings, resolved, s):
+        """Least recently quoted first; never quoted counts as the stalest of all.
+
+        This is what makes a partial refresh converge: whatever the deadline or the
+        ticker cap leaves out this time sorts to the front next time. Ties keep the
+        saved order, so the result is deterministic.
+        """
+        latest = s.latest_quote_times({resolved[h.ticker].instrument_id for h in holdings},
+                                      self.quote_config.valuation)
+        unquoted = datetime.min.replace(tzinfo=UTC)
+        return sorted(holdings, key=lambda h: latest.get(resolved[h.ticker].instrument_id) or unquoted)
+
     def run_job(self, job, p):
         deadline = monotonic() + self.refresh_config.deadline_seconds
         try:
@@ -323,14 +335,18 @@ class Dashboard:
                     job.update(status='succeeded', message='官方股票清單已更新，可以重新儲存持股。')
                     return
             holdings = validate_rows(p['rows'])
+            resolved, _ = self.resolve(holdings)
             limit = self.refresh_config.max_tickers
-            planned = holdings[:limit] if limit else holdings
-            deferred = len(holdings) - len(planned)
-            resolved, _ = self.resolve(planned)
             count, attempted, cut = 0, 0, False
             with Storage(self.db) as s:
                 s.acquire_lock()
                 s.recover_incomplete()
+                # Stalest first, so what a deadline or cap leaves out is what the next
+                # refresh starts with. Slicing a fixed order instead would refetch the
+                # same leading tickers every time and never reach the tail.
+                ordered = self.order_by_staleness(holdings, resolved, s)
+                planned = ordered[:limit] if limit else ordered
+                deferred = len(holdings) - len(planned)
                 # Every position gets a bounded batch; large portfolios cannot starve
                 # later tickers behind a single market cycle's time budget.
                 for offset in range(0, len(planned), BATCH_SIZE):
@@ -361,7 +377,7 @@ class Dashboard:
                 notes.append(f'{deferred} 檔超出本次上限')
             message = f'已完成：{count}/{len(holdings)} 檔有可用報價'
             if notes:
-                message += '；' + '、'.join(notes) + '，請再次更新取得其餘報價'
+                message += '；' + '、'.join(notes) + '，再次更新會優先處理這些標的'
             job.update(status='succeeded' if count == len(holdings) else 'partial' if count else 'failed', message=message)
         except StorageError:
             job.update(status='failed', message='報價程序忙碌或資料庫暫不可用；保留既有價格，請稍後重試。')
