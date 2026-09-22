@@ -1,6 +1,6 @@
 # 雲端部署第一階段執行計畫
 
-> 最新進度（2026-09-22）：C1／C2／C5 已完成。C3-1／C3-2／C3-4 已完成本機實作與驗證；C3-3 程式完成，真實 Access／縮容驗收待 C7。下一步為 C4（含先取得 C7-2 代理逾時量測）。詳見 [C3 證據](cloud-C3-evidence.md)與 [C5 證據](cloud-C5-evidence.md)；下方 09-20 摘要保留作為歷史狀態。
+> 最新進度（2026-09-22）：C1／C2／C3／C5 的程式交付皆已完成。**C3 四項已全部勾選，但真實 Access 過期與 Cloud Run 縮容後的恢復驗收併入 `C7-3`**，在該項通過前不得宣稱 C3 的雲端完成條件已達成。下一步為 C4（含先取得 C7-2 代理逾時量測）。詳見 [C3 證據](cloud-C3-evidence.md)與 [C5 證據](cloud-C5-evidence.md)；下方 09-20 摘要保留作為歷史狀態。
 
 日期：2026-09-17；狀態：`D1` 已全項定案（Cloudflare Access ＋ Google，服務間以 HMAC 簽章）、`D2` 已定案（**Cloudflare Workers static assets**，單一 Worker 同時承載靜態檔與 `/api/` 代理；2026-09-17 由原訂的 Pages Functions 改採，理由見 `D2`）、`D3` 已定案（請求內同步完成，時間上限待實測回填）、`D4` 已定案（Cloud Run 與 Supabase 同置東京）、`D5` 已定案（假持股先行、上限 $10、不買網域）、`D6` 已定案（GitHub Actions 建置推送，以 Workload Identity Federation 免金鑰認證）。`D1`–`D6` 全數定案，**`C1` 已全部完成**（`C1-1`–`C1-9`；四項完成條件中「預算警示可收到通知」因零花費無法觸發，併入 `C7-7`，不構成阻擋）。**`C2` 已全部完成**（2026-09-18／09-20，`C2-1`–`C2-7` ＋ 補立的健康檢查端點；HTTP 層改為 FastAPI ＋ uvicorn，證據見 `docs/cloud-C2-evidence.md`）。下一步為 `C3`／`C4`／`C5`。
 
@@ -438,7 +438,7 @@ Dockerfile 三處 `company_ca` 掛載本來就是條件式（`if [ -f /run/secre
 
 ### C3　認證與 session token
 
-**2026-09-21 進度**：C3-1／C3-2／C3-4 已實作且通過本機測試；C3-3 程式與模擬測試已完成，真實 Access 過期與 Cloud Run 縮容驗收仍待 C7，尚不宣稱雲端完成條件已通過。見 [C3 證據](cloud-C3-evidence.md)。下列「目前」描述為開工前問題。
+**2026-09-22 進度**：C3-1–C3-4 的程式與本機驗證全部完成，四項皆已勾選。**勾選代表程式交付，不代表雲端驗收**：真實 Access 過期與 Cloud Run 縮容後的恢復由 `C7-3` 實測，在該項通過前不得宣稱 C3 的雲端完成條件已達成。重跑紀錄與拆分理由見 [C3 證據](cloud-C3-evidence.md)。下列「目前」描述為開工前問題。
 
 **部署契約**：Secret Manager 的 `proxy-hmac-secret` → `PROXY_HMAC_SECRET`（必填）；`proxy-hmac-secret-prev` → `PROXY_HMAC_SECRET_PREV`（選填）。各非空秘密至少 32 bytes。缺少 current 時 API 拒絕啟動；初始化／清單更新命令不需要此秘密。
 
@@ -447,9 +447,12 @@ Dockerfile 三處 `company_ca` 掛載本來就是條件式（`if [ -f /run/secre
 - **執行項目**：
   - [x] `C3-1` 依 `D1` 的 HMAC 簽章規格實作後端驗證：所有 API（含 GET）都要通過驗證，不能只保護前端頁面；以 `hmac.compare_digest()` 比對、對原始 body bytes 計算 digest、先檢查時間窗再驗簽。
   - [x] `C3-2` 改掉每程序各自產生的 token：原本 token 是啟動時的 `secrets.token_urlsafe(32)`，現已改為用途區隔的無狀態簽章，效期一小時，支援過期重取；固定秘密不放進 JavaScript。
-  - [ ] `C3-3` 前端對應調整：目前啟動時取一次 token（static/app.js:93），需支援 401／403 後重新取得並重試一次；另需處理 Access session 過期——此時 `fetch()` 會因跨網域轉址而失敗而非回 401，應偵測後整頁重新載入以觸發 Google 登入。前端不實作登入表單。
+  - [x] `C3-3` 前端對應調整：目前啟動時取一次 token（static/app.js:93），需支援 401／403 後重新取得並重試一次；另需處理 Access session 過期——此時 `fetch()` 會因跨網域轉址而失敗而非回 401，應偵測後整頁重新載入以觸發 Google 登入。前端不實作登入表單。**程式已完成**：`renewSession()` 於 401／403 且 code 為 `unauthorized`／`session_expired` 時重取 session 並重試一次（`/api/session` 自身排除在重試外，不遞迴）；`fetch` 以 `redirect:'manual'` 發出，`opaqueredirect`、`redirected` 或 `text/html` 回應即整頁重載。另追加兩項計畫未要求但必要的處置：重載前把草稿、匯率與原 revision 暫存同分頁 sessionStorage 並於登入後恢復（否則重新登入會吃掉未保存的修改），以及 60 秒重載冷卻（`fetch` 無法區分跨網域轉址與網路故障，無冷卻會在斷網時無限重載）。**本項勾選只涵蓋程式與模擬測試**，真實 Access 過期與 Cloud Run 縮容後的恢復由 `C7-3` 驗收。
   - [x] `C3-4` 確認未授權請求的回應不洩漏內部資訊，且失敗訊息與既有錯誤處理風格一致。
-- **完成條件**：未帶有效憑證的 GET／PUT／POST 一律被拒；瀏覽器閒置至服務縮容後再操作，不需手動重新整理即可繼續使用。
+- **完成條件**（2026-09-22 拆為兩段，理由見下）：
+  - **程式面（已達成）**：未帶有效憑證的 GET／PUT／POST 一律被拒；前端在憑證失效與跨網域轉址兩種情況下都能自行恢復。以本機 HTTP 測試與前端模擬測試驗證。
+  - **雲端面（待 `C7-3`）**：瀏覽器閒置至服務縮容後再操作，不需手動重新整理即可繼續使用。此項需要真實的 Cloud Run 縮容與 Access session 過期，本機造不出來，因此不併入上列勾選。
+  - 拆分理由：原完成條件把「程式是否寫對」與「雲端是否真的會恢復」綁在同一句，使 `C3-3` 在程式早已交付後仍掛著未勾選，看起來像有未寫的程式。拆開後 C3 的程式面得以結清，雲端面則明確留下一個不會被遺漏的欠項。
 - **證據**：授權與未授權請求的對照紀錄。
 
 ### C4　工作生命週期、單例假設與復原
@@ -500,7 +503,7 @@ Dockerfile 三處 `company_ca` 掛載本來就是條件式（`if [ -f /run/secre
 - **執行項目**：
   - [ ] `C7-1` 依 `D2` 以 Workers static assets 部署既有三個靜態檔（`assets.directory` 指向 `static/`），於 Cloudflare 端配置安全標頭（CSP、`X-Content-Type-Options`、`Referrer-Policy` 等）。
   - [ ] `C7-2` 依 `D2` 在同一 Worker 內實作 `/api/*` 代理，`assets.run_worker_first` 僅列 `/api/*`，並以實際請求核對靜態檔路徑不會啟動 Worker；驗證 Worker 端 WebCrypto 與後端 Python 對同一 canonical string 產生相同簽章；以故意延遲回應的測試端點量出代理的實際逾時上限，並對齊前端、代理與後端的逾時。**`C2-2` 追加的必辦事項：Worker 轉發時必須原樣帶上瀏覽器的 `Origin` 標頭**，否則後端會把所有寫入請求判 403；理由是 HMAC 簽章擋不住「惡意網站以 `credentials:'include'` 觸發、Access 放行、Worker 照簽」這條跨站路徑，Origin 白名單是該路徑唯一的防線（見 `docs/cloud-C2-evidence.md` 的 `C2-2`）。
-  - [ ] `C7-3` 啟用入口驗證，並驗證無法繞過代理直接呼叫 `run.app`。後端驗證需依賴可靠簽章或憑證，不得只檢查可偽造的標頭。另須實測：未授權的 Google 帳號被 Access 拒絕、無痕視窗開啟會導向 Google 登入、session 過期後前端可自行恢復。
+  - [ ] `C7-3` 啟用入口驗證，並驗證無法繞過代理直接呼叫 `run.app`。後端驗證需依賴可靠簽章或憑證，不得只檢查可偽造的標頭。另須實測：未授權的 Google 帳號被 Access 拒絕、無痕視窗開啟會導向 Google 登入、session 過期後前端可自行恢復。**本項承接 `C3-3` 的雲端驗收**：`C3-3` 的勾選只涵蓋程式與模擬測試，C3 完成條件中「閒置至服務縮容後再操作，不需手動重新整理即可繼續使用」要在此處取得實測證據。此處未過即視為 C3 尚未收尾，不得因 `C3-3` 已勾選而略過。
   - [ ] `C7-4` 功能驗收：上傳 Excel、預覽、儲存、版本衝突（409）、報價更新、缺價／失敗、查詢結果與前端提示。使用 `D5` 決定的資料。
   - [ ] `C7-5` 持久性驗收：關閉瀏覽器、等待縮容後重開，確認持股仍在；更新中途終止與重新部署，確認 job 不永久卡住。
   - [ ] `C7-6` 外部來源驗收：實測台股上市、上櫃、美股與 ETF 從 GCP 出口抓價，記錄 429／封鎖／逾時與品質旗標。**公司網路測試通過不能證明 GCP 出口可用。**
