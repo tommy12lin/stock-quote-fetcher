@@ -457,11 +457,11 @@ Dockerfile 三處 `company_ca` 掛載本來就是條件式（`if [ -f /run/secre
 - **目的**：移除「單一長駐程序」假設。Cloud Run 會縮容到零、會同時存在新舊 revision，目前的背景執行緒、行程內鎖與全站 advisory lock 在這個環境下都會出錯。
 - **前置**：`D3`、`C2`、`C5`。
 - **執行項目**：
-  - [ ] `C4-1` 依 `D3` 將 `refresh()` 改為請求內有時限完成（dashboard.py:229），設整體 deadline 與單次最多檔數。前端可沿用 job 查詢介面（static/app.js:86 每 1.8 秒輪詢），只需改善等待狀態顯示。
-  - [ ] `C4-2` 移除 Web 啟動時取得的全程序 advisory lock（web.py:142）：新 revision 啟動時拿不到鎖會直接以 `parser.error` 結束，部署將失敗。
-  - [ ] `C4-3` 將 `Dashboard.mutex`（dashboard.py:98,215）這個行程內 `threading.Lock` 換成資料庫層的原子認領；跨實例時記憶體鎖不具任何互斥效果。
-  - [ ] `C4-4` 改寫 `recover_jobs()`（dashboard.py:283）：目前啟動就把所有 queued／running 的 job 標成失敗，在多實例或新舊版本重疊時會誤判其他存活實例正在執行的工作。改為 owner／lease／逾期回收，未確認過期不得宣告失敗。
-  - [ ] `C4-5` 保留 60 秒更新冷卻（dashboard.py:225）並確認它在多實例下仍然有效。
+  - [ ] `C4-1` 依 `D3` 將 `refresh()` 改為請求內有時限完成（dashboard.py:207），設整體 deadline 與單次最多檔數。前端可沿用 job 查詢介面（static/app.js:114 的 `watch()` 每 1.8 秒輪詢），只需改善等待狀態顯示。
+  - [ ] `C4-2` 移除 Web 啟動時取得的全程序 advisory lock（web.py:314，取不到時於 web.py:316 結束）：新 revision 啟動時拿不到鎖會直接以 `parser.error` 結束，部署將失敗。
+  - [ ] `C4-3` 將 `Dashboard.mutex`（dashboard.py:95 建立、dashboard.py:208 使用）這個行程內 `threading.Lock` 換成資料庫層的原子認領；跨實例時記憶體鎖不具任何互斥效果。
+  - [ ] `C4-4` 改寫 `recover_jobs()`（dashboard.py:276，由 web.py:317 在取得上述 lease 後呼叫）：目前啟動就把所有 queued／running 的 job 標成失敗，在多實例或新舊版本重疊時會誤判其他存活實例正在執行的工作。改為 owner／lease／逾期回收，未確認過期不得宣告失敗。
+  - [ ] `C4-5` 保留 60 秒更新冷卻（dashboard.py:218 的判斷、dashboard.py:219 的回應）並確認它在多實例下仍然有效。
   - [ ] `C4-6` 確認工作超時或容器被終止時，先前可用的報價仍保留，下一次請求能安全重新開始。
 - **完成條件**：更新途中終止容器或重新部署，job 不會永久停在 running，也不會把其他實例的工作標成失敗。
 - **證據**：中斷與重部署情境的 job 狀態紀錄。
