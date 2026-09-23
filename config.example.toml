@@ -30,8 +30,14 @@ heartbeat_interval_seconds = 30
 max_age_hours = 168 # Keeps a restart inside a multi-day campaign loadable; refresh before starting one.
 operation_timeout_seconds = 30
 
-[tls]
-company_ca_file = ""
-relaxed_providers = [] # Company network: ["finnhub", "twse", "tpex"] with company_ca_file.
-relaxed_sources = [] # Example in the company network: ["twse_companies", "twse_funds", "tpex_isin"]
+# [tls] is deliberately absent (C6-1). Its three fields — company_ca_file,
+# relaxed_providers and relaxed_sources — exist only to get through a TLS-intercepting
+# corporate proxy, and every one of them weakens certificate verification. Shipping them
+# here as an empty template invited copying them into a deployment that does not need
+# them. The fields still work when set in an ignored config.toml; config.py defaults all
+# three to off, so omitting the section is the same as the old empty values.
+#
+# Cloud deployments must not set them: deploy/cloud.toml omits [tls] entirely, and the
+# image is built with no company_ca build secret so the Dockerfile's conditional mounts
+# skip (D6).
 

@@ -1,0 +1,91 @@
+# C6-1：依 D6 以 GitHub Actions 建置 linux/amd64 的 web 映像並推送 Artifact Registry，
+# 全程以 Workload Identity Federation 取得 GCP 憑證，不使用 service account 金鑰。
+#
+# 本檔只建置與推送，不部署。依 D6，部署到 Cloud Run 一律手動觸發（C6-2 另立 workflow），
+# 驗收期間不自動上線；因此 main 上一次失敗的建置不會讓任何東西上線。
+#
+# public repository 的兩個限制（D6）：
+#   1. 執行紀錄公開可見——本檔不得輸出任何秘密值、DSN 或資料庫連線資訊。
+#   2. 不得使用 pull_request_target，也不得在 fork 的 PR 上授予 id-token: write。
+#
+# 三處刻意的寫法：
+#   - 所有 action 釘 commit SHA 而非可變 tag（C1-9 留待條件 a）。本 job 帶 id-token: write，
+#     一旦用到被汙染的 action，等同交出 deploy SA 的 artifactregistry.writer 與 run.admin。
+#     tag 可被重新指向，commit SHA 不行。
+#   - --target web 為必要（C2-4）。預設目標 runtime 的 ENTRYPOINT 是 CLI，推上去 Cloud Run
+#     只會判定啟動失敗，而失敗訊息不會指向這個原因。
+#   - 不傳入 company_ca build secret。Dockerfile 三處 --mount=type=secret 都是條件式
+#     （if [ -f /run/secrets/company_ca ]），未提供即整段跳過，交付映像與公司網路徹底脫鉤（D6）。
+
+name: Build image
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# 預設最小權限；只有需要換取 GCP 憑證的 job 才另外加 id-token: write。
+permissions:
+  contents: read
+
+jobs:
+  build-push:
+    runs-on: ubuntu-latest
+    # WIF provider 的 attribute condition 目前只限定 assertion.repository、未限定 ref，
+    # 因此本 repo 的任何分支都換得到 deploy SA 憑證（C1-9 留待條件 b）。在 provider 補上
+    # assertion.ref 之前，這一行是唯一把推送限制在 main 的關卡——workflow_dispatch 可以
+    # 指定任意 ref，光靠 on.push.branches 擋不住。
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      id-token: write # 缺這一行 OIDC token 取不到，auth 步驟必失敗
+    env:
+      REGISTRY: asia-northeast1-docker.pkg.dev
+      # repository 以專案命名、image 以服務命名，使同一財務系統的其他服務共用同一 repository。
+      # Artifact Registry 不支援 repository 改名，此路徑為終局。
+      IMAGE: asia-northeast1-docker.pkg.dev/finpo-508709/finpo/stock-quote
+
+    steps:
+      - name: 取出原始碼
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - id: auth
+        name: 以 WIF 取得 GCP 憑證（無金鑰）
+        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed # v2.1.13
+        with:
+          project_id: finpo-508709
+          workload_identity_provider: projects/896096883650/locations/global/workloadIdentityPools/github/providers/github
+          service_account: finpo-deploy@finpo-508709.iam.gserviceaccount.com
+          token_format: access_token
+
+      - name: 登入 Artifact Registry
+        env:
+          ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
+        # access_token 以 stdin 交給 docker login，不放進命令列——命令列會出現在公開的 run log。
+        run: echo "$ACCESS_TOKEN" | docker login -u oauth2accesstoken --password-stdin "https://$REGISTRY"
+
+      - id: build
+        name: 建置並推送 web 映像
+        run: |
+          set -euo pipefail
+          # tag 取 commit SHA 前 12 碼：映像與原始碼一一對應，回滾時不需查表。
+          TAG="${GITHUB_SHA:0:12}"
+          docker build --platform linux/amd64 --target web --tag "$IMAGE:$TAG" .
+          docker push "$IMAGE:$TAG"
+          # RepoDigests 要在 push 之後才有值，因此不能在 build 完就取。
+          DIGEST="$(docker inspect --format='{{index .RepoDigests 0}}' "$IMAGE:$TAG")"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+
+      - name: 記錄 digest
+        # C6-4 的回滾依據：digest 留在 run log 與 job summary，不靠人工抄寫。
+        run: |
+          {
+            echo "### 映像"
+            echo
+            echo "| 項目 | 值 |"
+            echo "|---|---|"
+            echo "| tag | \`${{ steps.build.outputs.tag }}\` |"
+            echo "| digest | \`${{ steps.build.outputs.digest }}\` |"
+            echo "| commit | \`${{ github.sha }}\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
