@@ -1,6 +1,6 @@
 # 雲端部署第一階段執行計畫
 
-> 最新進度（2026-09-22）：C1／C2／C3／C4／C5 的程式交付皆已完成。**C3 四項已全部勾選，但真實 Access 過期與 Cloud Run 縮容後的恢復驗收併入 `C7-3`**，在該項通過前不得宣稱 C3 的雲端完成條件已達成。**C4 同樣已全項勾選，但 `C4-1` 的 deadline 與單次檔數兩個數值仍未量測**（`C6-2` 部署前必須回填），容器終止與 rollout 的驗收併入 `C7-5`。下一步為 `C7-2` 的代理逾時量測，它同時解開 `C4-1` 的數值與 `C6-2` 的部署前提。詳見 [C3 證據](cloud-C3-evidence.md)、[C4 證據](cloud-C4-evidence.md)與 [C5 證據](cloud-C5-evidence.md)；下方 09-20 摘要保留作為歷史狀態。
+> 最新進度（2026-09-22）：C1／C2／C3／C4／C5 的程式交付皆已完成。**C3 四項已全部勾選，但真實 Access 過期與 Cloud Run 縮容後的恢復驗收併入 `C7-3`**，在該項通過前不得宣稱 C3 的雲端完成條件已達成。**C4 同樣已全項勾選，但 `C4-1` 的 deadline 與單次檔數兩個數值仍未量測**（`C6-2` 部署前必須回填），容器終止與 rollout 的驗收併入 `C7-5`。**`C7-2` 的代理逾時量測已於 2026-09-22 完成**：Worker→Cloud Run 的上限為 **125 秒**（原假設「約 100 秒」低估），client-facing 則到 600 秒無上限，`D3` 的作廢條件未觸發。但 `C4-1` 的兩個數值**仍未定案**——deadline 還要扣除真實映像的冷啟動（未量），`refresh_max_tickers` 待 `C7-6`。**下一步為 `C6-1`**（GitHub Actions 建置推送）：它不依賴那兩個數值，且建出映像才能量冷啟動，而冷啟動是 deadline 定案的最後一塊。詳見 [C7 證據](cloud-C7-evidence.md)、[C3 證據](cloud-C3-evidence.md)、[C4 證據](cloud-C4-evidence.md)與 [C5 證據](cloud-C5-evidence.md)；下方 09-20 摘要保留作為歷史狀態。
 
 日期：2026-09-17；狀態：`D1` 已全項定案（Cloudflare Access ＋ Google，服務間以 HMAC 簽章）、`D2` 已定案（**Cloudflare Workers static assets**，單一 Worker 同時承載靜態檔與 `/api/` 代理；2026-09-17 由原訂的 Pages Functions 改採，理由見 `D2`）、`D3` 已定案（請求內同步完成，時間上限待實測回填）、`D4` 已定案（Cloud Run 與 Supabase 同置東京）、`D5` 已定案（假持股先行、上限 $10、不買網域）、`D6` 已定案（GitHub Actions 建置推送，以 Workload Identity Federation 免金鑰認證）。`D1`–`D6` 全數定案，**`C1` 已全部完成**（`C1-1`–`C1-9`；四項完成條件中「預算警示可收到通知」因零花費無法觸發，併入 `C7-7`，不構成阻擋）。**`C2` 已全部完成**（2026-09-18／09-20，`C2-1`–`C2-7` ＋ 補立的健康檢查端點；HTTP 層改為 FastAPI ＋ uvicorn，證據見 `docs/cloud-C2-evidence.md`）。下一步為 `C3`／`C4`／`C5`。
 
@@ -219,7 +219,7 @@ Cloud Run：驗簽；失敗一律 401，且不信任任何可偽造的標頭
 - 10ms CPU 上限只計 CPU 時間，等待 Cloud Run 回應的時間不計入；HMAC-SHA256 為微秒等級，不會踩到此限制。
 - `run_worker_first` 只列 `/api/*`。未命中的路徑先找靜態檔，找不到才回落到 Worker，因此 `C2-6` 決定的靜態檔集合不必在此重複宣告。
 - **需一併確認**：
-  - 代理的逾時上限是否容納 `D3` 決定的抓價時間；超過時的行為（回 504 或改非同步）。**未測**：Cloudflare 邊緣對長請求常見在約 100 秒切斷（524）；若屬實，與 `D3` 現況每批 `cycle_budget_seconds=300`（dashboard.py:256）直接衝突。須於 `C7-2` 以故意延遲回應的測試端點量出實際上限，再回頭定 `D3` 的 deadline。
+  - 代理的逾時上限是否容納 `D3` 決定的抓價時間；超過時的行為（回 504 或改非同步）。**未測**：Cloudflare 邊緣對長請求常見在約 100 秒切斷（524）；若屬實，與 `D3` 現況每批 `cycle_budget_seconds=300`（dashboard.py:256）直接衝突。須於 `C7-2` 以故意延遲回應的測試端點量出實際上限，再回頭定 `D3` 的 deadline。**2026-09-22 已量測**：實際為 **125 秒**而非 100 秒，且限制只在 Worker 的對外 subrequest——client-facing 到 600 秒無上限。與 `cycle_budget_seconds=300` 的衝突確實存在，但 `C4-1` 已把每批預算改為取「剩餘時間」與該值的較小值，衝突不再是硬傷。超過時的行為已確定：**回 524，且以 upstream response 形式交給 Worker**，不是 throw。見 [C7 證據](cloud-C7-evidence.md)。
   - Worker-level Access 官方載明**不支援 WebSocket**（upgrade 請求回 403）。本階段前端以 `fetch` 輪詢（static/app.js:86），不使用 WebSocket，故不受影響；但這條限制會封死「改用 WebSocket 推播取代 1.8 秒輪詢」這個未來選項，若日後要走該方向須改用 hostname-based Access。
 - **影響範圍**：`C2-6`、`C4-1`、`C7-1`、`C7-2`、`D3`（逾時上限）。
 
@@ -270,6 +270,8 @@ Cloud Run 的「CPU always allocated」可讓背景執行緒續跑，但需為�
 
   **2026-09-22 補記（`C4-1` 完成後）**：上述「整份清單沒有總時間上限」已不再成立——`C4-1` 加上了整體 deadline 與單次檔數兩個設定鍵（`[scheduler] refresh_deadline_seconds`、`refresh_max_tickers`），機制完成。**但本項的要求未解除**：兩個鍵的預設值刻意沿用既有行為（300 秒、不設上限）而非量測值，`deploy/cloud.toml` 仍未寫入任何數字。`C7-2`／`C7-6` 量測後必須回填，`C6-2` 不得在回填前部署。另 `C6-2` 的 request timeout 必須大於 deadline，否則平台會在程式自己收尾前切斷請求。
 - **重新評估的觸發條件**：若 `C7-2` 量出的邊緣逾時，扣掉冷啟動後不足以在單次請求內完成一份可用的清單（連縮小檔數也不可行），則本決策作廢，回到選項 2 重新評估，並同步調整 `C4` 的工作生命週期設計。
+
+  **2026-09-22 結果：未觸發，`D3` 維持成立。** `C7-2` 量出的上限為 **125 秒**，扣除冷啟動後仍足以在單次請求內完成一份小清單。附帶取得的一項結構性資訊：client-facing 到 600 秒無上限，125 秒只限制 Worker 的對外 subrequest，因此**若日後改為串流分批輸出，可用時間可大幅放寬**——這是目前已知唯一能繞過 125 秒的方向，本階段不做。詳見 [C7 證據](cloud-C7-evidence.md)。
 - **影響範圍**：`C4` 全部、`C6-2`（request timeout 與 concurrency）。
 
 ### D4　區域、帳號與現有額度（已定案）
@@ -509,8 +511,10 @@ Dockerfile 三處 `company_ca` 掛載本來就是條件式（`if [ -f /run/secre
 - **目的**：完成使用者實際會走的路徑，並用實測取代推論。本階段所有「可行」的說法都要在這步變成量測結果。
 - **前置**：`C6`、`D1`、`D2`。
 - **執行項目**：
-  - [ ] `C7-1` 依 `D2` 以 Workers static assets 部署既有三個靜態檔（`assets.directory` 指向 `static/`），於 Cloudflare 端配置安全標頭（CSP、`X-Content-Type-Options`、`Referrer-Policy` 等）。
-  - [ ] `C7-2` 依 `D2` 在同一 Worker 內實作 `/api/*` 代理，`assets.run_worker_first` 僅列 `/api/*`，並以實際請求核對靜態檔路徑不會啟動 Worker；驗證 Worker 端 WebCrypto 與後端 Python 對同一 canonical string 產生相同簽章；以故意延遲回應的測試端點量出代理的實際逾時上限，並對齊前端、代理與後端的逾時。**`C2-2` 追加的必辦事項：Worker 轉發時必須原樣帶上瀏覽器的 `Origin` 標頭**，否則後端會把所有寫入請求判 403；理由是 HMAC 簽章擋不住「惡意網站以 `credentials:'include'` 觸發、Access 放行、Worker 照簽」這條跨站路徑，Origin 白名單是該路徑唯一的防線（見 `docs/cloud-C2-evidence.md` 的 `C2-2`）。
+  - [ ] `C7-1` 依 `D2` 以 Workers static assets 部署既有三個靜態檔（`assets.directory` 指向 `static/`），於 Cloudflare 端配置安全標頭（CSP、`X-Content-Type-Options`、`Referrer-Policy` 等）。**在本項執行前不得對 `finpo` Worker 做任何部署**：它目前承載的是 `C1-6` 刻意留下的 canary（`C1-6-CANARY-OK`），而正式前端尚未上線，沒有它就沒有任何東西可用來驗證 Access 是否生效；本項部署真實前端後 canary 才功成身退。**本項另承接一件事**：`C7-2` 量出的 125 秒得自不受 Access 保護的探針，Access 不參與回應路徑故理論上不會縮短該上限，但未實測；在此處 canary 退場、真實前端上線時一併確認。
+  - [ ] `C7-2`（**逾時量測已於 2026-09-22 完成，其餘待 `C6`**）依 `D2` 在同一 Worker 內實作 `/api/*` 代理，`assets.run_worker_first` 僅列 `/api/*`，並以實際請求核對靜態檔路徑不會啟動 Worker；驗證 Worker 端 WebCrypto 與後端 Python 對同一 canonical string 產生相同簽章；以故意延遲回應的測試端點量出代理的實際逾時上限，並對齊前端、代理與後端的逾時。**`C2-2` 追加的必辦事項：Worker 轉發時必須原樣帶上瀏覽器的 `Origin` 標頭**，否則後端會把所有寫入請求判 403；理由是 HMAC 簽章擋不住「惡意網站以 `credentials:'include'` 觸發、Access 放行、Worker 照簽」這條跨站路徑，Origin 白名單是該路徑唯一的防線（見 `docs/cloud-C2-evidence.md` 的 `C2-2`）。
+
+    **逾時量測結果（2026-09-22，見 [C7 證據](cloud-C7-evidence.md)）**：Worker→Cloud Run 的 subrequest 上限為 **125 秒**（最後成功點 124 秒；130／150／300／600 皆在 125.0–125.2 秒被 524 切斷），client-facing 則到 600 秒無上限。**524 是以 upstream response 的形式回到 Worker 手上，`fetch()` 不會 throw**——正式 Worker 必須檢查這個狀態碼並轉成給前端的明確錯誤，否則瀏覽器只會拿到一個看似成功的空回應。量測用的慢 origin 不能是另一個 Worker（`error code: 1042`），已改以拋棄式 Cloud Run 服務取得，該服務與映像已刪除。**本項其餘要求（代理實作、`run_worker_first` 核對、HMAC 互通、`Origin` 轉發、三層逾時對齊）仍待 `C6` 部署後執行。** 另：經 Access 保護路徑的逾時確認原訂在此處做，因會覆寫 `finpo` Worker 上的 `C1-6` canary 而改排到 `C7-1`。
   - [ ] `C7-3` 啟用入口驗證，並驗證無法繞過代理直接呼叫 `run.app`。後端驗證需依賴可靠簽章或憑證，不得只檢查可偽造的標頭。另須實測：未授權的 Google 帳號被 Access 拒絕、無痕視窗開啟會導向 Google 登入、session 過期後前端可自行恢復。**本項承接 `C3-3` 的雲端驗收**：`C3-3` 的勾選只涵蓋程式與模擬測試，C3 完成條件中「閒置至服務縮容後再操作，不需手動重新整理即可繼續使用」要在此處取得實測證據。此處未過即視為 C3 尚未收尾，不得因 `C3-3` 已勾選而略過。
   - [ ] `C7-4` 功能驗收：上傳 Excel、預覽、儲存、版本衝突（409）、報價更新、缺價／失敗、查詢結果與前端提示。使用 `D5` 決定的資料。
   - [ ] `C7-5` 持久性驗收：關閉瀏覽器、等待縮容後重開，確認持股仍在；更新中途終止與重新部署，確認 job 不永久卡住。**本項承接 `C4` 的雲端完成條件**：`C4` 的勾選只涵蓋程式與資料庫整合測試，真實容器終止與 rollout 下的 job 狀態要在此處取得實測證據。
@@ -540,8 +544,9 @@ flowchart LR
 | 項目 | 現況 | 何時必須解決 |
 |---|---|---|
 | ~~共享秘密輪替的過渡期處理~~ | **已解決**：`C1-7` 定案兩組 secret＋驗簽接受一組秘密；程序見 `docs/cloud-C1-evidence.md` | `C3-1` 依此實作 |
-| 抓價整體 deadline 與單次上限 | **機制已完成（`C4-1`）**，兩個數值仍未量測：`[scheduler] refresh_deadline_seconds` 預設 300 秒、`refresh_max_tickers` 預設不設限，皆沿用既有行為而非推測值；上限受 `C7-2` 的邊緣逾時實測值封頂 | `C6-2` 部署前必須回填；`C7-2`／`C7-6` 量測 |
-| Worker 對外請求的實際逾時上限 | 未測；常見說法為邊緣約 100 秒切斷（524），若屬實則與每批 300 秒預算衝突 | `C7-2`；最晚 `D3` 定 deadline 前 |
+| 抓價整體 deadline 與單次上限 | **機制已完成（`C4-1`）**，兩個數值仍未定案。硬上界已於 2026-09-22 量出為 **125 秒**（見下列），但最終值還要扣除**真實映像的冷啟動**（未量，屬 `C7-7`；探針容器的冷啟動不具代表性）。`refresh_max_tickers` 仍完全無依據，待 `C7-6` | `C6-2` 部署前必須回填；冷啟動待 `C6` 建出映像後量 |
+| ~~Worker 對外請求的實際逾時上限~~ | **已量測（2026-09-22）**：Worker→Cloud Run 的 subrequest 在 **125.0–125.2 秒**被 524 切斷（130／150／300／600 四點皆同一時間，固定計時器），最後成功點 124 秒。原記「約 100 秒」**低估**，方向正確。另發現 **client-facing 到 600 秒無上限**，兩段差一個數量級——故 `C6-2` 的 request timeout 設多大都無法放寬 125 秒。證據見 [C7 證據](cloud-C7-evidence.md) | — |
+| Worker 不得 fetch 同 zone 的另一個 Worker | **新增（2026-09-22）**：`workers.dev` 全帳號同屬一個 zone，Worker 互打回 `error code: 1042`。本階段 `C7-2` 的代理打的是 `run.app`，不受影響；但封死「以第二個 Worker 分擔長工作」這個選項 | 若日後要拆 Worker，需改用 service binding 或自有網域 |
 | ~~自動產生的 `_routes.json` 是否只涵蓋 `/api/*`~~ | **已解除**：`D2` 改採 Workers static assets 後，改以 wrangler 的 `run_worker_first` 明文宣告，無自動產生的失敗模式 | — |
 | ~~Access 能否保護免費子網域（含 preview URL）~~ | **已解決**：`C1-6` 實測 `workers.dev` 可受 Worker-level Access 保護，未登入時靜態檔不送出、`/api/*` 亦在保護傘內，`D5` 的「不買網域」成立 | — |
 | Worker-level Access 不支援 WebSocket | 已知行為；本階段以 `fetch` 輪詢，不受影響，但封死日後改用 WebSocket 推播的選項 | 若日後要改推播，需改用 hostname-based Access |

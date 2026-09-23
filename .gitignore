@@ -42,6 +42,11 @@ reports/
 *.sqlite3
 *.db
 
+# Wrangler's local state and account-id cache. Created in the repository root by any
+# wrangler invocation (C7-2 measurement; C7-1 onwards routinely). Never belongs in a
+# public repository.
+.wrangler/
+
 # Editors / OS
 .vscode/
 .idea/
