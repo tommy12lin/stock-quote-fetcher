@@ -89,7 +89,7 @@ GCP 端另以 `gcloud artifacts docker images list` 獨立核對：digest 與 ta
 | 項目 | 說明 |
 |---|---|
 | WIF attribute condition 的**阻擋效力** | 沿用 `C1-9` 的狀態：仍只有正向驗證。「別的 repository 換不到憑證」需要第二個 repository 才能構成證據，**不得宣稱已驗證能擋下** |
-| cleanup policy 的**實際刪除行為** | policy 已設定並由 API 回讀確認，但目前只有 1 個版本，未達 3 個上限，**刪除從未實際發生過**。累積到第 4 個 tag 時才會首次驗證 |
+| cleanup policy 的**實際刪除行為** | policy 已設定並由 API 回讀確認，但**刪除仍未實際發生過**。2026-09-23 已累積至 **4 個版本**（超過 `keepCount: 3`）而四個都還在：Artifact Registry 的 cleanup policy 是**背景非同步回收**，不在推送時同步套用。因此「下一次建置就會看到刪除」是錯的，時機不由推送決定。下次查看 registry 時若仍為 4 個以上，先確認是否只是尚未回收，再懷疑 policy 設錯 |
 | 建置的**可重現性** | **已測，且結論是「不可重現」**——見下節 |
 
 ### 意外取得的結果：相同 build context 產生不同 digest
@@ -118,6 +118,14 @@ GCP 端另以 `gcloud artifacts docker images list` 獨立核對：digest 與 ta
 
 - `C6-4` 的回滾**不受影響**。回滾是以記錄下來的 digest 重新部署一個既存映像，不是重建。
 - 受影響的是另一條路徑：**「映像遺失後照同一個 commit 重建」不會得到同一個 digest**。功能等價，但 digest 不同，因此任何以 digest 為準的紀錄或比對都對不上。真要修，方向是 `SOURCE_DATE_EPOCH` 加上 BuildKit 的時間戳重寫；本階段不做，先記錄。
+
+### `paths-ignore` 的判斷單位是一次 push，不是一個 commit
+
+2026-09-23 實測：把「程式修正」與「文件更新」拆成兩個 commit 一起推，建置**照常觸發**（正確——該次 push 確實含程式變更），但 **run 與映像 tag 都掛在 head commit（文件那個）上**，tag 為 `06e2df807527` 而非程式 commit `2a94be4…`。
+
+`paths-ignore` 評估的是整次 push 涵蓋的檔案集合，不是逐個 commit；GitHub 以 head commit 標記 run，而本 workflow 的 tag 取 `GITHUB_SHA` 前 12 碼。
+
+**對 `C6-4` 的影響**：映像 tag 指向的 commit **不保證是造成該映像內容變化的那個 commit**。回滾仍以 digest 為準，不受影響；但若有人從 tag 反查「這個映像對應哪次程式變更」，會查到錯的 commit。要讓兩者對應，程式與文件必須**分兩次 push**，不是分兩個 commit。
 
 ### 一個應該修的觸發條件
 

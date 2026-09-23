@@ -1,6 +1,28 @@
 # 雲端部署第一階段執行計畫
 
-> 最新進度（2026-09-22）：C1／C2／C3／C4／C5 的程式交付皆已完成。**C3 四項已全部勾選，但真實 Access 過期與 Cloud Run 縮容後的恢復驗收併入 `C7-3`**，在該項通過前不得宣稱 C3 的雲端完成條件已達成。**C4 同樣已全項勾選，但 `C4-1` 的 deadline 與單次檔數兩個數值仍未量測**（`C6-2` 部署前必須回填），容器終止與 rollout 的驗收併入 `C7-5`。**`C7-2` 的代理逾時量測已於 2026-09-22 完成**：Worker→Cloud Run 的上限為 **125 秒**（原假設「約 100 秒」低估），client-facing 則到 600 秒無上限，`D3` 的作廢條件未觸發。但 `C4-1` 的兩個數值**仍未定案**——deadline 還要扣除真實映像的冷啟動（未量），`refresh_max_tickers` 待 `C7-6`。**`C6-1` 已於 2026-09-23 完成**（run `35806642267`）。**冷啟動亦已提前量測**（`C7-7`，實測 2.3–3.4 秒），`refresh_deadline_seconds` 因此定案為 **110 秒**並寫入 `deploy/cloud.toml`。量測途中另修掉一個缺陷：`QuoteRunner.run()` 讓每個市場各拿一份完整 cycle 預算，一批混合台股與美股時最壞會超出 deadline 達 50 秒——deadline 壓到 110 秒後這會直接造成 524。**下一步為 `C7-6`**（外部來源驗收）：它是 `refresh_max_tickers` 的唯一依據，也是 `C6-2` 最後一個未解的前提。詳見 [C6 證據](cloud-C6-evidence.md)、[C7 證據](cloud-C7-evidence.md)、[C3 證據](cloud-C3-evidence.md)、[C4 證據](cloud-C4-evidence.md)與 [C5 證據](cloud-C5-evidence.md)；下方 09-20 摘要保留作為歷史狀態。
+> **最新進度（2026-09-23）。下一步為 `C7-6`。**
+>
+> | 步驟 | 狀態 |
+> |---|---|
+> | `C1` 資源準備 | ✅ 完成（預算警示通知送達併入 `C7-7`） |
+> | `C2` HTTP 層 | ✅ 完成 |
+> | `C3` 認證 | ✅ 程式完成；**雲端驗收欠 `C7-3`**，在該項通過前不得宣稱 C3 已完成 |
+> | `C4` 工作生命週期 | ✅ 程式完成；**雲端驗收欠 `C7-5`** |
+> | `C5` Supabase／TLS | ✅ 完成 |
+> | `C6-1` 建置推送 | ✅ 完成（見 [C6 證據](cloud-C6-evidence.md)） |
+> | `C6-2`–`C6-4` 部署 | ⬜ **被 `refresh_max_tickers` 擋住**，見下 |
+> | `C7-2` 逾時量測 | ✅ 完成；`C7-2` 其餘要求待 `C6` 部署後 |
+> | `C7-7` 冷啟動 | ✅ 提前完成（2.3–3.4 秒） |
+> | 其餘 `C7` | ⬜ 未開始 |
+>
+> **`C6-2` 唯一未解的前提**：`deploy/cloud.toml` 的 `refresh_deadline_seconds` 已定案為 **110 秒**（125 秒邊緣上限 − 3.5 冷啟動 − 1 收尾 − 2 殘餘超出），但 `refresh_max_tickers` 仍未設，唯一依據是 `C7-6` 從 **GCP 出口**實測的單檔抓價成本。公司網路測得的結果不算數。
+>
+> **接手前必讀的三條硬性限制**：
+> 1. **`C7-1` 之前不得對 `finpo` Worker 做任何部署**——它承載 `C1-6` 的 canary，是目前唯一能驗證 Access 生效的東西。
+> 2. **`GET /healthz` 在 Cloud Run 公開網址上不可用**（被前端攔截、不抵達容器，回 404）。健康檢查探針改用 `/`。見 [C7 證據](cloud-C7-evidence.md)。
+> 3. **抓價的時間預算是巢狀的**：125 秒邊緣硬上限 ⊃ `refresh_deadline_seconds` 110 ⊃ 一批內所有市場共用的 `budget` ⊃ `cycle_budget_seconds` 50 ⊃ `operation_timeout_seconds` 10。調高任何一層前先讀 `C7` 證據的算式。
+>
+> 詳見 [C6 證據](cloud-C6-evidence.md)、[C7 證據](cloud-C7-evidence.md)、[C3 證據](cloud-C3-evidence.md)、[C4 證據](cloud-C4-evidence.md)、[C5 證據](cloud-C5-evidence.md)；下方 09-17／09-20 段落保留作為歷史狀態，與本表衝突時以本表為準。
 
 日期：2026-09-17；狀態：`D1` 已全項定案（Cloudflare Access ＋ Google，服務間以 HMAC 簽章）、`D2` 已定案（**Cloudflare Workers static assets**，單一 Worker 同時承載靜態檔與 `/api/` 代理；2026-09-17 由原訂的 Pages Functions 改採，理由見 `D2`）、`D3` 已定案（請求內同步完成，時間上限待實測回填）、`D4` 已定案（Cloud Run 與 Supabase 同置東京）、`D5` 已定案（假持股先行、上限 $10、不買網域）、`D6` 已定案（GitHub Actions 建置推送，以 Workload Identity Federation 免金鑰認證）。`D1`–`D6` 全數定案，**`C1` 已全部完成**（`C1-1`–`C1-9`；四項完成條件中「預算警示可收到通知」因零花費無法觸發，併入 `C7-7`，不構成阻擋）。**`C2` 已全部完成**（2026-09-18／09-20，`C2-1`–`C2-7` ＋ 補立的健康檢查端點；HTTP 層改為 FastAPI ＋ uvicorn，證據見 `docs/cloud-C2-evidence.md`）。下一步為 `C3`／`C4`／`C5`。
 
