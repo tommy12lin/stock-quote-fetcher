@@ -96,8 +96,14 @@ class InstrumentCatalogConfig:
     operation_timeout_seconds: int = 30
     company_ca_file: str = ''
     relaxed_sources: tuple[str, ...] = ()
+    # False moves every listing refresh out of the user's request. From Cloud Run a full
+    # refresh took 135 s, past the 125 s edge limit (C7-6 R1), so the cloud turns it off
+    # and an administrator runs `stock-web --refresh-catalog` out of band instead.
+    refresh_in_request: bool = True
 
     def __post_init__(self):
+        if type(self.refresh_in_request) is not bool:
+            raise ConfigurationError('instruments.refresh_in_request 必須是 true 或 false。')
         if type(self.max_age_hours) is not int or not 1 <= self.max_age_hours <= 168:
             raise ConfigurationError('instruments.max_age_hours 必須介於 1 與 168。')
         if type(self.operation_timeout_seconds) is not int or not 1 <= self.operation_timeout_seconds <= 120:
@@ -115,7 +121,7 @@ def load_instrument_catalog_config(path: Path) -> InstrumentCatalogConfig:
     document = _load_document(path)
     raw = document.get('instruments', {})
     tls = document.get('tls', {})
-    if not isinstance(raw, dict) or set(raw) - {'max_age_hours','operation_timeout_seconds'}:
+    if not isinstance(raw, dict) or set(raw) - {'max_age_hours','operation_timeout_seconds','refresh_in_request'}:
         raise ConfigurationError('instruments 含不支援的欄位。')
     if not isinstance(tls, dict) or set(tls) - {'company_ca_file','relaxed_sources','relaxed_providers'}:
         raise ConfigurationError('tls 含不支援的欄位。')

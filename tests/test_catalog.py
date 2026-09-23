@@ -62,3 +62,15 @@ def test_relaxed_source_requires_ca_and_known_name():
         InstrumentCatalogConfig(relaxed_sources=('twse_companies',))
     with pytest.raises(ConfigurationError):
         InstrumentCatalogConfig(company_ca_file='x.pem',relaxed_sources=('unknown',))
+
+
+def test_refresh_in_request_must_be_a_real_boolean(tmp_path):
+    from stock_quote_fetcher.config import ConfigurationError, load_instrument_catalog_config
+    # "false" is truthy; accepting it would silently keep the in-request refresh on.
+    for value in ('false', 0, None):
+        with pytest.raises(ConfigurationError):
+            InstrumentCatalogConfig(refresh_in_request=value)
+    path = tmp_path / 'c.toml'
+    path.write_text('[instruments]\nrefresh_in_request = false\n', encoding='utf-8')
+    assert load_instrument_catalog_config(path).refresh_in_request is False
+    assert InstrumentCatalogConfig().refresh_in_request is True  # local behaviour unchanged

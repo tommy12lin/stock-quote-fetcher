@@ -509,11 +509,21 @@ class Storage:
             self._check_versions(require_current=True)
             self._insert('instrument_catalog_generations', dict(id=identity, created_at=stamp,
                 completed_at=stamp, expires_at=stamp+timedelta(hours=max_age_hours), sources=Jsonb(sources)))
-            for source, entry in combined:
-                self._insert('catalog_instruments', dict(generation_id=identity, source=source,
-                    instrument_id=entry.instrument_id, ticker=entry.ticker, market=entry.market.value,
-                    currency=entry.currency, exchange=entry.exchange, asset_type=entry.asset_type,
-                    name=entry.name, provider_symbols=Jsonb(dict(entry.provider_symbols)), aliases=Jsonb(list(entry.aliases))))
+            # One statement for the whole listing. Row by row, 13,427 entries took 73 s from
+            # Cloud Run to the Supabase pooler, one round trip each (C7-6 R1): more than
+            # half of a refresh that overran the 125 s edge limit.
+            rows = [dict(source=source, instrument_id=entry.instrument_id, ticker=entry.ticker,
+                         market=entry.market.value, currency=entry.currency, exchange=entry.exchange,
+                         asset_type=entry.asset_type, name=entry.name,
+                         provider_symbols=dict(entry.provider_symbols), aliases=list(entry.aliases))
+                    for source, entry in combined]
+            self.conn.execute(sql.SQL("""INSERT INTO {} (generation_id,source,instrument_id,ticker,market,currency,
+                    exchange,asset_type,name,provider_symbols,aliases)
+                SELECT %s,r.source,r.instrument_id,r.ticker,r.market,r.currency,r.exchange,r.asset_type,r.name,
+                    r.provider_symbols,r.aliases
+                FROM jsonb_to_recordset(%s) AS r(source text,instrument_id text,ticker text,market text,currency text,
+                    exchange text,asset_type text,name text,provider_symbols jsonb,aliases jsonb)""").format(
+                    self.table('catalog_instruments')), (identity, Jsonb(rows)))
         return identity
 
     def load_instrument_catalog(self, *, as_of=None):

@@ -256,3 +256,75 @@ def test_order_rotates_so_a_capped_refresh_reaches_every_holding(service, monkey
 def test_equal_staleness_keeps_the_saved_order(service, monkeypatch):
     two_holdings(service, monkeypatch)
     assert ordered_tickers(service) == ['AAPL', 'MSFT']
+
+
+# C7-6 R1: a full listing refresh took 135 s from Cloud Run against a 125 s edge limit,
+# outside the refresh deadline. With refresh_in_request off it must never run in a request.
+
+def out_of_band(service, monkeypatch, *, listing=True):
+    service.catalog_config = InstrumentCatalogConfig(refresh_in_request=False)
+    # Failed is a BaseException: run_job's broad except cannot swallow it into a job row.
+    monkeypatch.setattr('stock_quote_fetcher.catalog.fetch_all',
+                        lambda config: pytest.fail('official listing fetched inside a request'))
+    if not listing:
+        def expired():
+            raise WebError('expired', code='catalog_unavailable', status=503)
+        monkeypatch.setattr(service, 'catalog', expired)
+
+
+def job_rows(service):
+    with Storage(service.db) as s:
+        return s.conn.execute(sql.SQL('SELECT count(*) AS n FROM {}').format(s.table('refresh_jobs'))).fetchone()['n']
+
+
+def fetched_quote(monkeypatch):
+    from stock_quote_fetcher import quoting
+    from stock_quote_fetcher.providers import Operation
+    def fetch(instrument, provider, config, timeout):
+        stamp = datetime.now(UTC)
+        q = Quote(instrument.instrument_id, instrument.ticker, instrument.provider_symbols['yahoo'], instrument.market,
+                  instrument.currency, provider, Decimal('10'), 'last_trade', stamp, stamp, None, 'regular', 'second')
+        return Operation(FetchResult(instrument.instrument_id, provider, 'success', q), {'parser_version': 'fixture'})
+    monkeypatch.setattr(quoting, 'fetch_one', fetch)
+
+
+def test_listing_refresh_from_the_page_is_refused_before_any_job(service, monkeypatch):
+    service.save(body())
+    out_of_band(service, monkeypatch)
+    with pytest.raises(WebError) as exc:
+        service.refresh(catalog_only=True)
+    assert exc.value.status == 409 and exc.value.payload['code'] == 'catalog_refresh_offline'
+    assert job_rows(service) == 0
+
+
+def test_expired_listing_quotes_from_saved_identities_without_fetching_it(service, monkeypatch):
+    service.save(body())
+    out_of_band(service, monkeypatch, listing=False)
+    fetched_quote(monkeypatch)
+    before = quote_count(service)
+    job = service.refresh()
+    assert job['status'] == 'succeeded', job['message']
+    assert quote_count(service) == before + 1
+
+
+def test_expired_listing_without_saved_identities_fails_fast(service, monkeypatch):
+    service.save(body())
+    with Storage(service.db) as s:  # a portfolio saved before identities were stored with it
+        s.conn.execute(sql.SQL("UPDATE {} SET document=document-'instruments' WHERE id=1").format(s.table('portfolio')))
+    out_of_band(service, monkeypatch, listing=False)
+    from stock_quote_fetcher import quoting
+    def never(instrument, provider, config, timeout):
+        pytest.fail('quoted a holding with no saved identity')
+    monkeypatch.setattr(quoting, 'fetch_one', never)
+    job = service.refresh()
+    assert job['status'] == 'failed' and '管理者' in job['message'] and job['completed_at']
+
+
+def test_expired_listing_message_matches_who_can_refresh_it(service):
+    # The fixture's catalog is a stub; the real one reads the (empty) test schema.
+    with pytest.raises(WebError, match='更新股票清單'):
+        Dashboard.catalog(service)
+    service.catalog_config = InstrumentCatalogConfig(refresh_in_request=False)
+    with pytest.raises(WebError, match='管理者') as exc:
+        Dashboard.catalog(service)
+    assert '更新股票清單' not in exc.value.payload['message']

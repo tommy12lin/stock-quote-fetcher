@@ -20,7 +20,7 @@
 >
 > **`C7-6` 的執行方式已有草稿**（2026-09-23，見 `C7-6` 項下）：以拋棄式 Cloud Run Job 在正式服務之外先量測，藉此解開與 `C6-2` 互等的循環。草稿內的選擇已於同日由使用者全數拍板（採 Job、寫入正式 `dashboard` 並於測後清除、保留官方清單、暫不設定 Finnhub 金鑰、R5 約 150 檔），**尚未執行任何場次**。測試資料清除程序（`cloud_db purge`）與量測腳本（`scripts/c76_probe.py`）已完成，R0 已在本機以假網路預演通過；尚未在 Cloud Run 上執行任何場次。
 >
-> **2026-09-23 新發現、處理方式待決定**：`C7-6` R1 量得官方清單更新從 GCP 需 **135 秒**（抓取約 62 秒、逐筆寫入 13,427 筆約 73 秒），**超過 125 秒的邊緣上限**，且這段路徑不受 `refresh_deadline_seconds` 約束。正式部署後，頁面上的「更新股票清單」會收到 524。影響 `C6-2`、`C7-2`、`C7-4`，不影響 `C7-6` 的報價量測。見 [C7 證據](cloud-C7-evidence.md) 的 `C7-6` 節。
+> **2026-09-23 新發現、處理方式待決定**：`C7-6` R1 量得官方清單更新從 GCP 需 **135 秒**（抓取約 62 秒、逐筆寫入 13,427 筆約 73 秒），**超過 125 秒的邊緣上限**，且這段路徑不受 `refresh_deadline_seconds` 約束。正式部署後，頁面上的「更新股票清單」會收到 524。影響 `C6-2`、`C7-2`、`C7-4`，不影響 `C7-6` 的報價量測。見 [C7 證據](cloud-C7-evidence.md) 的 `C7-6` 節。**同日補記：已決定兩者都做，程式已完成**（清單批次寫入；`[instruments] refresh_in_request = false`，清單改由管理者以 `stock-web --refresh-catalog` 在請求外更新）。雲端耗時尚未實測，須等新映像建置；另須確認單一 INSERT 能否在 10 秒的 `statement_timeout` 內完成。**清單每 168 小時到期，到期前須由管理者手動更新一次。**
 >
 > **接手前必讀的三條硬性限制**：
 > 1. **`C7-1` 之前不得對 `finpo` Worker 做任何部署**——它承載 `C1-6` 的 canary，是目前唯一能驗證 Access 生效的東西。
@@ -533,6 +533,8 @@ Dockerfile 三處 `company_ca` 掛載本來就是條件式（`if [ -f /run/secre
     **2026-09-23 完成**（run `35806642267`，48 秒，digest `sha256:99ee3a38…`，tag 取 commit SHA 前 12 碼）。三條待辦全數處置：(a) 兩個 action 釘 commit SHA 並只留這兩個——`id-token: write` 之下每多一個第三方 action 就多一個等同交出 deploy SA 權限的入口；(b) ref 限制以 job 層 `if: github.ref == 'refs/heads/main'` 實作，**provider 層的 `assertion.ref` 刻意未加**（加了會使日後無法從分支驗證 workflow 改動）；(c) cleanup policy 已設保留最近 3 個版本。映像已從 Artifact Registry 拉回實測：ENTRYPOINT 確為 web、非 root、`linux/amd64`、`cloud.toml` 與 `supabase-ca.crt` 就位、`/tmp` 無公司 CA 殘骸。**新增一項須留意**：`ubuntu-latest` 將於 2026-10-19 起遷移至 Ubuntu 26，建置環境會在無人改動下改變。詳見 [C6 證據](cloud-C6-evidence.md)。
   - [ ] `C6-2` 部署設定：1 vCPU／1 GiB、min=0、max=1，concurrency 依 `D3` 設定（**不可為 1**；`C4-1` 完成後更新期間通常沒有並行輪詢，但長請求佔住實例時 `/healthz` 探測仍須能被回應，否則實例會被判定不健康而遭終止），request timeout 依 `D3` 對齊且**必須大於 `refresh_deadline_seconds`**，否則平台會在程式自己收尾前切斷請求；**部署前必須先把 `C4-1` 的 `refresh_deadline_seconds` 與 `refresh_max_tickers` 依 `C7-2`／`C7-6` 的量測值寫進 `deploy/cloud.toml`**；`DB_PASSWORD` 與必要 provider key 放 Secret Manager（`db-password` 已於 `C1-3` 建立並授權給 `finpo-runtime`）；簽章秘密以 `proxy-hmac-secret` 與 `proxy-hmac-secret-prev` 兩個環境變數掛載（皆參照 `latest`），兩組於 `C1-7` 已建立，因此輪替時不需變更部署設定；日誌輸出 stdout／stderr 並限制內容與保留量。若設定 startup／liveness probe，**指向 `C2-4` 新增的 `GET /healthz`，不可指向任何 `/api/` 路徑**（`C3-1` 上線後探測無法簽章，會全數 401）；`web` 映像已自帶啟動命令，**不需覆寫 command／args**。**另須設定 `C2-2` 的兩個環境變數**：`WEB_ALLOWED_HOSTS`（Cloud Run 服務主機名，或明確設為 `*`）與 `WEB_ALLOWED_ORIGINS`（前端 Worker 的 `https://` 來源）；兩者未設定時服務會套用本機預設值而把所有雲端請求判 403。
   - [ ] `C6-3` 以獨立管理者執行 `python -m stock_quote_fetcher.cloud_db bootstrap-sql` 產生的 SQL，再以 runtime 執行 `web --refresh-catalog`。C5 已先完成首次 schema／空持股初始化並驗證可重跑；C6 仍須完成部署環境的一次性執行程序與官方清單更新。**不得以 runtime 執行 migration／web --initialize**，其 CREATE 權限已於 C5-2 撤除；Web 啟動仍不自動 migration。
+
+    **2026-09-23 補記**：`web --refresh-catalog` 不再只是一次性初始化，而是**唯一的清單更新途徑**。`C7-6` R1 量得請求內更新清單需 135 秒，超過邊緣上限，雲端因此設 `refresh_in_request = false`。清單每 168 小時到期，**到期前須由管理者再執行一次**，建議建成常設的 Cloud Run Job，只附加 `--args=--refresh-catalog`（未實測）。見 [C7 證據](cloud-C7-evidence.md) 的 `C7-6` 節。
   - [ ] `C6-4` 記錄映像 digest、部署設定與 secret 版本，確認可回滾。digest 由 `D6` 的 workflow 輸出並留存於 run log，回滾即以該 digest 手動觸發重新部署。資料庫 migration 需向後相容：回滾映像不等於回滾資料庫。
 - **完成條件**：服務可由記錄的映像 digest 重新部署並啟動成功，初始化步驟可獨立重跑。
 - **證據**：映像 digest、部署設定輸出、初始化執行紀錄。

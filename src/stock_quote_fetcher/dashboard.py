@@ -127,7 +127,9 @@ class Dashboard:
             with Storage(self.db) as s:
                 return s.load_instrument_catalog()[1]
         except StorageError:
-            raise WebError('官方標的清單暫不可用，請按「更新股票清單」後重試；編輯內容仍保留。', code='catalog_unavailable', status=503) from None
+            message = ('官方標的清單暫不可用，請按「更新股票清單」後重試；編輯內容仍保留。' if self.catalog_config.refresh_in_request
+                       else '官方標的清單已過期或暫不可用，須由管理者更新後才能儲存；編輯內容仍保留。')
+            raise WebError(message, code='catalog_unavailable', status=503) from None
 
     def resolve(self, holdings):
         entries = supplement(self.catalog())
@@ -296,6 +298,9 @@ class Dashboard:
         """D3: the work runs inside this request, because Cloud Run only guarantees CPU
         while the connection is open. The caller receives a finished job, not a 202.
         """
+        if catalog_only and not self.catalog_config.refresh_in_request:
+            # Refused before claiming, so no job row is written for work that never runs.
+            raise WebError('官方股票清單改由管理者在服務外更新，無法從頁面執行。', code='catalog_refresh_offline', status=409)
         p = self.get()
         if not p['rows'] and not catalog_only:
             raise WebError('請先保存持股。')
@@ -325,7 +330,8 @@ class Dashboard:
                 needs_catalog = False
             except WebError:
                 needs_catalog = True
-            if job.get('catalog_only') or needs_catalog:
+            fetch_catalog = job.get('catalog_only') or (needs_catalog and self.catalog_config.refresh_in_request)
+            if fetch_catalog:
                 from stock_quote_fetcher.catalog import fetch_all
                 self.progress(job, '正在更新官方股票清單')
                 with Storage(self.db) as s:
@@ -335,7 +341,18 @@ class Dashboard:
                     job.update(status='succeeded', message='官方股票清單已更新，可以重新儲存持股。')
                     return
             holdings = validate_rows(p['rows'])
-            resolved, _ = self.resolve(holdings)
+            if needs_catalog and not fetch_catalog:
+                # The listing is refreshed out of band, never inside a request (C7-6 R1:
+                # 135 s against a 125 s edge limit, outside the deadline's reach). Quote
+                # with the identities saved alongside the portfolio, as valuation() does.
+                saved = p.get('instruments') or {}
+                missing = [h.ticker for h in holdings if h.ticker not in saved]
+                if missing:
+                    job.update(status='failed', message=f'官方標的清單已過期，且 {len(missing)} 檔沒有已存的標的資料；須由管理者更新清單後再試。')
+                    return
+                resolved = {h.ticker: Instrument(**saved[h.ticker]) for h in holdings}
+            else:
+                resolved, _ = self.resolve(holdings)
             limit = self.refresh_config.max_tickers
             count, attempted, cut = 0, 0, False
             with Storage(self.db) as s:

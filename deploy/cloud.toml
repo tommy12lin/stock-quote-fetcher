@@ -53,9 +53,18 @@ refresh_deadline_seconds = 110
 # per-ticker cost is known.
 
 [instruments]
-# A week, against the 24-hour default. D3 completes refreshes inside the request, and a
-# catalog judged stale makes run_job fetch the whole official listing first
-# (dashboard.py), adding an unbounded external fetch to a request that already has a
-# deadline. A longer window keeps that off the critical path; the listing is also
-# refreshable on demand from the dashboard.
+# Never refresh the official listing inside a request. From Cloud Run a full refresh took
+# 135 s (about 62 s fetching, 73 s writing 13,427 rows one at a time; C7-6 R1), past the
+# 125 s edge limit and outside refresh_deadline_seconds, which only bounds quote batches.
+# The page's "update listing" is refused with 409, a quote refresh with a stale listing
+# uses the identities saved with the portfolio, and an administrator refreshes the
+# listing out of band with `stock-web --refresh-catalog` (C6-3).
+refresh_in_request = false
+#
+# A week, against the 24-hour default: the longest the loader allows, so the out-of-band
+# refresh is needed as rarely as possible. Until it runs, saving a changed portfolio is
+# refused once the listing expires; refreshing quotes for a saved one is not.
+# (Corrected 2026-09-23: this comment used to add that the listing "is also refreshable on
+# demand from the dashboard" -- the on-demand path is exactly the one R1 measured past
+# the edge limit.)
 max_age_hours = 168

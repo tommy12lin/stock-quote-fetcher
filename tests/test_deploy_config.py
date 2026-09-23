@@ -25,6 +25,11 @@ def test_every_loader_accepts_the_file(monkeypatch):
     assert load_instrument_catalog_config(CLOUD).max_age_hours == 168
 
 
+def test_the_listing_is_never_refreshed_inside_a_request():
+    # C7-6 R1: 135 s from Cloud Run against a 125 s edge limit; out of band only.
+    assert load_instrument_catalog_config(CLOUD).refresh_in_request is False
+
+
 def test_the_file_alone_cannot_produce_a_connection(monkeypatch):
     # Fails closed: without DB_PASSWORD the configuration is incomplete, so a deployment
     # that forgets the secret stops at startup instead of reaching for an empty password.

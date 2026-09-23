@@ -434,6 +434,43 @@ def test_connection_failure_redacts_password(db):
     assert 'wrong-private-password' not in str(caught.value)
 
 
+def test_catalog_save_round_trips_do_not_grow_with_the_listing(db, monkeypatch):
+    """C7-6 R1: 13,427 rows written one statement each took 73 s from Cloud Run."""
+    from stock_quote_fetcher.catalog import FetchedCatalog, SOURCES
+    from stock_quote_fetcher.instruments import CatalogInstrument
+    cfg, _ = db
+
+    def listing(per_source):
+        fetched = []
+        for index, spec in enumerate(SOURCES):
+            tw = index < 3
+            exchange = ('TWSE' if index < 2 else 'TPEx') if tw else 'NASDAQ'
+            entries = tuple(CatalogInstrument(
+                f'id:{index}:{n}', f'{index}{n:04d}' if tw else f'U{index}X{n}', 'TW' if tw else 'US',
+                'TWD' if tw else 'USD', exchange, 'etf' if n % 7 == 0 else 'stock', f'Name {index} {n}',
+                {'yahoo': f'{index}{n:04d}' + ('.TW' if exchange == 'TWSE' else '.TWO') if tw else f'U{index}X{n}'},
+                (f'ALIAS{index}X{n}',) if n % 5 == 0 else ()) for n in range(per_source))
+            fetched.append(FetchedCatalog(spec.name, STAMP, f'hash-{index}-{per_source}', 100, entries, False))
+        return tuple(fetched)
+
+    with collector(cfg) as s:
+        statements = []
+        real = s.conn.execute
+        monkeypatch.setattr(s.conn, 'execute', lambda *a, **k: statements.append(a[0]) or real(*a, **k))
+        s.save_instrument_catalog(listing(1), max_age_hours=24)
+        small, statements[:] = len(statements), []
+        large = listing(400)
+        s.save_instrument_catalog(large, max_age_hours=24)
+        assert len(statements) == small  # 2,000 rows cost the same round trips as 5
+        monkeypatch.undo()
+        _, entries = s.load_instrument_catalog()
+    expected = {(e.instrument_id, e.ticker, e.market, e.currency, e.exchange, e.asset_type, e.name,
+                 tuple(sorted(e.provider_symbols.items())), tuple(e.aliases)) for fetched in large for e in fetched.entries}
+    stored = {(e.instrument_id, e.ticker, e.market, e.currency, e.exchange, e.asset_type, e.name,
+               tuple(sorted(e.provider_symbols.items())), tuple(e.aliases)) for e in entries}
+    assert len(entries) == 2000 and stored == expected
+
+
 def test_catalog_generation_roundtrip_expiration_and_atomic_ambiguity(db):
     from stock_quote_fetcher.catalog import FetchedCatalog, SOURCES
     from stock_quote_fetcher.instruments import CatalogInstrument
