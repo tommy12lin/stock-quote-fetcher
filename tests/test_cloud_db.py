@@ -8,9 +8,10 @@ from psycopg import sql
 import pytest
 
 from test_storage import db, collector, started, fetched, quote
-from stock_quote_fetcher.cloud_db import bootstrap_sql, capacity, check_runtime, prune
+from stock_quote_fetcher.cloud_db import RUN_TABLES, bootstrap_sql, capacity, check_runtime, load_manifest, prune, purge, run_scope
 from stock_quote_fetcher.config import DatabaseConfig, QuoteConfig, InstrumentCatalogConfig
 from stock_quote_fetcher.dashboard import Dashboard
+from stock_quote_fetcher.models import FetchResult, FetchStatus
 from stock_quote_fetcher.quoting import public_config
 from stock_quote_fetcher.storage import Storage, StorageError, configuration_snapshot, timeout_ms
 
@@ -146,3 +147,99 @@ def test_dashboard_never_falls_back_to_source(monkeypatch,tmp_path):
     from stock_quote_fetcher.web_input import WebError
     with pytest.raises(WebError): service.catalog()
     assert seen==['dashboard']
+
+
+def test_purge_manifest_is_strict(tmp_path):
+    path=tmp_path/'manifest.json'
+    run=uuid4()
+    path.write_text(f'{{"runs":["{run}","{run}"],"refresh_jobs":["b","a"]}}',encoding='utf-8')
+    assert load_manifest(path)==([run],['a','b'])
+    for text in ('not json','[]','{"runs":[]}','{"runs":[],"refresh_jobs":[],"extra":[]}',
+                 '{"runs":["not-a-uuid"],"refresh_jobs":[]}','{"runs":[1],"refresh_jobs":[]}',
+                 '{"runs":[],"refresh_jobs":[]}'):
+        path.write_text(text,encoding='utf-8')
+        with pytest.raises(ValueError): load_manifest(path)
+    with pytest.raises(ValueError): load_manifest(tmp_path/'missing.json')
+
+
+def measured(s):
+    """One finished standalone run, shaped like a single refresh batch."""
+    run,cycle=started(s)
+    _,qid=fetched(s,cycle)
+    s.finish_cycle(cycle,selected_quotes={'AAPL':qid});s.finish_run(run)
+    return run,qid
+
+
+def owned(s,runs):
+    return {name:s.conn.execute(sql.SQL('SELECT count(*) AS n FROM {} WHERE {}').format(s.table(name),run_scope(s.table,name)),(runs,)).fetchone()['n']
+            for name in RUN_TABLES}
+
+
+def job_ids(s):
+    return {r['id'] for r in s.conn.execute(sql.SQL('SELECT id FROM {}').format(s.table('refresh_jobs')))}
+
+
+def test_purge_takes_only_the_recorded_runs_and_jobs(db):
+    cfg,_=db
+    service=Dashboard.__new__(Dashboard);service.db=cfg;service.initialize()
+    with collector(cfg) as s:
+        target,_=measured(s)
+        # Written in the same moment, so a time window could not tell the two apart.
+        neighbour,_=measured(s)
+    stamp=datetime.now(UTC).isoformat()
+    for name in ('c76-target','other'):
+        service.put_job({'job_id':name,'status':'succeeded','created_at':stamp,'completed_at':stamp})
+    with Storage(cfg) as s:
+        preview=purge(s,runs=[target],jobs=['c76-target'])
+        assert preview=={'apply':False,'valuations':1,'valuation_totals':1,'quotes':1,'fetch_attempts':1,
+                         'cycles':1,'holdings':1,'runs':1,'refresh_jobs':1}
+        assert all(owned(s,[target]).values()) and job_ids(s)=={'c76-target','other'}  # dry-run deleted nothing
+        assert purge(s,runs=[target],jobs=['c76-target'],apply=True)==preview|{'apply':True}
+        assert not any(owned(s,[target]).values())
+        assert owned(s,[neighbour])==dict.fromkeys(RUN_TABLES,1) and job_ids(s)=={'other'}
+        with pytest.raises(ValueError,match='不存在'): purge(s,runs=[target],jobs=[])
+    assert service.get()['revision']==0
+
+
+def test_purge_refuses_instead_of_trimming(db):
+    cfg,_=db
+    service=Dashboard.__new__(Dashboard);service.db=cfg;service.initialize()
+    stamp=datetime.now(UTC).isoformat()
+    with collector(cfg) as s:
+        target,target_quote=measured(s)
+        neighbour,_=measured(s)
+        live,_cycle=started(s)  # left running when the collector's session closes
+        # A later run valued with one of the target's quotes, as the cache path does.
+        s.conn.execute(sql.SQL('UPDATE {} SET quote_id=%s WHERE run_id=%s').format(s.table('valuations')),(target_quote,neighbour))
+    service.put_job({'job_id':'live','status':'running','created_at':stamp})
+    service.put_job({'job_id':'done','status':'succeeded','created_at':stamp,'completed_at':stamp})
+    cases=[({'runs':[target,uuid4()],'jobs':[]},'不存在'),
+           ({'runs':[target],'jobs':['done','missing']},'不存在'),
+           ({'runs':[target,live],'jobs':[]},'進行中'),
+           ({'runs':[target],'jobs':['done','live']},'進行中'),
+           ({'runs':[target],'jobs':[]},'引用')]
+    with Storage(cfg) as s:
+        for scope,message in cases:
+            with pytest.raises(ValueError,match=message): purge(s,**scope,apply=True)
+        assert owned(s,[target])==dict.fromkeys(RUN_TABLES,1) and job_ids(s)=={'live','done'}
+        # The neighbour, whose valuation holds the reference, can itself go.
+        assert purge(s,runs=[neighbour],jobs=[],apply=True)['valuations']==1
+
+
+def test_purge_waits_for_a_cooldown_the_purged_attempts_hold(db):
+    cfg,_=db
+    service=Dashboard.__new__(Dashboard);service.db=cfg;service.initialize()
+    with collector(cfg) as s:
+        run,cycle=started(s)
+        attempt=uuid4()
+        s.start_attempt(attempt,cycle,provider='yahoo',instrument_id='us-aapl',ticker='AAPL',attempt_number=1)
+        s.finish_attempt(attempt,FetchResult('us-aapl','yahoo',FetchStatus.RATE_LIMITED,error='http_429'),elapsed_ms=10,
+                         provider_evidence={'effective_cooldown_seconds':60})
+        s.finish_cycle(cycle,selected_quotes={});s.finish_run(run)
+    with Storage(cfg) as s:
+        assert 'yahoo' in s.provider_cooldowns(as_of=datetime.now(UTC))  # the constraint is live, not vacuous
+        with pytest.raises(ValueError,match='冷卻'): purge(s,runs=[run],jobs=[],apply=True)
+        assert owned(s,[run])['fetch_attempts']==1
+        later=datetime.now(UTC)+timedelta(seconds=120)
+        assert purge(s,runs=[run],jobs=[],apply=True,as_of=later)['fetch_attempts']==1
+        assert not any(owned(s,[run]).values())

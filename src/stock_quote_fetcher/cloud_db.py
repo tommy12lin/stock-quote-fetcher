@@ -1,13 +1,14 @@
 """Explicit cloud database administration; no maintenance on HTTP startup.
 
 SQL output contains no credentials. Bootstrap runs as the schema's administrator,
-while check/capacity use the restricted runtime account. Prune defaults to dry-run.
+while check/capacity use the restricted runtime account. Prune and purge default to dry-run.
 """
 import argparse
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 import json
 from pathlib import Path
+from uuid import UUID
 
 import psycopg
 from psycopg import sql
@@ -16,6 +17,15 @@ from stock_quote_fetcher.config import DatabaseConfig, load_database_config
 from stock_quote_fetcher.storage import Storage, StorageError, TABLES, digest, lock_key, migration_sources
 
 RUNTIME_TABLES = TABLES + ('portfolio', 'refresh_jobs')
+# Everything a standalone run owns, children first so each DELETE satisfies the foreign keys.
+RUN_TABLES = ('valuations', 'valuation_totals', 'quotes', 'fetch_attempts', 'cycles', 'holdings', 'runs')
+
+
+def run_scope(t, name):
+    """Rows of table `name` owned by the runs bound to the query's %s (a uuid array)."""
+    return {'valuation_totals': sql.SQL('cycle_id IN (SELECT id FROM {} WHERE run_id=ANY(%s))').format(t('cycles')),
+            'quotes': sql.SQL('attempt_id IN (SELECT id FROM {} WHERE run_id=ANY(%s))').format(t('fetch_attempts')),
+            'runs': sql.SQL('id=ANY(%s)')}.get(name, sql.SQL('run_id=ANY(%s)'))
 
 
 def bootstrap_sql(schema='dashboard', runtime='finpo_app'):
@@ -147,33 +157,113 @@ def prune(storage, *, days=30, apply=False, as_of=None):
         if not apply:
             return summary
         # Foreign-key order; a referenced quote's origin run is retained by the graph.
-        for name in ('valuations', 'valuation_totals', 'quotes', 'fetch_attempts', 'cycles', 'holdings', 'runs'):
-            condition = {'valuation_totals': sql.SQL('cycle_id IN (SELECT id FROM {} WHERE run_id=ANY(%s))').format(t('cycles')),
-                         'quotes': sql.SQL('attempt_id IN (SELECT id FROM {} WHERE run_id=ANY(%s))').format(t('fetch_attempts')),
-                         'runs': sql.SQL('id=ANY(%s)')}.get(name, sql.SQL('run_id=ANY(%s)'))
-            storage.conn.execute(sql.SQL('DELETE FROM {} WHERE {}').format(t(name), condition), (ids,))
+        for name in RUN_TABLES:
+            storage.conn.execute(sql.SQL('DELETE FROM {} WHERE {}').format(t(name), run_scope(t, name)), (ids,))
         storage.conn.execute(sql.SQL('DELETE FROM {} WHERE generation_id=ANY(%s)').format(t('catalog_instruments')), (generation_ids,))
         storage.conn.execute(sql.SQL('DELETE FROM {} WHERE id=ANY(%s)').format(t('instrument_catalog_generations')), (generation_ids,))
         storage.conn.execute(sql.SQL('DELETE FROM {} WHERE id=ANY(%s)').format(t('refresh_jobs')), ([row['id'] for row in jobs],))
         return summary
 
 
+def load_manifest(path):
+    """The ids a measurement recorded (C7-6); the only thing purge may scope by."""
+    try:
+        document = json.loads(Path(path).read_text(encoding='utf-8'))
+    except (OSError, UnicodeError, ValueError):
+        raise ValueError('清除清單無法讀取或不是 JSON。') from None
+    if (not isinstance(document, dict) or set(document) != {'runs', 'refresh_jobs'}
+            or not all(isinstance(v, list) and all(isinstance(x, str) for x in v) for v in document.values())):
+        raise ValueError('清除清單必須恰有 runs 與 refresh_jobs 兩個字串陣列。')
+    try:
+        runs = sorted({UUID(x) for x in document['runs']})
+    except ValueError:
+        raise ValueError('runs 只能列 UUID。') from None
+    jobs = sorted(set(document['refresh_jobs']))
+    if not runs and not jobs:
+        raise ValueError('清除清單是空的。')
+    return runs, jobs
+
+
+def purge(storage, *, runs, jobs, apply=False, as_of=None):
+    """Delete exactly the runs and refresh jobs a measurement recorded (C7-6).
+
+    prune cannot do this: it only takes evidence older than seven days and keeps the
+    latest 20 quotes per cache key, so data minutes old is out of its reach by design.
+    Scope is recorded ids, never a time window, so nothing written alongside is taken.
+    Anything unsafe aborts the whole operation instead of being trimmed from it.
+    Runtime lacks DELETE; only the separate administrator may apply this operation.
+    """
+    stamp = as_of or datetime.now(UTC)
+    t = storage.table
+    # Outside the transaction below: this opens its own read-only snapshot. Reading it
+    # early is safe, as remaining cooldowns only shrink and later attempts are not ours.
+    cooling = storage.provider_cooldowns(as_of=stamp)
+    with storage.conn.transaction():
+        if not storage.conn.execute('SELECT pg_try_advisory_xact_lock(%s) AS locked', (lock_key(storage.config.schema),)).fetchone()['locked']:
+            raise StorageError('收集工作正在執行，請稍後清理。')
+        storage._check_versions(require_current=True)
+        found = storage.conn.execute(sql.SQL('SELECT id,campaign_id,status FROM {} WHERE id=ANY(%s)').format(t('runs')), (runs,)).fetchall()
+        if len(found) != len(runs):
+            raise ValueError(f'清除清單中有 {len(runs) - len(found)} 個 run 不存在；未刪除任何資料。')
+        if any(r['campaign_id'] is not None or r['status'] == 'running' for r in found):
+            raise ValueError('清除清單含進行中或屬於 campaign 的 run；未刪除任何資料。')
+        listed = storage.conn.execute(sql.SQL("SELECT id,document->>'status' AS status FROM {} WHERE id=ANY(%s)").format(t('refresh_jobs')), (jobs,)).fetchall()
+        if len(listed) != len(jobs):
+            raise ValueError(f'清除清單中有 {len(jobs) - len(listed)} 個更新工作不存在；未刪除任何資料。')
+        if any(r['status'] in ('queued', 'running') for r in listed):
+            raise ValueError('清除清單含進行中的更新工作；未刪除任何資料。')
+        # A later refresh can pick one of these quotes as its cache; deleting it would
+        # take that valuation's evidence with it.
+        shared = storage.conn.execute(sql.SQL("""SELECT count(*) AS n FROM {v} v JOIN {q} q ON q.id=v.quote_id
+            JOIN {a} a ON a.id=q.attempt_id WHERE a.run_id=ANY(%s) AND NOT v.run_id=ANY(%s)""").format(
+                v=t('valuations'), q=t('quotes'), a=t('fetch_attempts')), (runs, runs)).fetchone()['n']
+        if shared:
+            raise ValueError(f'其他 run 的 {shared} 筆估值仍引用這些報價；未刪除任何資料。')
+        # Cooldowns are rebuilt from the latest attempt per provider, so deleting that
+        # attempt early would let the next refresh ignore a cooldown still in force.
+        latest = storage.conn.execute(sql.SQL('''SELECT DISTINCT ON (provider) provider,run_id FROM {}
+            WHERE completed_at IS NOT NULL ORDER BY provider,completed_at DESC,id DESC''').format(t('fetch_attempts'))).fetchall()
+        held = sorted(r['provider'] for r in latest if r['provider'] in cooling and r['run_id'] in runs)
+        if held:
+            raise ValueError(f'{"、".join(held)} 的來源冷卻仍由這些嘗試紀錄維持；請待冷卻結束再清除。')
+        counts = {name: storage.conn.execute(sql.SQL('SELECT count(*) AS n FROM {} WHERE {}').format(t(name), run_scope(t, name)), (runs,)).fetchone()['n']
+                  for name in RUN_TABLES}
+        summary = {'apply': apply, **counts, 'refresh_jobs': len(jobs)}
+        if not apply:
+            return summary
+        for name in RUN_TABLES:
+            # The preview is what the administrator approved; any drift rolls everything back.
+            if storage.conn.execute(sql.SQL('DELETE FROM {} WHERE {}').format(t(name), run_scope(t, name)), (runs,)).rowcount != counts[name]:
+                raise StorageError('刪除筆數與預覽不符；已整筆回復，未刪除任何資料。')
+        if storage.conn.execute(sql.SQL('DELETE FROM {} WHERE id=ANY(%s)').format(t('refresh_jobs')), (jobs,)).rowcount != len(jobs):
+            raise StorageError('刪除筆數與預覽不符；已整筆回復，未刪除任何資料。')
+        return summary
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=('bootstrap-sql', 'check', 'capacity', 'prune'))
+    parser.add_argument('action', choices=('bootstrap-sql', 'check', 'capacity', 'prune', 'purge'))
     parser.add_argument('--config', type=Path, default=Path('config.toml'))
     parser.add_argument('--schema', default='dashboard')
     parser.add_argument('--runtime-role', default='finpo_app')
     parser.add_argument('--days', type=int, default=30)
+    parser.add_argument('--manifest', type=Path, help='purge：量測記錄的 run 與更新工作 id（JSON）')
     parser.add_argument('--apply', action='store_true')
     args = parser.parse_args()
     if args.action == 'bootstrap-sql':
         print(bootstrap_sql(args.schema, args.runtime_role))
         return
+    if (args.action == 'purge') != (args.manifest is not None):
+        parser.error('--manifest 只能且必須搭配 purge。')
     try:
+        # Validated before connecting, so a malformed manifest never reaches the database.
+        scope = load_manifest(args.manifest) if args.action == 'purge' else None
         config = replace(load_database_config(args.config), schema=args.schema)
         with Storage(config) as storage:
-            result = check_runtime(storage) if args.action == 'check' else capacity(storage) if args.action == 'capacity' else prune(storage, days=args.days, apply=args.apply)
+            if args.action == 'purge':
+                result = purge(storage, runs=scope[0], jobs=scope[1], apply=args.apply)
+            else:
+                result = check_runtime(storage) if args.action == 'check' else capacity(storage) if args.action == 'capacity' else prune(storage, days=args.days, apply=args.apply)
         print(json.dumps(result, ensure_ascii=False))
     except (StorageError, ValueError) as exc:
         parser.exit(1, f'{exc}\n')
