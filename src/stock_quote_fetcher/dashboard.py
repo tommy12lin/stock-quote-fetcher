@@ -357,6 +357,10 @@ class Dashboard:
                     batch = planned[offset:offset + BATCH_SIZE]
                     # Rebuilt per batch so no cycle can outlive the deadline. Cooldowns
                     # are rebuilt from persisted attempts, so carrying them is a re-read.
+                    # Capping the per-cycle budget is necessary but not sufficient: run()
+                    # gives each market its own budget, so a batch holding both TW and US
+                    # positions would spend two of them. The budget= argument below is
+                    # what holds the whole batch to the deadline.
                     runner = QuoteRunner(s, replace(self.quote_config,
                                                     cycle_budget_seconds=max(1, min(self.quote_config.cycle_budget_seconds, int(remaining)))))
                     runner.restore_cooldowns(s.provider_cooldowns(as_of=datetime.now(UTC)))
@@ -366,7 +370,8 @@ class Dashboard:
                     writer.writerows((h.ticker, h.quantity, h.buy_price) for h in batch)
                     run = uuid4()
                     s.start_run(run, input_text=stream.getvalue(), config=public_config(self.db, runner.config, self.catalog_config), image_id='dashboard-v1')
-                    reports, _ = runner.run(run, batch, resolved, ())
+                    reports, _ = runner.run(run, batch, resolved, (),
+                                            budget=max(0.0, deadline - monotonic()))
                     count += sum(row.market_value is not None for _, report in reports for row in report.rows)
                     attempted += len(batch)
                     self.progress(job, f'已處理 {attempted}/{len(planned)} 檔，正在更新')

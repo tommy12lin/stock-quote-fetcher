@@ -251,3 +251,51 @@ def test_real_subprocess_deadline_reaps_process(monkeypatch):
 def test_delay_above_supported_limit_is_degraded():
     q = normalize(US,'yahoo',{**payload(),'exchangeDataDelayedBy':25},NOW)
     assert F.STALE in q.quality_flags
+
+
+class BudgetStorage(FakeStorage):
+    """Enough of Storage for run(); the assertions below are about elapsed time only."""
+    def start_cycle(self, identity, run_id, **kwargs): pass
+    def stop_cycle(self, identity, **kwargs): pass
+    def finish_run(self, run_id): pass
+    def cached_quotes(self, instrument, provider): return ()
+    def finish_cycle(self, identity, **kwargs): return type('Report', (), {'rows': ()})()
+
+
+def timed_runner(budget_seconds, clock):
+    """Every fetch burns exactly the timeout it was handed: a source that always hangs."""
+    def fetch(instrument, provider, config, timeout):
+        clock[0] += timeout
+        return failure(instrument, provider, 'timeout', 'provider_timeout')
+    return QuoteRunner(BudgetStorage(),
+                       QuoteConfig(cycle_budget_seconds=budget_seconds, operation_timeout_seconds=10, max_retries=0),
+                       fetch=fetch, monotonic=lambda: clock[0],
+                       sleep=lambda n: clock.__setitem__(0, clock[0] + n))
+
+
+def test_one_budget_is_shared_across_markets_not_spent_once_per_market():
+    """The defect this guards: run() gave each market its own cycle_budget_seconds, so a
+    batch holding both TW and US positions took two budgets and overran its caller's
+    deadline by a whole one. Once C4-1's deadline is sized to fit inside Cloudflare's
+    measured 125s edge cap (C7-2), that overrun is the difference between a graceful
+    partial result and a 524 the user reads as a failure."""
+    # Six per market, each burning the 10s operation timeout: enough for a cycle to reach
+    # its 50s budget. With one holding each the cycles simply finish, and a cap that is
+    # never reached proves nothing about what happens when it is.
+    holdings, resolved = [], {}
+    for base, market in ((US,'US'), (TW,'TW')):
+        for n in range(6):
+            ticker = f'{base.ticker}{n}'
+            holdings.append(Holding(ticker,market,Decimal('1'),Decimal('1')))
+            resolved[ticker] = replace(base, ticker=ticker,
+                                       instrument_id=f'{base.instrument_id}{n}',
+                                       provider_symbols={'yahoo':ticker})
+
+    clock = [0]
+    timed_runner(50,clock).run(uuid4(),holdings,resolved,(),budget=50)
+    assert clock[0] <= 50, f'兩個市場合計花了 {clock[0]}s，超出 50s 的總預算'
+
+    # Omitting budget must keep the monitor's semantics: one full budget per market.
+    clock = [0]
+    timed_runner(50,clock).run(uuid4(),holdings,resolved,())
+    assert clock[0] == 100, f'未給總預算時每個市場應各拿一份 50s，實得 {clock[0]}s'

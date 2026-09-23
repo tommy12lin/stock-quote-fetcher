@@ -105,14 +105,17 @@ class QuoteRunner:
         return None,None
 
     def run_cycle(self, run_id, holdings, resolved, issues, *, market, scheduled_at,
-                  scheduled_cycle_id=None):
+                  scheduled_cycle_id=None, budget=None):
         self.holdings = holdings
         cycle = uuid4()
         event_start = len(self.events)
         self.storage.start_cycle(cycle,run_id,market=market.value,scheduled_at=scheduled_at,
                                  scheduled_cycle_id=scheduled_cycle_id)
         selected, flags, fetched, comparisons = {}, {}, {}, []
-        deadline = self.monotonic()+self.config.cycle_budget_seconds
+        # budget, when given, is what this cycle may take out of a total its caller is
+        # holding to; the configured per-cycle limit still applies on top of it.
+        seconds = self.config.cycle_budget_seconds if budget is None else min(self.config.cycle_budget_seconds, budget)
+        deadline = self.monotonic()+seconds
         group = [h for h in holdings if h.market == market]
         try:
             # Complete valuation source first; comparison requests cannot consume its budget.
@@ -160,12 +163,23 @@ class QuoteRunner:
                 self.storage.stop_cycle(cycle,status='interrupted',reason='quote_interrupted')
             raise
 
-    def run(self, run_id, holdings, resolved, issues):
+    def run(self, run_id, holdings, resolved, issues, *, budget=None):
+        """budget: seconds for this whole call, shared by every market in it.
+
+        Without it each market cycle gets its own full cycle_budget_seconds, which is
+        right for the monitor — it schedules one cycle per market — but wrong for a caller
+        working to a single deadline: a batch holding both TW and US positions would take
+        two budgets and overrun that deadline by a whole one. Measured while choosing
+        D3's refresh deadline; see docs/cloud-C7-evidence.md.
+        """
         reports, comparisons = [], []
         # One independent budget for each market cycle, shared by all its sources.
+        started = self.monotonic()
         for market in sorted({h.market for h in holdings}):
+            share = None if budget is None else max(0, budget - (self.monotonic() - started))
             cycle, report, compared, _ = self.run_cycle(
-                run_id, holdings, resolved, issues, market=market, scheduled_at=datetime.now(UTC))
+                run_id, holdings, resolved, issues, market=market, scheduled_at=datetime.now(UTC),
+                budget=share)
             reports.append((cycle,report))
             comparisons.extend(compared)
         self.storage.finish_run(run_id)

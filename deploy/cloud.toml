@@ -21,13 +21,6 @@
 # Omitted on purpose, with their defaults left in force:
 #   [providers]  valuation defaults to yahoo, and Dashboard clears comparison anyway
 #                (dashboard.py:96), so the cloud service calls no keyed provider.
-#   [scheduler]  refresh_deadline_seconds and refresh_max_tickers (C4-1) are still
-#                unmeasured. C7-2's edge timeout and C7-6's fetch timings fill them in
-#                here, and C6-2 must not deploy before they do. The code defaults bound a
-#                refresh at 300s with no ticker cap; 300s reuses the per-batch budget the
-#                dashboard already spent, so it is not a claim about the edge, which is
-#                commonly said to cut at about 100s. Writing a guessed number here now
-#                would look like a decision.
 #   database timeout fields retain the defaults (connect 10s / statement 10s / lock 3s).
 #   C5-4 applies session values after connecting and verifies each with SHOW.
 
@@ -35,6 +28,29 @@
 # Public Supabase CA, verified against the live session pooler (C5-3).
 sslmode = "verify-full"
 sslrootcert = "/app/supabase-ca.crt"
+
+[scheduler]
+# The whole-refresh limit (C4-1), now measured rather than assumed.
+#
+#   125.0  Cloudflare cuts a Worker's subrequest here; 124s was the last value that got
+#          through, 130/150/300/600 all died at 125.0-125.2 with a 524 (C7-2). The cap is
+#          at the edge, so Cloud Run's own request timeout cannot raise it.
+#   - 3.5  worst measured Cloud Run cold start, min=0, 1 vCPU / 1 GiB, three samples
+#          (3.418 / 2.300 / 2.448s end to end). Every idle refresh pays this.
+#   - 1.0  wrap-up after the deadline: compose the message, write the job row.
+#   - 2.0  residual overrun -- int() truncation of the per-cycle budget, batch granularity.
+#   =118.5 theoretical ceiling; 110 leaves 8.5s of margin for variance.
+#
+# Do not raise this without re-measuring the edge cap. Going over it does not degrade
+# gracefully: the app keeps working past the point where the connection is already gone,
+# and the user gets a failure instead of the partial result C4-1 is designed to return.
+refresh_deadline_seconds = 110
+#
+# refresh_max_tickers stays unset (0 = bounded by the deadline alone). C7-6 has not
+# measured what a single ticker actually costs against the real sources from GCP, and a
+# cap guessed without that number would silently defer holdings for no reason. The
+# deadline already bounds the work; the cap exists to bound it more predictably once the
+# per-ticker cost is known.
 
 [instruments]
 # A week, against the 24-hour default. D3 completes refreshes inside the request, and a
