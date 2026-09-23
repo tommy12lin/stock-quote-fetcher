@@ -291,6 +291,23 @@ export default {
 - 單一 INSERT 寫入 13,427 筆能否在 `statement_timeout`（預設 10 秒，`C5-4`）內完成。若超過，清單更新會整筆失敗，這一點須在實測時確認。
 - 以 Cloud Run Job 執行 `stock-web --refresh-catalog` 的實際行為。映像的 ENTRYPOINT 已帶 `--container --config /app/cloud.toml`，只需附加 `--args=--refresh-catalog`、不必覆寫 command，但**未實測**。
 
+**2026-09-23 補記：新映像的請求外清單更新已實測**。映像為 `218b4b962c5a`（`sha256:5ceea993f3518048b2fcec885b1aae282223a87564d0067c348efccfe3d2d53c`，build run `35840240857`）。以新建的 Cloud Run Job `finpo-catalog-refresh` 執行：沿用映像的 ENTRYPOINT，只附加 `--args=--refresh-catalog`、不覆寫 command，身分為 `finpo-runtime`，連線設定與 `c76-source-probe` 相同。建立後以 `describe` 核對 command 為空、args 只有 `--refresh-catalog`。
+
+| 項目 | 值 |
+|---|---|
+| execution | `finpo-catalog-refresh-xmm8g`，結束碼 0，輸出 `Dashboard catalog refreshed.` |
+| 觸發 → 更新完成（輸出時間戳） | 09:09:19Z → 09:10:41.07Z，約 **82 秒**。R1 同一區間（觸發 → `refresh()` 返回）為 08:13:56Z → 08:16:35.07Z，約 159 秒 |
+| execution 開始 → 更新完成 | 09:09:30.34Z → 09:10:41.07Z，約 **70.7 秒**，含容器啟動、Python 載入、抓取與寫入 |
+
+結論與界線：
+- **以 Cloud Run Job 執行 `--refresh-catalog` 可行**，至此結清。
+- **單一 INSERT 未碰到 `statement_timeout`**：執行成功，代表寫入 13,427 筆的那一條陳述式在 10 秒內完成。10 秒的值來自 `C5-4`，`Storage` 每次連線後都會設定並以 `SHOW` 核對。
+- **寫入耗時無法單獨量出**：`--refresh-catalog` 只在結束時輸出一行，本次沒有讀出新 generation 的 `completed_at`，所以抓取與寫入沒有拆開。已知的只有上界：execution 開始到結束共 70.7 秒；R1 光抓取就約 62 秒，扣掉後寫入加上容器啟動約 9 秒以內。這是**以不同次執行的抓取時間相減得到的推估**，抓取本身的變異未知，**不得當成寫入耗時的量測值**。
+- 兩次都是單一樣本；觸發到完成的差距（約 77 秒）與 R1 逐筆寫入的 73 秒量級相符，但只是相符，不構成證明。
+- 這次更新已在請求外執行，不再受 125 秒邊緣上限約束。總耗時現在影響的只有 Job 的 `--task-timeout`（600 秒），餘裕充足。
+
+**對 R2–R5 時間限制的更新**：這次寫入了一代新清單，到期時間往後延到約 **2026-09-30 09:10Z（台北 17:10）**。確切時間以新 generation 的 `completed_at` 加 168 小時為準，本次未讀出。R1 那一代依 `C5-6` 規則保留最近兩代。量測 Job `c76-source-probe` 已同步改用新映像 `218b4b962c5a`；清單有效時，新舊兩版的報價更新路徑相同，只有清單過期時的處理不同。
+
 **已知的後續事項**：
 - 前端仍會顯示「更新股票清單」按鈕，按下後顯示 409 的說明。改為隱藏屬 `C7-1`／`C7-4` 的介面範圍，本次未處理。
 - 清單每 168 小時到期，**到期前須有人執行一次請求外更新**；到期後持股無法儲存，但已存持股的報價更新不受影響。第一階段不新增排程，此責任比照 `C5-6` 的每週清理，由管理者手動執行。
@@ -312,7 +329,8 @@ export default {
 
 | 資源 | 狀態 |
 |---|---|
-| Cloud Run Job `c76-source-probe` | **存在**，待 R2–R5 與清除完成後刪除 |
+| Cloud Run Job `c76-source-probe` | **存在**，待 R2–R5 與清除完成後刪除。2026-09-23 映像由 `06e2df807527` 改為 `218b4b962c5a` |
+| Cloud Run Job `finpo-catalog-refresh` | **保留**：這是請求外清單更新的執行者，不是臨時資源（`C6-3`） |
 
 ## C7-7（提前執行）　冷啟動量測
 
