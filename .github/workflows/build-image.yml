@@ -22,6 +22,13 @@ name: Build image
 on:
   push:
     branches: [main]
+    # 只改文件的提交不建置。cleanup policy 只保留 3 個版本，而本專案的文件提交很頻繁，
+    # 不濾掉會用文件把真正的程式版本擠出保留窗口（實際發生過，見 C6 證據）。
+    # 只作用於 push：workflow_dispatch 不受影響，任何時候仍可手動建置同一份原始碼。
+    # 同時觸及程式與文件的提交照常建置——paths-ignore 的判斷是「是否全部落在清單內」。
+    paths-ignore:
+      - 'docs/**'
+      - '**.md'
   workflow_dispatch:
 
 # 預設最小權限；只有需要換取 GCP 憑證的 job 才另外加 id-token: write。

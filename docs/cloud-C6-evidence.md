@@ -90,7 +90,38 @@ GCP 端另以 `gcloud artifacts docker images list` 獨立核對：digest 與 ta
 |---|---|
 | WIF attribute condition 的**阻擋效力** | 沿用 `C1-9` 的狀態：仍只有正向驗證。「別的 repository 換不到憑證」需要第二個 repository 才能構成證據，**不得宣稱已驗證能擋下** |
 | cleanup policy 的**實際刪除行為** | policy 已設定並由 API 回讀確認，但目前只有 1 個版本，未達 3 個上限，**刪除從未實際發生過**。累積到第 4 個 tag 時才會首次驗證 |
-| 建置的**可重現性** | 同一 commit 重跑是否產生相同 digest 未測。Dockerfile 已為此做過處置（基礎映像釘 digest、`COPY --chmod` 釘死權限位元），但未實際驗證 |
+| 建置的**可重現性** | **已測，且結論是「不可重現」**——見下節 |
+
+### 意外取得的結果：相同 build context 產生不同 digest
+
+第二次建置（run `35806964620`，commit `eea0c80b276e`）是**只改 `docs/` 的提交**觸發的。`docs/` 被 `.dockerignore` 排除，`git diff --name-only` 確認兩個 commit 之間沒有任何檔案落在 build context 的允許清單內（`pyproject.toml`／`uv.lock`／`README.md`／`src`／`deploy/cloud.toml`／`deploy/supabase-ca.crt`）。**build context 位元組相同，映像卻不同：**
+
+| | run `35806642267` | run `35806964620` |
+|---|---|---|
+| digest | `sha256:99ee3a38…` | `sha256:63ac8530…` |
+| 大小 | 125,962,183 | 125,961,768（**少 415 bytes**） |
+
+逐層比對（`RootFS.Layers`）定位差異：
+
+| 層 | 內容 | 結果 |
+|---|---|---|
+| 1–4 | 基礎映像 | **相同**（`ARG BASE_IMAGE` 釘 digest 有效） |
+| 5–6 | `useradd`／`install -d`、`COPY --from=builder /app/.venv` | 不同 |
+| 7 | — | 相同 |
+| 8–9 | web stage 的 `COPY cloud.toml`、`COPY supabase-ca.crt` | **不同** |
+
+第 8、9 層是決定性的證據：那兩個檔案的**內容與權限都被釘死**（`COPY --chown=root:root --chmod=0644`），層卻仍然不同，因此差異只可能來自 tar 層內嵌的 **mtime**——`actions/checkout` 每次把工作目錄的檔案時間設為當次取出的時間。`/app/.venv` 那層還多一個來源：`UV_COMPILE_BYTECODE=1` 產生的 `.pyc` 會嵌入來源檔的 mtime。
+
+**Dockerfile 對 `--chmod` 寫的註解因此需要修正認知。** 該註解說釘死權限位元是為了「讓建置可重現」；那確實解決了 Windows 與 Linux runner 給出不同模式位元的問題，但**沒有**達成它所宣稱的可重現——mtime 仍在變。註解的處置正確，目標未達成。
+
+**影響有限，但要寫清楚是哪一種有限**：
+
+- `C6-4` 的回滾**不受影響**。回滾是以記錄下來的 digest 重新部署一個既存映像，不是重建。
+- 受影響的是另一條路徑：**「映像遺失後照同一個 commit 重建」不會得到同一個 digest**。功能等價，但 digest 不同，因此任何以 digest 為準的紀錄或比對都對不上。真要修，方向是 `SOURCE_DATE_EPOCH` 加上 BuildKit 的時間戳重寫；本階段不做，先記錄。
+
+### 一個應該修的觸發條件
+
+上述第二次建置本身就是問題的示範：**只改文件的提交也會建置並推送一個新映像**。`on: push: branches: [main]` 沒有路徑過濾，因此每一次文件提交都消耗一次建置、並在 registry 佔掉一個版本——而 cleanup policy 只保留 3 個，等於用文件提交把真正的程式版本擠出保留窗口。建議加 `paths-ignore`（`docs/**`、`**.md`）。尚未實作，留待決定。
 
 ## 交接給 `C6-2`
 
