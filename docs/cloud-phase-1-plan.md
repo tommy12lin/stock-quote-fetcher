@@ -650,8 +650,8 @@ Dockerfile 三處 `company_ca` 掛載本來就是條件式（`if [ -f /run/secre
 
     **2026-09-25 補記：R4 執行準備**。本段是準備，**R4 尚未執行**。
       - **時段**：台北時間 09-26（六）**08:00 之後**到 09-27（日）結束。週六 04:00 美股收盤，但盤後交易要到 08:00 才結束，在此之前跑可能拿到盤後價，而不是「雙邊休市」的情境。
-      - **參考資料**：台股 09-24 的官方收盤價已從 TWSE／TPEx 取得，數值見 [C7 證據](cloud-C7-evidence.md) `C7-6` 節的「R4 參考資料」。**美股參考來源仍未定**（Finnhub 金鑰暫不設定），在另定來源之前美股口徑比對記為證據不足。
-      - **執行機器**：本 repo 的另一個工作目錄（2026-09-25 這台）**沒有安裝 gcloud**，R1 的原始日誌 `output/c76/r1.jsonl` 也不在這裡。R4 須在執行 R1 的那台機器上跑，或先在這台安裝並登入 gcloud。
+      - **參考資料**：台股 09-24 的官方收盤價已從 TWSE／TPEx 取得，數值見 [C7 證據](cloud-C7-evidence.md) `C7-6` 節的「R4 參考資料」。**美股參考來源仍未定**（Finnhub 金鑰暫不設定），在另定來源之前美股口徑比對記為證據不足。**2026-09-25 使用者決定：R4 的美股維持證據不足，不另找來源。**
+      - **執行機器**：本 repo 的另一個工作目錄（2026-09-25 這台）**沒有安裝 gcloud**，R1 的原始日誌 `output/c76/r1.jsonl` 也不在這裡。R4 須在執行 R1 的那台機器上跑，或先在這台安裝並登入 gcloud。**2026-09-25 使用者決定：回 R1 那台機器跑**，執行前先 `git pull` 取得本段。
       - **執行前核對**（值以 `/` 開頭的參數有被 Git Bash 改寫的前例）：`gcloud run jobs describe c76-source-probe --region=asia-northeast1`，確認 command 為 `/app/.venv/bin/python`、`C76_PROBE` 存在，並**記下映像 digest**。C7 證據的 R1 節對這個 Job 用的映像說法不一致：一處寫已改用 `218b4b962c5a`，另一處寫「R2–R5 使用的 `06e2df807527`」。以 `describe` 的結果為準，並在證據中更正。
       - **執行**：`gcloud run jobs execute c76-source-probe --region=asia-northeast1 --update-env-vars=C76_MODE=refresh,C76_TICKERS=fixed --wait`。這是 R1 已驗證過的逐次覆寫方式。
       - **取日誌**：以 execution 名稱過濾 `textPayload` 開頭為 `C76 ` 的行，依時間排序，存成 `output/c76/r4.jsonl`。
