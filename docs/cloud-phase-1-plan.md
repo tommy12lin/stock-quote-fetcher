@@ -18,7 +18,7 @@
 >
 > **`C7-6` 剩餘順序**（2026-09-25 補記，台北時間）。每一步的程序都在 `C7-6` 項下，執行 Job 的步驟都要在**執行 R1 的那台機器**上做（本 repo 另一個工作目錄沒有 gcloud）：
 > 1. ~~**R4 雙邊休市**：09-26（六）08:00 起到 09-27（日）。見「R4 執行準備」。~~ **已完成**（09-26 10:51 台北，`c76-source-probe-h8cms`，portfolio revision **1**）。執行機器改為本 repo 的這個工作目錄：這台已安裝並登入 gcloud，之後的場次也可以在這台執行，gcloud 指令在 PowerShell 下執行（查日誌的引號陷阱見 C7 證據 R4 節）。
-> 2. **R3 美股盤中**：09-28（一）或 09-29（二）的 22:00–03:30。沿用同一支 Job、`C76_TICKERS=fixed`，美股口徑比對記為證據不足（使用者決定）。沒有另寫準備段，判定依「判定方式」與「每場記錄」。
+> 2. **R3 美股盤中**：09-28（一）或 09-29（二）的 22:00–03:30。沿用同一支 Job、`C76_TICKERS=fixed`，美股口徑比對記為證據不足（使用者決定）。~~沒有另寫準備段，判定依「判定方式」與「每場記錄」。~~ **2026-09-26 補記：已備妥**，見 `C7-6` 項下「R3 執行準備」。建議 09-28 晚上跑，好讓 R5 能接在同一晚；`c76_report.py` 的逐檔判定是 R4 專用的，R3 不得貼用。
 > 3. **R2 台股盤中**：09-29（二）或 09-30（三）的 10:30–12:30 觸發。J−30 分先啟動 MIS 記錄。見「R2 執行準備」。
 > 4. **R5 吞吐量**：與 R2 或 R3 同一時段，**僅在該場沒有 429 時**，間隔超過 60 秒，`C76_TICKERS=wide:150`。取值方式見「`refresh_max_tickers` 的取法」。沒有另寫準備段。
 > 5. **清單在 09-30 約 17:10 到期**。這不是硬期限，只要執行 Job `finpo-catalog-refresh`（約 82 秒）就能延長，但**務必在到期前更新**：Job 若用 `218b4b962c5a` 映像，到期後 probe 存持股會失敗（`refresh_in_request = false`）；若用 `06e2df807527`，清單過期時會在請求內抓清單，並把約 135 秒混進報價耗時。不論量測是否完成，這次更新本來就是管理者的責任（`C6-3`）。
@@ -672,6 +672,34 @@ Dockerfile 三處 `company_ca` 掛載本來就是條件式（`if [ -f /run/secre
       - **2026-09-26 補記：R4 已執行**，結果見 [C7 證據](cloud-C7-evidence.md) 的 R4 節。執行機器改為本 repo 的這個工作目錄（使用者決定，取代上方「回 R1 那台機器跑」），`describe` 核對通過，Job 映像為 `218b4b962c5a`；上方所說 C7 證據對映像的矛盾已在該節更正。
       - **2026-09-26 補記：證據草稿由腳本產生**，不手抄 11 檔的數值。在**有 `output/c76/r4-reference/` 的這台**（參考原始檔 Git 忽略，只在這台）執行 `python -m scripts.c76_report --probe output/c76/r4.jsonl --reference output/c76/r4-reference --execution <execution 名稱> --digest <describe 記下的 digest>`，所以 `r4.jsonl` 要從 R1 那台複製過來。輸出一段 markdown：執行資訊（含 revision 與 manifest）、各批牆鐘時間、逐次嘗試、非成功的嘗試（含 HTTP 狀態與 retry-after），以及逐檔判定。判定把預期拆開逐項檢查：`market_closed` 在「存入」「估值」「頁面」三層分別看；兩個市場的 `trading_date` 各自比對；台股價格要求**相等**，一個 tick 只是調查門檻，差距在一個 tick 內也列為不符；美股固定為證據不足。缺嘗試、缺參考值、缺旗標都列為不符，不當成通過。草稿貼入 C7 證據前須人工核對。腳本新增 8 個離線案例，驗證情形見 C7 證據。**腳本本身不需要推上 GitHub 才能用**；推送會觸發建置，須等 R4 的 `describe` 確認 Job 映像後才推（見抬頭「映像保留窗口」）。
 
+    **2026-09-26 補記：R3 執行準備**。本段是準備，**R3 尚未執行**。
+      - **這是本專案第一次在美股盤中抓價**。step 9 的 monitor 在美股盤中那段停機，美股整批錯過（[步驟 9 證據](step-9-evidence.md)），所以美股盤中的時效旗標沒有任何先前的觀測。下列預期是依程式規則推出的判定依據，**不是已知結果**。
+      - **時段**：美股一般時段在 2026-11-01 前為台北 21:30–04:00。觸發時間取 **22:00–03:30**，也就是避開開盤後與收盤前各 30 分鐘。**建議 09-28（一）晚上**，理由有兩點：
+        1. 台股 09-28 休市，台股 6 檔應該仍是 09-24 的收盤，可以用 R4 已取得的參考值**再比對一次**，不必另取參考資料。
+        2. 若 R3 沒有 429，R5 可以接在同一晚跑，R2 就還有 09-29、09-30 兩個上午可選。若改在 09-29 晚上跑 R3，R5 只能和 R2 排在 09-30 上午，沒有退路。
+        09-29（二）晚上為備案；該日台股有開盤，台股 6 檔的 `trading_date` 應為 09-29，沒有現成的參考值，台股價格比對記為證據不足（`C7-6` 的判定方式只要求 R3 看美股）。
+      - **執行機器**：本 repo 的這個工作目錄（2026-09-26 已安裝並登入 gcloud），gcloud 指令一律在 **PowerShell** 下執行。電腦只需在觸發到取完日誌的期間開著；R4 從觸發到 `--wait` 返回約 85 秒。
+      - **執行前核對**：
+        1. `gcloud run jobs describe c76-source-probe --region=asia-northeast1`：command 為 `/app/.venv/bin/python`，映像 digest 仍為 `sha256:5ceea993…`（`218b4b962c5a`）。
+        2. `gcloud artifacts docker images list asia-northeast1-docker.pkg.dev/finpo-508709/finpo/stock-quote --include-tags`：確認 `218b4b962c5a` 仍在。09-26 推送 `244fd00` 後 Registry 暫時有 4 個版本，清除政策會在之後刪掉 `06e2df807527`，那沒有影響。**`218b4b962c5a` 不見的話就停下來，不執行**：這代表 09-26 之後又有人推了程式變更。
+        3. 確認清單未過期：到期約在 09-30 17:10（台北），R3 在此之前，不用處理。
+        4. 與上一場（R4）的間隔遠超過 `C4-5` 的 60 秒，不用處理。
+      - **執行**：`gcloud run jobs execute c76-source-probe --region=asia-northeast1 --update-env-vars="C76_MODE=refresh,C76_TICKERS=fixed" --wait`。記下觸發時刻（UTC）與 execution 名稱。**`--update-env-vars` 的值必須加雙引號**：2026-09-26 以 `--verbosity=debug` 實測，經 `gcloud.ps1` 時沒加引號的逗號會被換成空白（`--region=asia-northeast1,x` 被解析成 `"asia-northeast1 x"`），`C76_MODE` 會變成 `refresh C76_TICKERS=fixed`。R4 沒出事，是因為當時呼叫的是 `gcloud.cmd`。凡是值裡有逗號的 gcloud 參數，在 PowerShell 下一律加引號。
+      - **取日誌**（PowerShell）。引號寫法要看 `gcloud` 解析成哪個檔案，寫錯時查詢**不會報錯，只會靜默回 0 筆**（見 C7 證據 R4 節）。新開的 PowerShell 視窗裡，`gcloud` 解析成 `gcloud.ps1`，用**一般雙引號**；R4 當時以完整路徑呼叫 `gcloud.cmd`，才需要寫成 `\"`。2026-09-26 以 R4 的 execution 實測：`gcloud.ps1` 用一般雙引號查到 31 筆，用 `\"` 查到 0 筆。執行前先以 `(Get-Command gcloud).Source` 確認解析結果：
+        ```powershell
+        $filter = 'resource.type="cloud_run_job" AND labels."run.googleapis.com/execution_name"="<execution 名稱>"'
+        $all = gcloud logging read $filter --order=asc --limit=1000 --freshness=1d --format=json | ConvertFrom-Json
+        $all | Where-Object { $_.textPayload -and $_.textPayload.StartsWith('C76 ') } | ForEach-Object { $_.textPayload } | Out-File -Encoding utf8NoBOM output/c76/r3.jsonl
+        ```
+        核對行數：預期 `attempt` 11 行、`view` 11 行，`error` 0 行。回 0 筆時先懷疑過濾條件，不要當成日誌尚未寫入。
+      - **執行後必須記下的**：`portfolio` 行的 revision（R4 為 1，R3 應為 **2**），以及 `manifest` 行（併入清除清單）。
+      - **證據整理**：`scripts/c76_report.py` 可以產生執行資訊、各批、逐次嘗試與非成功嘗試的表格，但它的**「逐檔判定」一節是 R4 專用的**：它預期美股帶 `market_closed`、`trading_date` 為 09-25，套在 R3 上會把正確的美股結果全部判成不符。**R3 不得貼用該節**，改依下方預期逐檔人工判定。把腳本改成可設定預期是程式變更，推送會觸發建置，而映像窗口已不容許再推（見抬頭「映像保留窗口」），所以留到 `C7-6` 收尾後再處理。
+      - **預期**（判定依據，不是結果）：
+        - **美股 5 檔**（當日成交，依「判定方式」）：`price_kind` 為 `last_trade`；`trading_date` 為紐約當日（09-28 晚上跑則為 09-28）；`quote_time` 落在當日一般時段內；`session` 為 `regular`；旗標不含 `market_closed`。R4 顯示 Yahoo 對美股宣告延遲 0 秒，依 `quality.py`，最後成交若早於接收時刻 70 秒以上，就會被標 `stale`。這 5 檔流動性高，推測不會中，**但未觀測過**，中了就照實記錄。**價格正確性為證據不足**（沒有比較來源，2026-09-25 使用者決定）。
+        - **台股 6 檔**：都帶 `market_closed`。09-28 晚上跑的話，`trading_date` 為 09-24，價格應等於 C7 證據「R4 參考資料」表的收盤；R4 被標 `session_unknown` 的 2330、3529、006201 應該再次被標，因為規則與報價都沒變。
+        - 任何一檔不符都照實記錄，不重跑。
+      - **停止條件**：出現 429 或封鎖時，**不跑 R5**，照「停止條件」等冷卻結束。沒有 429 的話，R5 可以在同一晚接著跑，兩場間隔超過 60 秒；R5 的準備另記。
+
     **2026-09-25 補記：R2 執行準備**。本段是準備，**R2 尚未執行**。
       - **為什麼原本的人工核對不能用**：Yahoo 台股宣告延遲 20 分鐘（`poc-validation.md` 第 4 節的 09-07 補註），步驟 9 也觀測到成交時間比接收時間早約 20 分鐘（[步驟 9 證據](step-9-evidence.md)）。在 Job 執行的那一分鐘查官方盤中價，比到的是 20 分鐘後的另一筆成交，不相等也不代表 Yahoo 錯。
       - **改法**：以 TWSE MIS（`mis.twse.com.tw` 的 `getStockInfo`，上市與上櫃都涵蓋）在 Job 執行前後連續記錄快照。每筆快照帶最後成交時間 `tlong`（毫秒）與成交價 `z`。比對時，只有 MIS 的 `tlong` **恰好等於** Yahoo 的 `quote_time` 才算對齊，差額以 `poc-validation.md` 第 5 節的一個最小報價單位為調查門檻。時間對不上的樣本記為未對齊，並附上前後兩筆快照供調查，**即使鄰近快照價格相同也不算對齊**。一筆都對不上時，盤中價格正確性記為**證據不足**。工具為 `scripts/c76_mis.py`（`record` 與 `compare`）。
@@ -679,7 +707,7 @@ Dockerfile 三處 `company_ca` 掛載本來就是條件式（`if [ -f /run/secre
       - **時段**：09-29（二）或 09-30（三）。Job 的觸發時間 J 取 **10:30–12:30**，使 Yahoo 帶回的成交（約 J−20 分）落在開盤 20 分鐘後、13:25 收盤集合競價之前。
       - **程序**：
         1. J−30 分：在任一台有專案環境的機器啟動 `python -m scripts.c76_mis record --out output/c76/r2-mis.jsonl --minutes 40`（每 5 秒一次，這是 MIS 自己頁面的輪詢間隔；腳本拒絕更快）。參考資料不必從 GCP 取得。
-        2. J：在 R1 那台執行 `gcloud run jobs execute c76-source-probe --region=asia-northeast1 --update-env-vars=C76_MODE=refresh,C76_TICKERS=fixed --wait`，執行前的 `describe` 核對同 R4。
+        2. J：在 R1 那台執行 `gcloud run jobs execute c76-source-probe --region=asia-northeast1 --update-env-vars=C76_MODE=refresh,C76_TICKERS=fixed --wait`，執行前的 `describe` 核對同 R4。**2026-09-26 補記**：若在這台以 PowerShell 執行，`--update-env-vars` 的值要加雙引號，取日誌的引號寫法也要照「R3 執行準備」，原因見該段。
         3. 取日誌存成 `output/c76/r2.jsonl`，記下 `portfolio` 的 revision 與 `manifest`。
         4. 等 MIS 記錄結束，執行 `python -m scripts.c76_mis compare --probe output/c76/r2.jsonl --mis output/c76/r2-mis.jsonl`。
       - **預期**（判定依據，不是結果）：
