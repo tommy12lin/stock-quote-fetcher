@@ -17,7 +17,7 @@
 > | 其餘 `C7` | ⬜ 未開始 |
 >
 > **`C7-6` 剩餘順序**（2026-09-25 補記，台北時間）。每一步的程序都在 `C7-6` 項下，執行 Job 的步驟都要在**執行 R1 的那台機器**上做（本 repo 另一個工作目錄沒有 gcloud）：
-> 1. ~~**R4 雙邊休市**：09-26（六）08:00 起到 09-27（日）。見「R4 執行準備」。~~ **已完成**（09-26 10:51 台北，`c76-source-probe-h8cms`，portfolio revision **1**）。執行機器改為本 repo 的這個工作目錄：這台已安裝並登入 gcloud，之後的場次也可以在這台執行，gcloud 指令在 PowerShell 下執行（查日誌的引號陷阱見 C7 證據 R4 節）。
+> 1. ~~**R4 雙邊休市**：09-26（六）08:00 起到 09-27（日）。見「R4 執行準備」。~~ **已完成**（09-26 10:51 台北，`c76-source-probe-h8cms`，portfolio revision **1**）。執行機器改為本 repo 的這個工作目錄：這台已安裝並登入 gcloud，之後的場次也可以在這台執行，gcloud 指令在 PowerShell 下執行（查日誌的引號陷阱見 C7 證據 R4 節）。**2026-09-26 補記：必須用 PowerShell 7（`pwsh`）**。這台終端機的預設是 5.1，在 5.1 下取日誌會靜默回 0 筆，見「R3 執行準備」。
 > 2. **R3 美股盤中**：09-28（一）或 09-29（二）的 22:00–03:30。沿用同一支 Job、`C76_TICKERS=fixed`，美股口徑比對記為證據不足（使用者決定）。~~沒有另寫準備段，判定依「判定方式」與「每場記錄」。~~ **2026-09-26 補記：已備妥**，見 `C7-6` 項下「R3 執行準備」。建議 09-28 晚上跑，好讓 R5 能接在同一晚；`c76_report.py` 的逐檔判定是 R4 專用的，R3 不得貼用。
 > 3. **R2 台股盤中**：09-29（二）或 09-30（三）的 10:30–12:30 觸發。J−30 分先啟動 MIS 記錄。見「R2 執行準備」。**2026-09-26 補記**：已確認這台跑得了 R2（MIS 記錄與比對在容器裡執行），但 MIS 的 `tlong` 比 `t` 晚 1 小時。使用者決定改用 `d`+`t` 對齊，`compare` 要**在 R2 之前**改好並測過，在收尾前只提交在本機、不推送。**已改好**（本機分支 `c76-mis-dt-align`），R2 當天從 worktree `D:\workspace\stock-quote-fetcher-c76-mis` 使用新版，做法見「R2 執行準備」。R2 期間筆電要插電，觸發前 35 分鐘先確認 Docker 可用。
 > 4. **R5 吞吐量**：與 R2 或 R3 同一時段，**僅在該場沒有 429 時**，間隔超過 60 秒，`C76_TICKERS=wide:150`。取值方式見「`refresh_max_tickers` 的取法」。~~沒有另寫準備段。~~ **2026-09-26 補記：已備妥**，見 `C7-6` 項下「R5 執行準備」。首選 R3 同一晚。~~**有一項待使用者決定**~~：R5 處理到的幾乎全是台股，美股的單檔成本量不到。**同日使用者決定照原樣跑**，`c` 記為台股成本，美股以 R3、R4 的逐檔耗時作為旁證。
@@ -679,6 +679,17 @@ Dockerfile 三處 `company_ca` 掛載本來就是條件式（`if [ -f /run/secre
         2. 若 R3 沒有 429，R5 可以接在同一晚跑，R2 就還有 09-29、09-30 兩個上午可選。若改在 09-29 晚上跑 R3，R5 只能和 R2 排在 09-30 上午，沒有退路。
         09-29（二）晚上為備案；該日台股有開盤，台股 6 檔的 `trading_date` 應為 09-29，沒有現成的參考值，台股價格比對記為證據不足（`C7-6` 的判定方式只要求 R3 看美股）。
       - **執行機器**：本 repo 的這個工作目錄（2026-09-26 已安裝並登入 gcloud），gcloud 指令一律在 **PowerShell** 下執行。電腦只需在觸發到取完日誌的期間開著；R4 從觸發到 `--wait` 返回約 85 秒。
+      - **2026-09-26 補記：一定要用 PowerShell 7（`pwsh`），不能用 Windows PowerShell 5.1**。這台 Windows Terminal 的**預設設定檔是 5.1**（「Windows PowerShell」），7.6.6 是另一個叫「PowerShell」的設定檔，也可以在任何視窗輸入 `pwsh` 進入。以 R4 的 execution 實測，同一段取日誌程式：
+        - pwsh 7 取到 29 行，存出的檔案與 `r4.jsonl` **逐位元組相同**；
+        - 5.1 取到 **0 行、沒有報錯**。5.1 呼叫外部程式時會剝掉引數裡的雙引號，所以過濾條件失效。另外 5.1 不支援 `Out-File -Encoding utf8NoBOM`，會直接報錯；改用 `-Encoding utf8` 的話檔案會帶 BOM，而 `_jsonl` 不會去掉第一行的 BOM，`start` 行會被靜默略過。
+
+        所以每次開始前先執行：
+        ```powershell
+        if ($PSVersionTable.PSVersion.Major -lt 7) { throw '請改用 pwsh 7' }
+        Set-Location D:\workspace\stock-quote-fetcher
+        (Get-Command gcloud).Source   # 應為 ...\gcloud.ps1
+        ```
+        本段以下的引號規則都是在 pwsh 7 下實測的。
       - **執行前核對**：
         1. `gcloud run jobs describe c76-source-probe --region=asia-northeast1`：command 為 `/app/.venv/bin/python`，映像 digest 仍為 `sha256:5ceea993…`（`218b4b962c5a`）。
         2. `gcloud artifacts docker images list asia-northeast1-docker.pkg.dev/finpo-508709/finpo/stock-quote --include-tags`：確認 `218b4b962c5a` 仍在。09-26 推送 `244fd00` 後 Registry 暫時有 4 個版本，清除政策會在之後刪掉 `06e2df807527`，那沒有影響。**`218b4b962c5a` 不見的話就停下來，不執行**：這代表 09-26 之後又有人推了程式變更。
@@ -689,13 +700,20 @@ Dockerfile 三處 `company_ca` 掛載本來就是條件式（`if [ -f /run/secre
         ```powershell
         $filter = 'resource.type="cloud_run_job" AND labels."run.googleapis.com/execution_name"="<execution 名稱>"'
         $all = gcloud logging read $filter --order=asc --limit=1000 --freshness=1d --format=json | ConvertFrom-Json
-        $all | Where-Object { $_.textPayload -and $_.textPayload.StartsWith('C76 ') } | ForEach-Object { $_.textPayload } | Out-File -Encoding utf8NoBOM output/c76/r3.jsonl
+        [string[]]$lines = $all | Where-Object { $_.textPayload -and $_.textPayload.StartsWith('C76 ') } | ForEach-Object { $_.textPayload }
+        [IO.File]::WriteAllLines((Join-Path (Get-Location) 'output/c76/r3.jsonl'), $lines)
+        $lines | ForEach-Object { ($_.Substring(4) | ConvertFrom-Json).kind } | Group-Object -NoElement
         ```
-        核對行數：預期 `attempt` 11 行、`view` 11 行，`error` 0 行。回 0 筆時先懷疑過濾條件，不要當成日誌尚未寫入。
+        （2026-09-26 補記：存檔從 `Out-File` 改成 `[IO.File]::WriteAllLines`，它寫出的 UTF-8 不帶 BOM；在 pwsh 7 下重現 R4，結果與 `r4.jsonl` 雜湊相同。）核對行數：預期 `attempt` 11 行、`view` 11 行，`error` 0 行。回 0 筆時先懷疑過濾條件和 shell 版本，不要當成日誌尚未寫入。若行數不到預期、但也不是 0，可能是日誌還在寫入：等 1 分鐘再查一次，以第二次的結果為準，兩次的行數都記下來。
       - **執行後必須記下的**：`portfolio` 行的 revision（R4 為 1，R3 應為 **2**），以及 `manifest` 行（併入清除清單）。
+      - **決定要不要接著跑 R5**（2026-09-26 補記）：不必等容器，直接在 pwsh 7 裡檢查。這段也以 R4 的日誌實測過，結果為 0 筆：
+        ```powershell
+        $lines | ForEach-Object { $_.Substring(4) | ConvertFrom-Json } | Where-Object { $_.kind -eq 'attempt' -and $_.status -ne 'success' } | ForEach-Object { '{0} {1} {2} {3}' -f $_.ticker, $_.status, $_.adapter.reason, $_.adapter.retry_after_seconds }
+        ```
+        有任何一筆 `rate_limited`，或 `reason` 為 `http_429`，就不跑 R5。其他非成功的情形也先停下來看清楚再決定；例如 `reason` 為 `content_type` 時，可能是被導到 HTML 頁面，屬於封鎖。
       - **證據整理**：`scripts/c76_report.py` 可以產生執行資訊、各批、逐次嘗試與非成功嘗試的表格，但它的**「逐檔判定」一節是 R4 專用的**：它預期美股帶 `market_closed`、`trading_date` 為 09-25，套在 R3 上會把正確的美股結果全部判成不符。**R3 不得貼用該節**，改依下方預期逐檔人工判定。把腳本改成可設定預期是程式變更，推送會觸發建置，而映像窗口已不容許再推（見抬頭「映像保留窗口」），所以留到 `C7-6` 收尾後再處理。
       - **預期**（判定依據，不是結果）：
-        - **美股 5 檔**（當日成交，依「判定方式」）：`price_kind` 為 `last_trade`；`trading_date` 為紐約當日（09-28 晚上跑則為 09-28）；`quote_time` 落在當日一般時段內；`session` 為 `regular`；旗標不含 `market_closed`。R4 顯示 Yahoo 對美股宣告延遲 0 秒，依 `quality.py`，最後成交若早於接收時刻 70 秒以上，就會被標 `stale`。這 5 檔流動性高，推測不會中，**但未觀測過**，中了就照實記錄。**價格正確性為證據不足**（沒有比較來源，2026-09-25 使用者決定）。
+        - **美股 5 檔**（當日成交，依「判定方式」）：`price_kind` 為 `last_trade`；`trading_date` 為紐約當日（09-28 晚上跑則為 09-28）；`quote_time` 落在當日一般時段內；`session` 為 `regular`；旗標不含 `market_closed`。R4 顯示 Yahoo 對美股宣告延遲 0 秒，依 `quality.py`，最後成交若早於接收時刻 70 秒以上，就會被標 `stale`。這 5 檔流動性高，推測不會中，**但未觀測過**，中了就照實記錄。**頁面旗標另外判定**：`view` 行是在更新結束後讀頁面時，以讀取時刻重新判定的。第一檔美股在更新開始後約 20 秒被抓取，到讀頁面時已經過了一段時間，所以頁面這層比存入那層更容易出現 `stale`。兩層不同時，照實分開記錄，不要當成矛盾。**價格正確性為證據不足**（沒有比較來源，2026-09-25 使用者決定）。
         - **台股 6 檔**：都帶 `market_closed`。09-28 晚上跑的話，`trading_date` 為 09-24，價格應等於 C7 證據「R4 參考資料」表的收盤；R4 被標 `session_unknown` 的 2330、3529、006201 應該再次被標，因為規則與報價都沒變。
         - 任何一檔不符都照實記錄，不重跑。
       - **停止條件**：出現 429 或封鎖時，**不跑 R5**，照「停止條件」等冷卻結束。沒有 429 的話，R5 可以在同一晚接著跑，兩場間隔超過 60 秒；R5 的準備另記。
