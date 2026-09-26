@@ -726,6 +726,17 @@ Dockerfile 三處 `company_ca` 掛載本來就是條件式（`if [ -f /run/secre
       - **執行前核對**：與 R3 相同，包括 `describe`，以及確認 Registry 裡還有 `218b4b962c5a`。另外要確認上一場的「非成功的嘗試」裡沒有 `rate_limited`。
       - **執行**（PowerShell，值要加引號，原因見「R3 執行準備」）：`gcloud run jobs execute c76-source-probe --region=asia-northeast1 --update-env-vars="C76_MODE=refresh,C76_TICKERS=wide:150" --wait`
       - **取日誌**：與 R3 相同，存成 `output/c76/r5.jsonl`。預期 `view` 150 行、`portfolio` 1 行（含 150 檔名單）；`attempt` 只有實際處理到的那些檔，**不會是 150**。
+      - **2026-09-26 補記：R5 當晚的檢查結果**。
+        - **shell 與指令**：與 R3 相同，**只能用 pwsh 7**，存檔用 `[IO.File]::WriteAllLines`（見「R3 執行準備」）。以 `--verbosity=debug` 確認過執行指令的解析：`--update-env-vars` 解析成 `{'C76_MODE': 'refresh', 'C76_TICKERS': 'wide:150'}`，`wide:150` 的冒號有保留。那次是用無效區域讓指令在送出請求前失敗的，事後 execution 清單最新的仍是 R4 的 `h8cms`。
+        - **計算用 `docs/c76-r5-calc.ps1`**：`pwsh -NoProfile -File docs/c76-r5-calc.ps1 -Log output/c76/r5.jsonl`。它照本段的定義輸出逐批表格（牆鐘、空檔、`c`、`c'`、是否排除），以及 `F`、`W`、`refresh()` 耗時超出 110 秒的部分、各個候選值，還有嘗試依「狀態 / reason / executed」的分組。p95 用最近排名法，也就是排序後第 ⌈0.95n⌉ 個值；批數少於 20 時就是最大值。**放在 `docs/` 下是刻意的**：放在 `scripts/` 下會觸發建置，收尾後再搬過去。實測情形：
+          - 用 R4 日誌跑，`F` 1.604、空檔 0.458／0.304、`W` 0.195，與人工計算一致；
+          - 另造一份日誌，把一批標成含 `cycle_budget_exhausted`、另一批含 `http_429`，兩批都被正確排除。
+
+          **R4 跑出來的候選值不是 R5 的結果，不得使用。**
+        - **第一批含暖機，`c` 要兩種都看**。第一批含容器啟動後的第一次 Yahoo 請求：R4 的 2330 花了 7.4 秒，其餘約 2.5 秒，所以第一批每檔 3.68 秒、其他批約 2.7 秒。R5 只有個位數批次，p95 就是最大值，**`c` 很可能由這一次暖機決定**。暖機是真實成本，因為 min=0 時每次閒置後的更新都要付一次；但它不是每一檔都要付。程式因此另外輸出「不含第 1 批」的 `c`。**用哪一個由使用者決定**，兩個都記進證據。
+        - **R5 本身的非成功嘗試**：分組結果裡，`timeout | cycle_budget_exhausted | False` 是預期的預算截斷。`rate_limited` 或 `http_429` 要照停止條件記錄；`timeout` 且 `executed` 為 True 的，是真的向來源送出後逾時，要逐筆記錄。
+        - **量測時的市場狀態**：R5 在台股收盤後的晚上跑，處理到的又幾乎全是台股，所以 `c` 是在**台股休市時**量得的。Yahoo 對休市與盤中的標的回應速度是否不同，**未量測**，證據中要寫明。
+        - **觸發太早碰上 `C4-5` 冷卻時**：`refresh_round` 會先存持股，所以 revision 仍會加 1，並印出 `portfolio` 行；接著 `refresh` 被拒，腳本輸出 `error`（status 429、`code` 為 `cooldown`）並以代碼 1 結束，這次 execution 記為失敗。等 60 秒後重跑即可，revision 會再加 1。兩次的 revision 與 execution 都要記下，最後 `reset` 用最後印出的那個 revision。這是應用程式自己的冷卻，不是來源的 429，不觸發停止條件。
       - **執行後必須記下的**：`portfolio` 的 revision（R3 之後應為 3）與 `manifest`；以及 150 檔的名單，這是計畫書要求記入證據的。
       - **2026-09-26 發現：R5 實際量到的幾乎全是台股，與「台美股混合」的設想不同**（~~待使用者決定~~ 同日已決定採 (a)，見本項末）。`select_wide` 先挑 75 檔台股、再挑 75 檔美股，`Dashboard.save` 保留原本順序，而 `order_by_staleness` 遇到都沒抓過報價的標的時，同分會照存檔順序排。110 秒內大約處理得到 40 檔左右，所以處理到的會是前面的台股。這個數字只是依 R4 每檔約 2.5–3.7 秒推估，不是量測。影響：
         - `c` 量到的是台股的單檔成本。美股的單檔成本 R5 量不到。R4 的逐檔 `elapsed_ms`，台股（排除第一檔）為 2,479–2,696、美股為 2,525–2,746，量級相近，但只是單一樣本的**旁證**，而且量的東西不同：`elapsed_ms` 不含批次內的寫入。
