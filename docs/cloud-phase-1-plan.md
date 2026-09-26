@@ -19,7 +19,7 @@
 > **`C7-6` 剩餘順序**（2026-09-25 補記，台北時間）。每一步的程序都在 `C7-6` 項下，執行 Job 的步驟都要在**執行 R1 的那台機器**上做（本 repo 另一個工作目錄沒有 gcloud）：
 > 1. ~~**R4 雙邊休市**：09-26（六）08:00 起到 09-27（日）。見「R4 執行準備」。~~ **已完成**（09-26 10:51 台北，`c76-source-probe-h8cms`，portfolio revision **1**）。執行機器改為本 repo 的這個工作目錄：這台已安裝並登入 gcloud，之後的場次也可以在這台執行，gcloud 指令在 PowerShell 下執行（查日誌的引號陷阱見 C7 證據 R4 節）。
 > 2. **R3 美股盤中**：09-28（一）或 09-29（二）的 22:00–03:30。沿用同一支 Job、`C76_TICKERS=fixed`，美股口徑比對記為證據不足（使用者決定）。~~沒有另寫準備段，判定依「判定方式」與「每場記錄」。~~ **2026-09-26 補記：已備妥**，見 `C7-6` 項下「R3 執行準備」。建議 09-28 晚上跑，好讓 R5 能接在同一晚；`c76_report.py` 的逐檔判定是 R4 專用的，R3 不得貼用。
-> 3. **R2 台股盤中**：09-29（二）或 09-30（三）的 10:30–12:30 觸發。J−30 分先啟動 MIS 記錄。見「R2 執行準備」。**2026-09-26 補記**：已確認這台跑得了 R2（MIS 記錄與比對在容器裡執行），但 MIS 的 `tlong` 比 `t` 晚 1 小時。使用者決定改用 `d`+`t` 對齊，`compare` 要**在 R2 之前**改好並測過，在收尾前只提交在本機、不推送。R2 期間筆電要插電，觸發前 35 分鐘先確認 Docker 可用。
+> 3. **R2 台股盤中**：09-29（二）或 09-30（三）的 10:30–12:30 觸發。J−30 分先啟動 MIS 記錄。見「R2 執行準備」。**2026-09-26 補記**：已確認這台跑得了 R2（MIS 記錄與比對在容器裡執行），但 MIS 的 `tlong` 比 `t` 晚 1 小時。使用者決定改用 `d`+`t` 對齊，`compare` 要**在 R2 之前**改好並測過，在收尾前只提交在本機、不推送。**已改好**（本機分支 `c76-mis-dt-align`），R2 當天從 worktree `D:\workspace\stock-quote-fetcher-c76-mis` 使用新版，做法見「R2 執行準備」。R2 期間筆電要插電，觸發前 35 分鐘先確認 Docker 可用。
 > 4. **R5 吞吐量**：與 R2 或 R3 同一時段，**僅在該場沒有 429 時**，間隔超過 60 秒，`C76_TICKERS=wide:150`。取值方式見「`refresh_max_tickers` 的取法」。~~沒有另寫準備段。~~ **2026-09-26 補記：已備妥**，見 `C7-6` 項下「R5 執行準備」。首選 R3 同一晚。~~**有一項待使用者決定**~~：R5 處理到的幾乎全是台股，美股的單檔成本量不到。**同日使用者決定照原樣跑**，`c` 記為台股成本，美股以 R3、R4 的逐檔耗時作為旁證。
 > 5. **清單在 09-30 約 17:10 到期**。這不是硬期限，只要執行 Job `finpo-catalog-refresh`（約 82 秒）就能延長，但**務必在到期前更新**：Job 若用 `218b4b962c5a` 映像，到期後 probe 存持股會失敗（`refresh_in_request = false`）；若用 `06e2df807527`，清單過期時會在請求內抓清單，並把約 135 秒混進報價耗時。不論量測是否完成，這次更新本來就是管理者的責任（`C6-3`）。
 > 6. **收尾**：先把逐檔結果寫進 C7 證據，再以最後一場的 revision 執行 `C76_MODE=reset`，然後 `cloud_db purge` 各場的 manifest（先 dry-run），最後刪除 Job `c76-source-probe`，並依 R5 把 `refresh_max_tickers` 寫進 `deploy/cloud.toml`。完成後 `C6-2` 才能開始。**2026-09-26 補記**：推送 `cloud.toml` 會觸發建置，之後 `218b4b962c5a` 遲早會被清除政策刪掉，所以建置完成後要立刻把 `finpo-catalog-refresh` 改指向新映像，並以 `describe` 核對（見「R5 執行準備」最後一項）。
@@ -767,6 +767,14 @@ Dockerfile 三處 `company_ca` 掛載本來就是條件式（`if [ -f /run/secre
             3. **其餘規則不變**：價差以一個最小報價單位為調查門檻；未對齊的樣本附上前後快照，不計入對齊數；一筆都對不上時，盤中價格正確性記為證據不足。
             4. 收盤那一筆（Yahoo 帶秒數，MIS `t` 為 13:30:00）預期對不上。R2 的觸發時段本來就避開收盤，這不影響 R2。
           - **尚未實作**：要改 `scripts/c76_mis.py` 的 `compare`，並補上**在修正前會失敗**的測試，以隔離容器跑完整套件。**必須在 R2 之前完成**。這個修改只影響本機的比對，Job 用不到；但它在 `scripts/` 下，推送會觸發建置，所以在 `C7-6` 收尾前**只提交在本機、不推送**。R2 的證據要記下比對時所用 `c76_mis.py` 的 git blob 雜湊，讓人能確認用的是哪一版。
+          - **2026-09-26 補記：已實作**，提交在本機分支 `c76-mis-dt-align`（`bf55be2`），**未推送**。`c76_mis.py` 的 blob 為 `3a7d4b2a9e0b1d28da35a853ce2d4afddb96ec28`。`compare` 的輸出每檔一行，最後多一行 `{"kind": "tlong_agreement", ...}`。測試與變異測試見該提交的說明；完整套件在隔離容器下 394 passed、0 skipped。以休市日的真實快照對 R4 日誌跑過：18 筆快照的 `tlong` 都比 `d`+`t` 晚 3600 秒，收盤那一筆照預期對不上。
+          - **R2 當天怎麼用新版**：`main` 的工作目錄裡是**舊版** `compare`，不要切換分支。分支已另外取出到 worktree **`D:\workspace\stock-quote-fetcher-c76-mis`**，記錄容器改掛這個目錄；`output/c76` 仍然掛 `main` 的，讓日誌與 MIS 記錄都留在 `main` 那邊。把上面第一行 `docker run` 的第一個 `--mount` 換成：
+            ```powershell
+            --mount "type=bind,source=D:\workspace\stock-quote-fetcher-c76-mis,target=/workspace,readonly" --mount "type=bind,source=D:\workspace\stock-quote-fetcher\output\c76,target=/workspace/output/c76"
+            ```
+            其餘指令不變。`record` 兩版的程式完全相同，所以記錄和比對都可以用同一個容器。
+          - **09-26 以這個做法實測通過**：`compare` 輸出了摘要行（18 筆快照，偏移都是 3600 秒），`record` 記錄 6 秒寫入 2 筆，檔案落在 `main` 的 `output/c76`。**實測時抓到一個坑**：worktree 裡沒有 `output/c76`（被 Git 忽略），而它的父目錄是唯讀掛載，Docker 無法建立掛載點，容器會停在 `Created`，錯誤訊息是 `mkdirat …/workspace/output: read-only file system`。已在 worktree 裡**預先建立空的 `output\c76` 目錄**，Git 不追蹤它，不影響分支內容。若 worktree 重建過，要記得再建一次。
+          - **收尾後**：`c76-source-probe` 刪除、不再需要 `218b4b962c5a` 之後，把 `c76-mis-dt-align` 合併進 `main` 再推送，然後以 `git worktree remove` 移除 worktree。
   - [ ] `C7-7` 營運驗收：DB 匯出與還原演練、前版映像回滾、計費與 DB 容量檢查、冷啟動與抓價耗時量測。
 - **完成條件**：評估文件第 6 節 C 的 8 項全部通過，且量測數據取代先前的估算假設。
 - **證據**：`docs/cloud-C7-evidence.md`，含各項實測輸出與量測值。
