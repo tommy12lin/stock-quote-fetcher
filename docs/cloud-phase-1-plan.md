@@ -667,6 +667,7 @@ Dockerfile 三處 `company_ca` 掛載本來就是條件式（`if [ -f /run/secre
       - **取日誌**：以 execution 名稱過濾 `textPayload` 開頭為 `C76 ` 的行，依時間排序，存成 `output/c76/r4.jsonl`。
       - **執行後必須記下的**：`portfolio` 行的 revision（最後 `reset` 要用），以及 `manifest` 行（併入清除清單）。其餘依上方「每場記錄」與「判定方式」。
       - **預期**（判定依據，不是結果）：11 檔都帶 `market_closed`；台股 `trading_date` 為 09-24，價格等於 C7 證據「R4 參考資料」表的收盤價；美股 `trading_date` 為 09-25。任何一檔不符都照實記錄，不重跑。
+      - **2026-09-26 補記：證據草稿由腳本產生**，不手抄 11 檔的數值。在**有 `output/c76/r4-reference/` 的這台**（參考原始檔 Git 忽略，只在這台）執行 `python -m scripts.c76_report --probe output/c76/r4.jsonl --reference output/c76/r4-reference --execution <execution 名稱> --digest <describe 記下的 digest>`，所以 `r4.jsonl` 要從 R1 那台複製過來。輸出一段 markdown：執行資訊（含 revision 與 manifest）、各批牆鐘時間、逐次嘗試、非成功的嘗試（含 HTTP 狀態與 retry-after），以及逐檔判定。判定把預期拆開逐項檢查：`market_closed` 在「存入」「估值」「頁面」三層分別看；兩個市場的 `trading_date` 各自比對；台股價格要求**相等**，一個 tick 只是調查門檻，差距在一個 tick 內也列為不符；美股固定為證據不足。缺嘗試、缺參考值、缺旗標都列為不符，不當成通過。草稿貼入 C7 證據前須人工核對。腳本新增 8 個離線案例，驗證情形見 C7 證據。**腳本本身不需要推上 GitHub 才能用**；推送會觸發建置，須等 R4 的 `describe` 確認 Job 映像後才推（見抬頭「映像保留窗口」）。
 
     **2026-09-25 補記：R2 執行準備**。本段是準備，**R2 尚未執行**。
       - **為什麼原本的人工核對不能用**：Yahoo 台股宣告延遲 20 分鐘（`poc-validation.md` 第 4 節的 09-07 補註），步驟 9 也觀測到成交時間比接收時間早約 20 分鐘（[步驟 9 證據](step-9-evidence.md)）。在 Job 執行的那一分鐘查官方盤中價，比到的是 20 分鐘後的另一筆成交，不相等也不代表 Yahoo 錯。
