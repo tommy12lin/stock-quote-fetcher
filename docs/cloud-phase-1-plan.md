@@ -19,7 +19,7 @@
 > **`C7-6` 剩餘順序**（2026-09-25 補記，台北時間）。每一步的程序都在 `C7-6` 項下，執行 Job 的步驟都要在**執行 R1 的那台機器**上做（本 repo 另一個工作目錄沒有 gcloud）：
 > 1. ~~**R4 雙邊休市**：09-26（六）08:00 起到 09-27（日）。見「R4 執行準備」。~~ **已完成**（09-26 10:51 台北，`c76-source-probe-h8cms`，portfolio revision **1**）。執行機器改為本 repo 的這個工作目錄：這台已安裝並登入 gcloud，之後的場次也可以在這台執行，gcloud 指令在 PowerShell 下執行（查日誌的引號陷阱見 C7 證據 R4 節）。
 > 2. **R3 美股盤中**：09-28（一）或 09-29（二）的 22:00–03:30。沿用同一支 Job、`C76_TICKERS=fixed`，美股口徑比對記為證據不足（使用者決定）。~~沒有另寫準備段，判定依「判定方式」與「每場記錄」。~~ **2026-09-26 補記：已備妥**，見 `C7-6` 項下「R3 執行準備」。建議 09-28 晚上跑，好讓 R5 能接在同一晚；`c76_report.py` 的逐檔判定是 R4 專用的，R3 不得貼用。
-> 3. **R2 台股盤中**：09-29（二）或 09-30（三）的 10:30–12:30 觸發。J−30 分先啟動 MIS 記錄。見「R2 執行準備」。
+> 3. **R2 台股盤中**：09-29（二）或 09-30（三）的 10:30–12:30 觸發。J−30 分先啟動 MIS 記錄。見「R2 執行準備」。**2026-09-26 補記**：已確認這台跑得了 R2（MIS 記錄與比對在容器裡執行），但 MIS 的 `tlong` 比 `t` 晚 1 小時。使用者決定改用 `d`+`t` 對齊，`compare` 要**在 R2 之前**改好並測過，在收尾前只提交在本機、不推送。R2 期間筆電要插電，觸發前 35 分鐘先確認 Docker 可用。
 > 4. **R5 吞吐量**：與 R2 或 R3 同一時段，**僅在該場沒有 429 時**，間隔超過 60 秒，`C76_TICKERS=wide:150`。取值方式見「`refresh_max_tickers` 的取法」。~~沒有另寫準備段。~~ **2026-09-26 補記：已備妥**，見 `C7-6` 項下「R5 執行準備」。首選 R3 同一晚。~~**有一項待使用者決定**~~：R5 處理到的幾乎全是台股，美股的單檔成本量不到。**同日使用者決定照原樣跑**，`c` 記為台股成本，美股以 R3、R4 的逐檔耗時作為旁證。
 > 5. **清單在 09-30 約 17:10 到期**。這不是硬期限，只要執行 Job `finpo-catalog-refresh`（約 82 秒）就能延長，但**務必在到期前更新**：Job 若用 `218b4b962c5a` 映像，到期後 probe 存持股會失敗（`refresh_in_request = false`）；若用 `06e2df807527`，清單過期時會在請求內抓清單，並把約 135 秒混進報價耗時。不論量測是否完成，這次更新本來就是管理者的責任（`C6-3`）。
 > 6. **收尾**：先把逐檔結果寫進 C7 證據，再以最後一場的 revision 執行 `C76_MODE=reset`，然後 `cloud_db purge` 各場的 manifest（先 dry-run），最後刪除 Job `c76-source-probe`，並依 R5 把 `refresh_max_tickers` 寫進 `deploy/cloud.toml`。完成後 `C6-2` 才能開始。**2026-09-26 補記**：推送 `cloud.toml` 會觸發建置，之後 `218b4b962c5a` 遲早會被清除政策刪掉，所以建置完成後要立刻把 `finpo-catalog-refresh` 改指向新映像，並以 `describe` 核對（見「R5 執行準備」最後一項）。
@@ -747,6 +747,26 @@ Dockerfile 三處 `company_ca` 掛載本來就是條件式（`if [ -f /run/secre
       - **R2 之後**：若 R2 沒有 429，同一時段接著跑 R5，兩場要間隔超過 60 秒（`C4-5`）。R5 的準備另記。
       - **已驗證的**：腳本新增 8 個離線案例，完整套件在隔離容器下 **384 passed、0 skipped**（基準 376）。變異測試：把鄰近快照當成對齊、不檢查一個 tick、ETF 誤用股票級距、不過濾名單、任一次失敗就中止記錄、只記一次、不拒絕過快輪詢，七處都會讓至少一個案例失敗。另在 runner container 以真實網路執行 `record` 15 秒，MIS 回 200、`rtcode` `0000`，六檔都有資料。
       - **尚未驗證的**：當天台股休市，MIS 回的是 09-24 收盤那一筆，**盤中的 `tlong` 是逐筆成交時間還是 5 秒撮合批次時間，未觀測**。Yahoo 的 `quote_time` 是否會與其中一筆恰好相等，要到 R2 才知道。若粒度不同而一筆都對不上，照上述規則記為證據不足，**不放寬對齊條件來湊出樣本**。
+      - **2026-09-26 補記：在這台的執行方式已實測**（09-26 12:08 台北，台股休市）。
+        - **Python 環境用容器**。這台的 uv 為 0.9.11，與專案鎖定的 0.12.10 不符，也沒有 `.venv`，所以沿用 `step-3` 的 runner 映像，另外建一個記錄用容器：repo 以唯讀掛載，只有 `output/c76` 可寫。從建立到 `uv sync` 完成約 10 秒。
+          ```powershell
+          docker run -d --name c76-mis-recorder --mount "type=bind,source=$((Get-Location).Path),target=/workspace,readonly" --mount "type=bind,source=$((Get-Location).Path)\output\c76,target=/workspace/output/c76" -w /workspace -e UV_PROJECT_ENVIRONMENT=/tmp/stock-poc-venv -e UV_CACHE_DIR=/tmp/uv-cache -e PYTHONDONTWRITEBYTECODE=1 -e PYTHONIOENCODING=utf-8 python:3.14.7-slim-trixie@sha256:cad9a2c871761c413caa6fdd6441c783451e740a48aaeba60ae62a8b53525ef6 sleep infinity
+          docker exec c76-mis-recorder sh -ec 'python -m pip install -q --root-user-action=ignore uv==0.12.10; uv sync --frozen -q'
+          docker exec -d c76-mis-recorder sh -ec 'uv run --frozen python -m scripts.c76_mis record --out output/c76/r2-mis.jsonl --minutes 40'
+          ```
+          記錄要用 `docker exec -d` 在背景跑，這樣關掉終端機不會中斷它。比對用 `docker exec c76-mis-recorder sh -ec 'uv run --frozen python -m scripts.c76_mis compare --probe output/c76/r2.jsonl --mis output/c76/r2-mis.jsonl'`。做完以 `docker rm -f c76-mis-recorder` 移除。
+        - **實測結果**：以 `--minutes 0.25` 記錄，3 次輪詢都是 HTTP 200、`rtcode` 0000、6 檔都有資料；寫入掛載的 `output/c76` 成功。`compare` 拿 R4 的日誌對這份快照跑過一次，正常結束（6 檔都是 `before_recording`，因為快照是休市日的）。這只是冒煙測試，檔案已移出 `output/c76`，不算 R2 的證據。
+        - **當天的前置條件**：Docker Desktop 雖然設定成登入時自動啟動，但 09-26 早上它沒有在跑，手動啟動後約 2–3 分鐘引擎才就緒。所以 **J−35 分之前要先確認 `docker info` 有回應**。電源設定：睡眠為「永不」；休眠插電 12 小時、用電池 3 小時。這台有電池，**R2 期間要插電**。從 J−30 到比對完成約 45 分鐘，這段時間電腦不能休眠或斷網。
+        - **發現：MIS 的 `tlong` 與 `t` 差 1 小時，`compare` 可能一筆都對不上**（~~待使用者決定~~ 同日已決定採 (b)，見本項末）。同一筆快照裡，6 檔都是 `d` 20260924、`t` 13:30:00，但 `tlong` 為 1790231400000，換算是 **2026-09-24 14:30:00（台北）**，比 `t` 晚整整 1 小時。`compare` 只拿 `tlong` 和 Yahoo 的 `quote_time` 做精確比對。原因不明：可能是休市日快照特有的（例如收盤資料在 14:30 盤後定價交易結束時才定稿），也可能盤中也這樣。**盤中的情況要到 09-29 才觀測得到**，也就是 R2 當天。09-25 準備 R2 時也記錄過一次休市日的 MIS，但當時的紀錄沒有提到這點。另外，休市日的 `t` 是整數的 13:30:00，Yahoo 的收盤 `quote_time` 則帶秒數（13:30:04–13:30:39，見 C7 證據 R4 節），所以就算以 `t` 對齊，收盤那一筆也對不上；盤中逐筆成交的情況未知。可能的做法：
+          - (a) 維持原規則，只用 `tlong`。若盤中也有偏移，就照規則記為證據不足。
+          - (b) **在 R2 之前**先定好改用 `d` 加 `t`（台北時間）作為對齊鍵，`tlong` 只記錄、並統計它與 `d`+`t` 是否一致。`record` 本來就保留 `d`、`t`、`tlong` 三欄，不必改記錄程式，只要改 `compare`。`compare` 只在本機執行、不在 Job 裡，但它在 `scripts/` 下，提交推送會觸發建置，所以要留到 `C7-6` 收尾後才推。
+          - 無論選哪一個，都必須在 R2 **之前**決定。看到結果之後才換對齊鍵，等於放寬條件來湊樣本，上面已經明文禁止。
+          - **2026-09-26 使用者決定：採 (b)**，在 R2 之前定案。R2 的對齊規則改為：
+            1. **對齊鍵**：MIS 的 `d`（YYYYMMDD）加 `t`（HH:MM:SS），視為台北時間，換算成 UTC 後，必須與 Yahoo 的 `quote_time` **逐秒完全相等**才算對齊。
+            2. **`tlong` 只記錄**：每一筆對齊或未對齊的結果，都附上該快照的 `tlong`，並統計整份記錄中 `tlong` 與 `d`+`t` 一致的比例與差值。它不參與對齊判定。
+            3. **其餘規則不變**：價差以一個最小報價單位為調查門檻；未對齊的樣本附上前後快照，不計入對齊數；一筆都對不上時，盤中價格正確性記為證據不足。
+            4. 收盤那一筆（Yahoo 帶秒數，MIS `t` 為 13:30:00）預期對不上。R2 的觸發時段本來就避開收盤，這不影響 R2。
+          - **尚未實作**：要改 `scripts/c76_mis.py` 的 `compare`，並補上**在修正前會失敗**的測試，以隔離容器跑完整套件。**必須在 R2 之前完成**。這個修改只影響本機的比對，Job 用不到；但它在 `scripts/` 下，推送會觸發建置，所以在 `C7-6` 收尾前**只提交在本機、不推送**。R2 的證據要記下比對時所用 `c76_mis.py` 的 git blob 雜湊，讓人能確認用的是哪一版。
   - [ ] `C7-7` 營運驗收：DB 匯出與還原演練、前版映像回滾、計費與 DB 容量檢查、冷啟動與抓價耗時量測。
 - **完成條件**：評估文件第 6 節 C 的 8 項全部通過，且量測數據取代先前的估算假設。
 - **證據**：`docs/cloud-C7-evidence.md`，含各項實測輸出與量測值。
