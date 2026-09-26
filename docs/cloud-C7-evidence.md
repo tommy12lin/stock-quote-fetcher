@@ -13,7 +13,7 @@
 | `C7-3` 入口驗證與繞過測試 | ⬜ 未開始 | 承接 `C3-3` 的雲端驗收 |
 | `C7-4` 功能驗收 | ⬜ 未開始 | |
 | `C7-5` 持久性驗收 | ⬜ 未開始 | 承接 `C4` 的雲端完成條件 |
-| `C7-6` 外部來源驗收 | 🟡 進行中 | **R1 已完成**（本檔）：官方清單可從 GCP 出口取得，但清單更新耗時 135 秒、超過 125 秒邊緣上限，見本檔 `C7-6` 節。R2–R5 未開始 |
+| `C7-6` 外部來源驗收 | 🟡 進行中 | **R1 已完成**（本檔）：官方清單可從 GCP 出口取得，但清單更新耗時 135 秒、超過 125 秒邊緣上限，見本檔 `C7-6` 節。~~R2–R5 未開始~~ **R4 已完成**（2026-09-26）：11 檔都帶 `market_closed`，台股 6 檔價格等於官方收盤，美股價格為證據不足；3 檔台股帶 `session_unknown`，見 R4 節。R2、R3、R5 未開始 |
 | `C7-7` 營運驗收 | 🟡 部分 | **冷啟動已提前量測**（本檔），其餘（匯出還原、回滾、計費、抓價耗時）未開始；含 `C1-8` 的預算通知送達 |
 
 ## C7-2　代理逾時量測
@@ -344,6 +344,92 @@ export default {
 - **拿掉的一道條件**：原本也會列出「成功但帶 retry-after」的嘗試。這道條件被拿掉後，沒有任何案例失敗。查程式發現 `provider_worker` 只在非 200 回應時才讀 retry-after，成功的嘗試不會帶這個值，所以這道條件防不到任何情境，已經拿掉。
 - **證明不了的**：Cloud Logging 匯出的實際行格式。腳本沿用 `c76_mis` 的讀法，只取以 `C76 ` 或 `{` 開頭的行，其餘一律略過。如果匯出時一行被截斷，解析會直接報錯；如果一行被拆成多行，開頭那段同樣報錯，後面幾段因為不以 `{` 開頭而被略過。整筆 `attempt` 行遺失的情形不會被當成通過：該檔會列為「沒有嘗試紀錄」。
 
+### R4　雙邊休市（2026-09-26）
+
+**結論：「半夜按更新」情境符合預期。** 11 檔都帶 `market_closed`，存入、估值、頁面三層都有；台股 6 檔的 `trading_date` 都是 09-24，價格**完全等於**官方收盤；美股 5 檔的 `trading_date` 都是 09-25。沒有 429、封鎖或逾時。**美股價格正確性為證據不足**：沒有比較來源，這是 2026-09-25 使用者的決定。另有一項旗標觀察，見下方「`session_unknown`」。只有一個樣本。
+
+**執行機器改為本 repo 的這個工作目錄**（2026-09-26 使用者決定），取代 09-25「回 R1 那台跑」的決定。原因：R4 只需要觸發 Job 和取日誌，而參考原始檔本來就在這台。gcloud 586.0.0 以 winget（`Google.CloudSDK`，安裝程式來自 `dl.google.com`，雜湊由 winget 驗證）安裝在使用者目錄，由使用者本人登入專案擁有者帳號。gcloud 指令一律在 PowerShell 下執行。
+
+**執行前的 `describe` 核對**（09-26 上午，觸發 R4 之前）：
+
+| 核對項 | 結果 |
+|---|---|
+| command／args | `/app/.venv/bin/python`；`-c` 與 `exec(__import__('base64').b64decode(__import__('os').environ['C76_PROBE']))`，共 2 個。沒有被改寫成 Windows 路徑 |
+| `C76_PROBE` | 11,068 字元。base64 解碼後的 git blob 為 `2c87174d…`，與 `96a8dbd`、`HEAD` 的 `scripts/c76_probe.py` **完全相同** |
+| 映像 | `sha256:5ceea993f3518048b2fcec885b1aae282223a87564d0067c348efccfe3d2d53c`，即 **`218b4b962c5a`** |
+| 規格／身分 | 1 vCPU／1Gi、`taskCount` 1、`maxRetries` 0、`timeoutSeconds` 600、`finpo-runtime`。Job 預設 `C76_MODE=catalog`，執行時覆寫為 `refresh` |
+| 最近一次 execution | R1 的 `c76-source-probe-mhj2r`，R1 之後沒有人執行過 |
+
+**更正**：上方「已知的後續事項」寫「R2–R5 使用的 `06e2df807527` 映像」，**這句是錯的**。`describe` 證實 Job 在 R1 之後已改用 `218b4b962c5a`，與「對 R2–R5 時間限制的更新」那段的敘述一致。原句保留不改，以本段為準。
+
+**映像保留窗口，第一次以 `gcloud artifacts docker images list` 核對**：Registry 內恰好有 `06e2df807527`（09-23 13:03 建立）、`218b4b962c5a`（09-23 17:00）、`b6347e610e87`（09-25 14:06）三個，與計畫抬頭依 `gh run list` 所做的推定一致。`finpo-catalog-refresh` 的映像也是 `218b4b962c5a`，**沒有任何 Job 使用 `06e2df807527`**。因此：
+- 再推**一次**非純文件的提交，擠掉的是 `06e2df807527`，不影響任何 Job。
+- 推**第二次**會擠掉 `218b4b962c5a`，`c76-source-probe` 與 `finpo-catalog-refresh` 都將無法執行，包括清單到期前必須跑的那一次。
+
+**執行**：`gcloud run jobs execute c76-source-probe --region=asia-northeast1 --update-env-vars=C76_MODE=refresh,C76_TICKERS=fixed --wait`
+
+| 項目 | 值 |
+|---|---|
+| execution | `c76-source-probe-h8cms`，`gcloud` 回報成功完成；容器日誌為 `Container called exit(0).` |
+| 觸發 → 腳本開始 | 02:51:13.3Z → 02:51:44.4Z（台北 10:51:13 → 10:51:44），約 31 秒。含 Job 排程與容器啟動；R1 為 23.7 秒 |
+| execution 完成 | 02:52:26.7Z；`--wait` 在 02:52:38.7Z 返回 |
+| instance | `c356e634-375e-4860-addf-ee651a025176` |
+| deadline／max_tickers | 110／0 |
+| 更新工作 | `3213a160-796b-4920-b71a-5126162f70f9`，`succeeded`，「已完成：11/11 檔有可用報價」 |
+| `refresh()` 耗時 | 37.34 秒 |
+| **portfolio revision**（最後 `reset` 用） | **1** |
+| **manifest**（併入清除清單） | `{"runs": ["676eba17-90b2-4301-9dd6-dfc0114d167b", "717bace7-1c44-4874-b012-44194265a7b0", "9f3a7ef5-6c40-4510-b5ba-69fbe5d3d8b1"], "refresh_jobs": ["3213a160-796b-4920-b71a-5126162f70f9"]}` |
+| 錯誤行 | 0 |
+
+**取日誌時的缺陷：過濾條件的雙引號被 PowerShell 吃掉，查詢靜默回 0 筆**。在 PowerShell 下以 `& gcloud.cmd logging read 'labels."run.googleapis.com/execution_name"="…"'` 查詢，回傳 0 筆、沒有錯誤；改成時間範圍的條件後，才報出 `Unparseable filter`。原因是 PowerShell 呼叫 `.cmd` 時把引數裡的雙引號剝掉了。第一次的 0 筆**不是**日誌尚未寫入，這一點差點被誤判。改正方式是把雙引號寫成 `\"`，之後查到 31 筆，其中 `C76 ` 開頭的 29 筆存為 `output/c76/r4.jsonl`（Git 忽略）。另外 2 筆是平台訊息（`exit(0)`，以及一筆 `jsonPayload` 為空的項目）。**往後在 PowerShell 下查日誌，0 筆的結果要先懷疑過濾條件。**
+
+**各批**：`run_job` 分成 3 批。第二批同時含台股與美股，所以一批跨市場共用預算（`2a94be4`）在雲端上實際執行到了。
+
+| run | 狀態 | 檔數 | 內容 | 開始（台北） | 結束（台北） | 牆鐘（秒） |
+|---|---|---|---|---|---|---|
+| `717bace7-…` | completed | 5 | 2330、2317、0050、6488、3529 | 10:51:47 | 10:52:06 | 18.401 |
+| `676eba17-…` | completed | 5 | 006201、AAPL、MSFT、BRK.B、VOO | 10:52:06 | 10:52:20 | 13.656 |
+| `9f3a7ef5-…` | completed | 1 | QQQ | 10:52:20 | 10:52:23 | 2.723 |
+
+**逐次嘗試**（每檔一次，全部 `success`；旗標為抓取當下存入的）：
+
+| 代號 | elapsed_ms | price | price_kind | quote_time（台北） | trading_date | session | delay | 存入旗標 |
+|---|---|---|---|---|---|---|---|---|
+| 2330 | 7448 | 2475.0 | last_trade | 09-24 13:30:08 | 2026-09-24 | unknown | 1200 | market_closed, session_unknown |
+| 2317 | 2518 | 250.5 | last_trade | 09-24 13:30:04 | 2026-09-24 | closed | 1200 | market_closed |
+| 0050 | 2479 | 112.4 | last_trade | 09-24 13:30:04 | 2026-09-24 | closed | 1200 | market_closed |
+| 6488 | 2696 | 948.0 | last_trade | 09-24 13:30:04 | 2026-09-24 | closed | 1200 | market_closed |
+| 3529 | 2558 | 3230.0 | last_trade | 09-24 13:30:32 | 2026-09-24 | unknown | 1200 | market_closed, session_unknown |
+| 006201 | 2520 | 46.17 | last_trade | 09-24 13:30:39 | 2026-09-24 | unknown | 1200 | market_closed, session_unknown |
+| AAPL | 2746 | 341.07 | last_trade | 09-26 04:00:01 | 2026-09-25 | closed | 0 | market_closed |
+| MSFT | 2556 | 516.17 | last_trade | 09-26 04:00:01 | 2026-09-25 | closed | 0 | market_closed |
+| BRK.B | 2560 | 505.48 | last_trade | 09-26 04:00:03 | 2026-09-25 | closed | 0 | market_closed |
+| VOO | 2581 | 710.79 | last_trade | 09-26 04:00:00 | 2026-09-25 | closed | 0 | market_closed |
+| QQQ | 2525 | 744.5 | last_trade | 09-26 04:00:00 | 2026-09-25 | closed | 0 | market_closed |
+
+**逐檔判定**：以 `scripts/c76_report.py` 產生草稿，並經人工核對。
+
+| 代號 | 估值旗標 | 頁面旗標 | 官方收盤 | 差 | 價格比對 | 不符之處 |
+|---|---|---|---|---|---|---|
+| 2330 | market_closed, session_unknown | cached, market_closed, session_unknown | 2475.00 | 0.00 | 相等 | 無 |
+| 2317 | market_closed | cached, market_closed | 250.50 | 0.00 | 相等 | 無 |
+| 0050 | market_closed | cached, market_closed | 112.40 | 0.00 | 相等 | 無 |
+| 6488 | market_closed | cached, market_closed | 948.00 | 0.00 | 相等 | 無 |
+| 3529 | market_closed, session_unknown | cached, market_closed, session_unknown | 3230.00 | 0.00 | 相等 | 無 |
+| 006201 | market_closed, session_unknown | cached, market_closed, session_unknown | 46.17 | 0.00 | 相等 | 無 |
+| AAPL | market_closed | cached, market_closed | — | — | 證據不足 | 無 |
+| MSFT | market_closed | cached, market_closed | — | — | 證據不足 | 無 |
+| BRK.B | market_closed | cached, market_closed | — | — | 證據不足 | 無 |
+| VOO | market_closed | cached, market_closed | — | — | 證據不足 | 無 |
+| QQQ | market_closed | cached, market_closed | — | — | 證據不足 | 無 |
+
+頁面 11 列都有市值，`failure_reason` 都是空的；頁面價格與本次抓到的價格一致。存入旗標帶 `freshness_unknown` 的有 0／11 檔：台股宣告延遲 1200 秒，美股宣告 0 秒。
+
+**人工核對時另外看到的，腳本的判定沒有涵蓋**：
+- **`session_unknown`：台股 6 檔中有 3 檔被標上**。這 3 檔的成交時間是 13:30:08、13:30:32、13:30:39；成交時間在 13:30:04 的另外 3 檔被判為 `closed`。`quality.py` 的 `assess` 把成交時間超過日曆收盤（XTAI 13:30）加 5 秒的報價標為 `session_unknown`。這是**已知且刻意保留的規則**：step 5 就記錄過 2330 在 13:30:08 被這樣標記，當時「未放寬規則」（`step-5-evidence.md`、`data-sources.md`）。**這次新知道的是影響範圍**：同一天的收盤成交時間可以晚到 13:30:39，6 檔中有 3 檔落在 5 秒之外。影響是這 3 檔的頁面都會帶 `session_unknown`。另外，`quoting.py` 的 `compare` 會把帶此旗標的報價判為「不可比較」，快取候選也會跳過它。R4 的市值計算沒有受影響。**要不要放寬這個規則是另一個決定，本場不處理**，只照實記錄。
+- **`price_kind` 在休市時仍為 `last_trade`**。Yahoo 轉接器對一般時段的成交價一律標 `last_trade`；休市時抓到的其實就是前一交易日的最後一筆成交，價格也等於官方收盤。計畫書的 R4 預期沒有要求 `price_kind`，這裡只是記下觀察。
+- **2330 的第一次請求耗時 7,448 毫秒**，其餘 10 檔在 2,479–2,746 毫秒之間。2330 是整個容器的第一次 Yahoo 請求，推測含連線與套件初始化，但**只有一個樣本，沒有拆開量**。本場的耗時不用來推 `refresh_max_tickers`，那是 R5 的工作。
+
 ### 本場寫入、待清除的資料
 
 | 資料 | 處置 |
@@ -353,6 +439,16 @@ export default {
 | 持股 | 未變動 |
 
 原始日誌存於本機 `output/c76/r1.jsonl`（Git 忽略）。
+
+**2026-09-26 補記：R4 寫入、待清除的資料**（上表是 R1 的）：
+
+| 資料 | 處置 |
+|---|---|
+| runs `717bace7-1c44-4874-b012-44194265a7b0`、`676eba17-90b2-4301-9dd6-dfc0114d167b`、`9f3a7ef5-6c40-4510-b5ba-69fbe5d3d8b1` | 列入清除清單 |
+| 更新工作 `3213a160-796b-4920-b71a-5126162f70f9` | 列入清除清單 |
+| 持股 | 存入 11 檔假持股，revision 由 0 變成 **1**。最後以 `C76_MODE=reset` 還原，屆時的 `C76_EXPECT_REVISION` 取最後一場印出的 revision |
+
+R4 原始日誌存於本機 `output/c76/r4.jsonl`（Git 忽略）。這台沒有 `r1.jsonl`，R1 的 manifest 以本檔的紀錄為準。
 
 ### 臨時資源（本節）
 
