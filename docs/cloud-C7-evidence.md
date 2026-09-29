@@ -315,6 +315,22 @@ export default {
 
 **對 R2–R5 的時間限制**：本 generation 於 **2026-09-30 08:15:21Z（台北 16:15）** 到期（168 小時）。到期後 `run_job` 會在更新報價時先重抓整份清單，把約 135 秒混進報價耗時。**R2–R5 必須在到期前完成**，否則要先重跑 R1。
 
+**2026-09-29 補記：第二次請求外清單更新（到期前）**。R3、R5 結束後，在執行它們的同一台以 pwsh 7 執行。**新 generation 尚未以資料庫核對**，下方的到期時間是依程式推得的，不是讀出的值。
+
+| 項目 | 值 |
+|---|---|
+| 執行前核對（台北 22:34） | `describe`：映像 `sha256:5ceea993…`（`218b4b962c5a`），command 為空，args 只有 `--refresh-catalog`，`finpo-runtime`、`timeoutSeconds` 600、`maxRetries` 0，與 09-23 建立時相同。最近一次 execution 為 09-23 的 `xmm8g`；`c76-source-probe` 最近一次為 R5 的 `h8cz4`，已完成。兩支 Job 都沒有執行中的 execution。Registry 仍有 `218b4b962c5a` |
+| 執行 | `gcloud run jobs execute finpo-catalog-refresh --region=asia-northeast1 --wait` |
+| execution | `finpo-catalog-refresh-mc22l`，`gcloud` 回報成功完成；日誌 3 筆：`Dashboard catalog refreshed.`、`Container called exit(0).`、一筆空白 INFO |
+| 觸發 → `--wait` 返回 | 14:35:15Z → 14:35:42Z（台北 22:35:15 → 22:35:42），26 秒 |
+| execution 開始 → 輸出「更新完成」 | 14:35:22.3Z → 14:35:35Z，**約 13 秒**。09-23 同一區間約 70.7 秒 |
+
+**快了約 58 秒，原因未查明**。`--refresh-catalog` 只在結束時輸出一行，抓取與寫入沒有分開計時，所以無法判斷是官方來源回應較快，還是其他原因。單一樣本，不據此修改任何時間預算。
+
+**為什麼推定已寫入新 generation**（讀程式碼得出，**未實測**）：`web.py` 的 `--refresh-catalog` 路徑不看現有清單是否過期，一律 `fetch_all` 後呼叫 `save_instrument_catalog`；後者（`storage.py`）每次都在同一個交易內插入新的 generation 與全部列，內容相同也不跳過；任何例外都會讓行程以非 0 結束、Job 記為失敗，本次為成功。依此推得新 generation 的 `expires_at` 略早於 **2026-10-06 14:35:35Z（台北 22:35）**，因為 `stamp` 是在插入前取的。
+
+**待補查**：讀出最新兩代 generation 的 `completed_at`、`expires_at` 與列數（09-23 為 13,427 筆），核對新一代確實存在、列數量級相符，且 R1 那一代依 `C5-6` 的保留規則處理。這台沒有專案 venv（`uv` 為 0.9.11，專案要求 0.12.10），**使用者決定之後再補查**。補查前，不得宣稱清單已延期到上述時間。
+
 ### R4 參考資料（2026-09-25 取得，R4 尚未執行）
 
 這是 R4 的比對基準，不是 R4 的結果。取得時間為 2026-09-25 05:33:46Z（台北 13:33），網路為本機，不是 GCP；依計畫書，參考資料從哪個網路取得都可以。原始回應存於本機 `output/c76/r4-reference/`（Git 忽略）。
