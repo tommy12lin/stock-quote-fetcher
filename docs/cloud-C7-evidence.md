@@ -13,7 +13,7 @@
 | `C7-3` 入口驗證與繞過測試 | ⬜ 未開始 | 承接 `C3-3` 的雲端驗收 |
 | `C7-4` 功能驗收 | ⬜ 未開始 | |
 | `C7-5` 持久性驗收 | ⬜ 未開始 | 承接 `C4` 的雲端完成條件 |
-| `C7-6` 外部來源驗收 | 🟡 進行中 | **R1、R4 已完成**，見下文。**2026-09-29 R2 已執行**：GCP 11/11 抓價成功，台股 6 檔為當日一般時段，但 MIS 嚴格逐秒對齊為 0/6，價格正確性證據不足；R3、R5 未執行。 |
+| `C7-6` 外部來源驗收 | 🟡 進行中 | **R1、R4 已完成**，見下文。**2026-09-29 R2 已執行**：GCP 11/11 抓價成功，台股 6 檔為當日一般時段，但 MIS 嚴格逐秒對齊為 0/6，價格正確性證據不足；~~R3、R5 未執行~~。**同日晚上 R3、R5 已執行**：R3 美股 5 檔取得當日一般時段成交（價格正確性證據不足），台股 6 檔等於 09-29 官方收盤；R5 截斷收尾正確，`c` 為 3.967（含暖機）／2.947（不含第 1 批）秒／檔，**`refresh_max_tickers` 待使用者決定**。五場都沒有 429。尚待收尾（清單更新、`reset`、`purge`、刪除 Job）。 |
 | `C7-7` 營運驗收 | 🟡 部分 | **冷啟動已提前量測**（本檔），其餘（匯出還原、回滾、計費、抓價耗時）未開始；含 `C1-8` 的預算通知送達 |
 
 ## C7-2　代理逾時量測
@@ -516,6 +516,216 @@ R4 原始日誌存於本機 `output/c76/r4.jsonl`（Git 忽略）。這台沒有
 | `tpex-6488-20260929.json` | `0783cef9dceb93e0d7326ba8501a675b8a931ee0f4fe7528762e205fde0eb335` |
 | `tpex-3529-20260929.json` | `82597c19369de2da9461ee73c981529144015b4625bb55d754ed6eecc9792785` |
 | `tpex-006201-20260929.json` | `a224f06bfd235ccdbbd723a15ff82e40c999b2237067ccbbc3c311872fca144c` |
+
+### R3　美股盤中（2026-09-29）
+
+**結論：美股 5 檔取得當日一般時段成交，台股 6 檔價格等於 09-29 官方收盤。** 美股 5 檔都是 `last_trade`、`trading_date` 09-29、`session=regular`，成交時間在紐約 10:01:45–10:01:57，存入、估值、頁面三層都沒有 `market_closed` 或 `stale`。這是本專案**第一次**觀測到美股盤中的抓價結果。**美股價格正確性仍為證據不足**：沒有比較來源（2026-09-25 使用者決定）。台股 6 檔都帶 `market_closed`、`trading_date` 為 09-29，價格與「R3 參考資料」表**完全相等**。沒有 429、封鎖或逾時。只有一個樣本。
+
+**執行機器**：本 repo 的這個工作目錄（執行 R4 的那台），pwsh 7.6.6，`gcloud` 解析為 `gcloud.ps1`，帳號與 project 經 `gcloud config list` 核對為 `finpo-508709`。R2 在另一台執行；兩台沒有同時執行 probe 或清單更新。
+
+**執行前核對**（台北 21:34，觸發前 22:00:38 再核一次 execution 清單與映像）：
+
+| 核對項 | 結果 |
+|---|---|
+| command／args | `/app/.venv/bin/python`；`-c` 與 `exec(…C76_PROBE…)`，共 2 個 |
+| `C76_PROBE` | 11,068 字元，解碼後 git blob `2c87174d4da9794750f0b14e390002d442d83787`，與 `96a8dbd`、`HEAD` 的 `scripts/c76_probe.py` 相同 |
+| 映像 | `sha256:5ceea993…`（`218b4b962c5a`）；Registry 內為 `b6347e610e87`、`244fd00583bb`、`218b4b962c5a` 三個，`06e2df807527` 已被清除政策刪除，沒有 Job 使用它 |
+| 身分／規格 | `finpo-runtime`、`timeoutSeconds` 600、`maxRetries` 0。Job 預設 `C76_MODE=catalog`、未設 `C76_TICKERS`，執行時覆寫 |
+| 最近一次 execution | `c76-source-probe` 為 R2 的 `p7jrp`（已完成）；`finpo-catalog-refresh` 只有 09-23 的 `xmm8g`。兩者都沒有執行中的 execution |
+
+**執行**：`gcloud run jobs execute c76-source-probe --region=asia-northeast1 --update-env-vars="C76_MODE=refresh,C76_TICKERS=fixed" --wait`（值加雙引號，原因見計畫書「R3 執行準備」）
+
+| 項目 | 值 |
+|---|---|
+| execution | `c76-source-probe-dnxnv`，`gcloud` 回報成功完成 |
+| 觸發 → 腳本開始 | 14:00:59Z → 14:01:18.4Z（台北 22:00:59 → 22:01:18），約 19 秒。R4 為 31 秒 |
+| execution 完成 | 14:02:03.4Z；`--wait` 在台北 22:02:06 返回（觸發後 67 秒） |
+| instance | `f9c5d646-a353-43cd-b7d0-926ebb3efd44` |
+| deadline／max_tickers | 110／0 |
+| 更新工作 | `aa60a176-7045-4294-a93b-c051a210ef6b`，`succeeded`，「已完成：11/11 檔有可用報價」 |
+| `refresh()` 耗時 | 40.464 秒 |
+| **portfolio revision**（最後 `reset` 用） | **3**（R2 之後為 2，與預期一致） |
+| **manifest**（併入清除清單） | `{"runs": ["6443d6c2-7c1b-4e1d-8f36-c05bec3b49e6", "7010f9ff-b832-41db-bd0a-585b7ffd0d3a", "ba7ca41d-4952-492b-8be0-09cc359dddea"], "refresh_jobs": ["aa60a176-7045-4294-a93b-c051a210ef6b"]}` |
+| 錯誤行 | 0 |
+
+**取日誌**：以計畫書「R3 執行準備」的 pwsh 7 寫法，第一次查詢即得 31 筆，其中 `C76 ` 開頭 29 筆：`start` 1、`batch` 3、`attempt` 11、`view` 11、`portfolio` 1、`job` 1、`manifest` 1、`error` 0，與預期相同。存為 `output/c76/r3.jsonl`（Git 忽略），SHA-256 `f0a3b45e72843de0dcbf019d48087e217c8b0a8a91c6d9f7d94863d0c380a0e5`。這台取得的 `job.message` 中文正常顯示；R2 在另一台取得時顯示為 `?`，因此字元流失較可能發生在那台的取得或顯示環節，**未查證**。
+
+**各批**：第二批同時含台股與美股，跨市場共用預算在雲端第二次實際執行到（第一次為 R4），兩次都沒有截斷。
+
+| run | 狀態 | 檔數 | 內容 | 開始（台北） | 結束（台北） | 牆鐘（秒） |
+|---|---|---|---|---|---|---|
+| `7010f9ff-…` | completed | 5 | 2330、2317、0050、6488、3529 | 22:01:21.3 | 22:01:40.9 | 19.647 |
+| `6443d6c2-…` | completed | 5 | 006201、AAPL、MSFT、BRK.B、VOO | 22:01:41.2 | 22:01:56.8 | 15.580 |
+| `ba7ca41d-…` | completed | 1 | QQQ | 22:01:57.1 | 22:02:00.1 | 3.036 |
+
+**逐次嘗試**（每檔一次，全部 `success`；旗標為抓取當下存入的；表格由 `r3.jsonl` 以程式產生，未手抄）：
+
+| 代號 | elapsed_ms | price | price_kind | quote_time | trading_date | session | marketState | delay | 存入旗標 |
+|---|---|---|---|---|---|---|---|---|---|
+| 2330 | 7539 | 2475.0 | last_trade | 09-29 13:30:09（台北） | 2026-09-29 | unknown | POSTPOST | 1200 | market_closed, session_unknown |
+| 2317 | 2838 | 250.5 | last_trade | 09-29 13:30:04（台北） | 2026-09-29 | closed | POSTPOST | 1200 | market_closed |
+| 0050 | 2893 | 111.3 | last_trade | 09-29 13:30:04（台北） | 2026-09-29 | closed | POSTPOST | 1200 | market_closed |
+| 6488 | 2954 | 945.0 | last_trade | 09-29 13:30:04（台北） | 2026-09-29 | closed | POSTPOST | 1200 | market_closed |
+| 3529 | 2908 | 3305.0 | last_trade | 09-29 13:30:31（台北） | 2026-09-29 | unknown | POSTPOST | 1200 | market_closed, session_unknown |
+| 006201 | 2960 | 46.0 | last_trade | 09-29 13:30:39（台北） | 2026-09-29 | unknown | POSTPOST | 1200 | market_closed, session_unknown |
+| AAPL | 3147 | 333.015 | last_trade | 09-29 10:01:45（紐約） | 2026-09-29 | regular | REGULAR | 0 | 無 |
+| MSFT | 2834 | 504.4082 | last_trade | 09-29 10:01:49（紐約） | 2026-09-29 | regular | REGULAR | 0 | 無 |
+| BRK.B | 3053 | 502.15 | last_trade | 09-29 10:01:49（紐約） | 2026-09-29 | regular | REGULAR | 0 | 無 |
+| VOO | 3038 | 703.42 | last_trade | 09-29 10:01:51（紐約） | 2026-09-29 | regular | REGULAR | 0 | 無 |
+| QQQ | 2880 | 738.22 | last_trade | 09-29 10:01:57（紐約） | 2026-09-29 | regular | REGULAR | 0 | 無 |
+
+**逐檔判定**：人工判定，**未使用** `c76_report.py` 的逐檔判定（它是 R4 專用的，見計畫書）。判定依據是計畫書 R3 準備段的預期，以及 09-29 補記改過的台股預期。
+
+| 代號 | 估值旗標 | 頁面旗標 | 官方收盤 | 價格比對 | 不符之處 |
+|---|---|---|---|---|---|
+| 2330 | market_closed, session_unknown | cached, market_closed, session_unknown | 2475.00 | 相等，且 `trading_date` 為 09-29 | 無 |
+| 2317 | market_closed | cached, market_closed | 250.50 | 相等，且 `trading_date` 為 09-29 | 無 |
+| 0050 | market_closed | cached, market_closed | 111.30 | 相等 | 無 |
+| 6488 | market_closed | cached, market_closed | 945.00 | 相等 | 無 |
+| 3529 | market_closed, session_unknown | cached, market_closed, session_unknown | 3305.00 | 相等 | 無 |
+| 006201 | market_closed, session_unknown | cached, market_closed, session_unknown | 46.00 | 相等 | 無 |
+| AAPL | 無 | cached | — | 證據不足 | 無 |
+| MSFT | 無 | cached | — | 證據不足 | 無 |
+| BRK.B | 無 | cached | — | 證據不足 | 無 |
+| VOO | 無 | cached | — | 證據不足 | 無 |
+| QQQ | 無 | cached | — | 證據不足 | 無 |
+
+頁面 11 列都有市值，`failure_reason` 都是空的；頁面價格與本次抓到的價格一致（0 筆不符）。存入旗標帶 `freshness_unknown` 的有 0／11 檔。美股從成交到接收為 1–5 秒，宣告延遲 0 秒；頁面層在更新結束後重新判定，也沒有出現 `stale`。R3 準備段曾推測頁面層較容易出現 `stale`，本場沒有發生，只有一個樣本。
+
+**人工核對時另外看到的**：
+- **`session_unknown` 又是 2330、3529、006201 這三檔**，成交時間 13:30:09、13:30:31、13:30:39；另 3 檔為 13:30:04、判為 `closed`。與 R4 的規則說明一致（日曆收盤加 5 秒之外即標記）。今晚是 09-29 的收盤、不是 R4 那一筆報價，事前沒有預期，這裡只記下觀察。
+- **2330 的第一次請求耗時 7,539 毫秒**，其餘 10 檔 2,834–3,147 毫秒。與 R4（7,448 毫秒）相同，都是容器的第一次 Yahoo 請求。
+- 台股 `marketState` 為 `POSTPOST`，美股為 `REGULAR`。這是 Yahoo 回應的原始欄位，程式不以它判定休市。
+
+### R5　吞吐量（2026-09-29）
+
+**結論：截斷行為正確，`c` 已量得，`refresh_max_tickers` 的候選值待使用者決定。** 110 秒 deadline 截斷後，更新工作為 `partial`，訊息正確提示未處理的檔數與「再次更新會優先處理」；`refresh()` 耗時 110.034 秒，超出 110 秒 0.034 秒，在算式預留的 3 秒內，整個 `run_job` 在 118.5 秒內結束。沒有 429 或封鎖。**處理到的 40 檔全是台股**（09-26 的推估是約 40 檔、幾乎全為台股，實際 40 檔、美股 0 檔），所以 `c` 是**台股**的單檔成本，而且是在**台股休市時**量得的。
+
+**時段與前提**：R3 同一晚。R3 沒有任何非成功的嘗試（沒有 `rate_limited` 或 `http_429`），R3 的 `--wait` 於 22:02:06 返回，R5 於 22:04:54 觸發，間隔約 2 分 48 秒，大於計畫書要求的 2 分鐘。
+
+**執行前核對**（22:04:31）：映像仍為 `sha256:5ceea993…`，command 為 `/app/.venv/bin/python`；Registry 仍有 `218b4b962c5a`；最新 execution 為 R3 的 `dnxnv`（已完成），`finpo-catalog-refresh` 沒有新的 execution。
+
+**執行**：`gcloud run jobs execute c76-source-probe --region=asia-northeast1 --update-env-vars="C76_MODE=refresh,C76_TICKERS=wide:150" --wait`
+
+| 項目 | 值 |
+|---|---|
+| execution | `c76-source-probe-h8cz4`，`gcloud` 回報成功完成；容器日誌為 `Container called exit(0).` |
+| 觸發 → 腳本開始 | 14:04:54Z → 14:05:10.1Z（台北 22:04:54 → 22:05:10），約 16 秒 |
+| execution 完成 | 14:07:07.3Z；`--wait` 在台北 22:07:08 返回（觸發後 134 秒） |
+| instance | `07b3f9bf-7508-45d6-ad23-8e4ed977cc5c` |
+| deadline／max_tickers | 110／0 |
+| 更新工作 | `b73cf54f-291d-4212-9361-77964821859b`，**`partial`**，「已完成：34/150 檔有可用報價；110 檔未在時限內處理，再次更新會優先處理這些標的」 |
+| `refresh()` 耗時 | 110.034 秒（`refresh_started_at` 22:05:11.416） |
+| **portfolio revision**（最後 `reset` 用） | **4** |
+| **manifest**（併入清除清單） | `{"runs": ["5b7256be-9a86-4a43-8ae6-6ce85f71ffe6", "741c85e1-301c-415c-97eb-a6cd2ef9c2f4", "9827b751-21e6-44a5-9974-0dc71dce2060", "cda3fe06-76a4-46a4-a6e9-6db30c8c0a65", "dd4c883f-109a-443c-964e-27cb3018f4d0", "e2796bcf-eec2-483b-b1dd-07c05e6907ee", "e6d0122f-a906-4d11-89d4-a14328cd9390", "eb32caa4-c495-4dad-88eb-fa6faa78f648"], "refresh_jobs": ["b73cf54f-291d-4212-9361-77964821859b"]}` |
+| 錯誤行 | 0 |
+
+**取日誌**：第一次查詢即得 204 筆，其中 `C76 ` 開頭 202 筆：`start` 1、`batch` 8、`attempt` 40、`view` 150、`portfolio` 1、`job` 1、`manifest` 1、`error` 0，與預期相符（`view` 150、`portfolio` 1、`attempt` 不是 150）。另 2 筆為 `exit(0)` 與一筆空白 INFO。存為 `output/c76/r5.jsonl`（Git 忽略），SHA-256 `cca6c999686613561a995303db748731be5a7381c4fee3e7667933fb80116a5f`。
+
+**150 檔名單**（`wide:150`，`portfolio` 行記錄的順序；前 75 檔為台股、後 75 檔為美股）：
+
+2897 6790 6146 8176 3693 2441 1733 4147 4426 00743 009823 4133 00637L 3419 7740 6831 00870B 1615 5410 8429 9927 00400A 3228 4523 5529 8271 5604 1795 5533 6184 6517 00753L 1476 1453 00756B 2254 00902 5902 3018 00875 6506 3150 5236 6739 3713 6908 5543 008201 3581 6496 4419 2751 4746 2816 00787B 2380 3141 1710 5481 3128 00663L 00862B 3443 00972 1528 6508 3679 3592 4102 8929 3526 6148 8473 6144 2890 GRAN UPV ESRT DDFJ RRR FRTT NTRB EMLP IBMR IGR IVW CCM AESG ALK SHE NSIT JUCY XDIV CHOW GGUS XBAP UBOT BOIL FPS ALM GRNI JHMB GK EXPD JOBY QBIG JHX R BJ XIJN BFJA XMPT JUNM DDFF WDRN GDTC RDIV UHAL TCBS TRUI SHLD XTJA OCDB BMSI DJUL TDS PG HCIC JPRE PEXL GCAL JACK AGIX NVYY GDL PNI TMSF TGS DLX NEXA VEMY TLTX FIMU SMC PXH EES EROC KAI TENJ XJR
+
+以頁面列的市場欄核對：前 75 檔全為 TW、後 75 檔全為 US；名單與固定 11 檔沒有重疊。實際處理到的恰為名單的前 40 檔，順序相同。
+
+**計算**：`pwsh -NoProfile -File docs/c76-r5-calc.ps1 -Log output/c76/r5.jsonl`，定義見計畫書「R5 執行準備」。`c` = 該批牆鐘 ÷ 檔數；`c'` 把該批之後的空檔併入。
+
+| 批 | run | 檔數 | 嘗試 | 牆鐘（秒） | 其後空檔（秒） | `c` | `c'` | 預算截斷 | 排除 |
+|---|---|---|---|---|---|---|---|---|---|
+| 1 | `dd4c883f-…` | 5 | 5 | 19.84 | 0.24 | 3.97 | 4.02 | 0 | 否 |
+| 2 | `741c85e1-…` | 5 | 5 | 14.73 | 0.24 | 2.95 | 3.00 | 0 | 否 |
+| 3 | `9827b751-…` | 5 | 5 | 13.97 | 0.21 | 2.79 | 2.84 | 0 | 否 |
+| 4 | `5b7256be-…` | 5 | 5 | 13.71 | 0.25 | 2.74 | 2.79 | 0 | 否 |
+| 5 | `e2796bcf-…` | 5 | 5 | 14.31 | 0.24 | 2.86 | 2.91 | 0 | 否 |
+| 6 | `eb32caa4-…` | 5 | 5 | 13.96 | 0.23 | 2.79 | 2.84 | 0 | 否 |
+| 7 | `e6d0122f-…` | 5 | 5 | 13.84 | 0.26 | 2.77 | 2.82 | 0 | 否 |
+| 8 | `cda3fe06-…` | 5 | 5 | 2.38 | — | — | — | 4 | **是**（含 `cycle_budget_exhausted`） |
+
+| 量 | 值 |
+|---|---|
+| `F`（第一批開始 − `refresh_started_at`，「`run_job` 開始到第一批開始」的上界） | 1.470 秒（R4 為 1.604，11 檔） |
+| `W`（最後一批結束 → `refresh()` 返回） | 0.135 秒 |
+| `refresh()` 超出 110 秒的部分 | 0.034 秒（含進入 `run_job` 之前的時間） |
+| 用於 `c` 的批數 | 7／8 |
+| `c`（p95，最近排名法；7 批時即最大值，為第 1 批） | 3.967 秒／檔 → `floor((110 − F) ÷ c)` = **27** |
+| `c`，不含第 1 批（6 批，最大值為第 2 批） | 2.947 秒／檔 → **36** |
+| `c'`（p95，含空檔） | 4.016 秒／檔 → **27** |
+
+**`refresh_max_tickers` 未決定**。候選為 27（含第 1 批的暖機，計畫書原定取法）、36（不含第 1 批），或維持 `0`（只由 deadline 約束；本場證明截斷時會正確收尾，這個選項也有數據支持）。依計畫書，用哪一個由使用者決定；決定前**不寫入** `deploy/cloud.toml`（`D3`）。
+
+**逐次嘗試**（表格由 `r5.jsonl` 以程式產生，未手抄；旗標為抓取當下存入的）：
+
+| 批 | 代號 | status | reason | executed | elapsed_ms | price | quote_time（台北） | session | 存入旗標 |
+|---|---|---|---|---|---|---|---|---|---|
+| 1 | 2897 | success | — | true | 7973 | 10.95 | 09-29 13:30:16 | unknown | market_closed, session_unknown |
+| 1 | 6790 | success | — | true | 2915 | 37.6 | 09-29 13:30:24 | unknown | market_closed, session_unknown |
+| 1 | 6146 | success | — | true | 2811 | 180.0 | 09-29 13:30:28 | unknown | market_closed, session_unknown |
+| 1 | 8176 | success | — | true | 2981 | 9.78 | 09-29 13:30:21 | unknown | market_closed, session_unknown |
+| 1 | 3693 | success | — | true | 2752 | 702.0 | 09-29 13:30:18 | unknown | market_closed, session_unknown |
+| 2 | 2441 | success | — | true | 2850 | 122.0 | 09-29 13:30:38 | unknown | market_closed, session_unknown |
+| 2 | 1733 | success | — | true | 2696 | 29.45 | 09-29 13:30:16 | unknown | market_closed, session_unknown |
+| 2 | 4147 | success | — | true | 2727 | 63.0 | 09-29 13:30:11 | unknown | market_closed, session_unknown |
+| 2 | 4426 | success | — | true | 3014 | 7.61 | 09-29 13:30:31 | unknown | market_closed, session_unknown |
+| 2 | 00743 | invalid_payload | normalization_failed | true | 3040 | — | — | — | — |
+| 3 | 009823 | success | — | true | 2728 | 10.43 | 09-29 13:30:18 | unknown | market_closed, session_unknown |
+| 3 | 4133 | success | — | true | 2800 | 20.45 | 09-29 13:30:01 | closed | market_closed |
+| 3 | 00637L | success | — | true | 2691 | 18.17 | 09-29 13:30:05 | closed | market_closed |
+| 3 | 3419 | success | — | true | 2743 | 11.8 | 09-29 13:30:35 | unknown | market_closed, session_unknown |
+| 3 | 7740 | success | — | true | 2636 | 102.0 | 09-29 13:30:26 | unknown | market_closed, session_unknown |
+| 4 | 6831 | success | — | true | 2619 | 492.0 | 09-29 13:30:37 | unknown | market_closed, session_unknown |
+| 4 | 00870B | success | — | true | 2674 | 26.22 | 09-29 11:03:43 | closed | market_closed, stale |
+| 4 | 1615 | success | — | true | 2663 | 42.6 | 09-29 13:30:35 | unknown | market_closed, session_unknown |
+| 4 | 5410 | success | — | true | 2644 | 33.2 | 09-29 13:30:08 | unknown | market_closed, session_unknown |
+| 4 | 8429 | success | — | true | 2731 | 5.85 | 09-29 13:30:36 | unknown | market_closed, session_unknown |
+| 5 | 9927 | success | — | true | 2753 | 69.9 | 09-29 13:30:23 | unknown | market_closed, session_unknown |
+| 5 | 00400A | success | — | true | 2984 | 15.51 | 09-29 13:30:05 | closed | market_closed |
+| 5 | 3228 | success | — | true | 2674 | 180.0 | 09-29 13:30:12 | unknown | market_closed, session_unknown |
+| 5 | 4523 | success | — | true | 2842 | 23.85 | 09-29 13:30:01 | closed | market_closed |
+| 5 | 5529 | success | — | true | 2669 | 26.5 | 09-29 13:30:01 | closed | market_closed |
+| 6 | 8271 | success | — | true | 2750 | 199.5 | 09-29 13:30:27 | unknown | market_closed, session_unknown |
+| 6 | 5604 | success | — | true | 2673 | 30.95 | 09-29 13:30:39 | unknown | market_closed, session_unknown |
+| 6 | 1795 | success | — | true | 2642 | 177.5 | 09-29 13:30:27 | unknown | market_closed, session_unknown |
+| 6 | 5533 | success | — | true | 2706 | 13.85 | 09-29 13:30:38 | unknown | market_closed, session_unknown |
+| 6 | 6184 | success | — | true | 2794 | 40.1 | 09-29 13:30:21 | unknown | market_closed, session_unknown |
+| 7 | 6517 | success | — | true | 2623 | 62.8 | 09-29 13:30:01 | closed | market_closed |
+| 7 | 00753L | success | — | true | 2703 | 8.61 | 09-29 13:30:02 | closed | market_closed |
+| 7 | 1476 | success | — | true | 2736 | 273.0 | 09-29 13:30:01 | closed | market_closed |
+| 7 | 1453 | success | — | true | 2769 | 10.8 | 09-29 13:30:05 | closed | market_closed |
+| 7 | 00756B | success | — | true | 2618 | 29.14 | 09-29 13:30:34 | unknown | market_closed, session_unknown |
+| 8 | 2254 | timeout | operation_deadline | true | 1992 | — | — | — | — |
+| 8 | 00902 | timeout | cycle_budget_exhausted | false | 0 | — | — | — | — |
+| 8 | 5902 | timeout | cycle_budget_exhausted | false | 0 | — | — | — | — |
+| 8 | 3018 | timeout | cycle_budget_exhausted | false | 0 | — | — | — | — |
+| 8 | 00875 | timeout | cycle_budget_exhausted | false | 0 | — | — | — | — |
+
+34 筆成功的 `trading_date` 都是 09-29、都帶 `market_closed`；`elapsed_ms` 為 2,618–7,973，中位數 2,731。頁面 150 列中，34 列有價格且與本次抓到的一致；台股 41 列、美股 75 列沒有價格，`failure_reason` 為 `missing_quote`。存入旗標帶 `freshness_unknown` 的有 0 檔。
+
+**非成功的嘗試，逐筆說明**：
+- **4 筆 `timeout | cycle_budget_exhausted | executed=false`**（00902、5902、3018、00875）：預期中的預算截斷，沒有向來源送出請求。
+- **2254：`timeout | operation_deadline | executed=true`，1,992 毫秒**。請求確實送出了。程式把單次抓取的時限設為剩餘預算與 `operation_timeout_seconds`（10 秒）取小者（`quoting.py` 的 `self.fetch(…, min(remaining, …))`），子程序逾時即回 `operation_deadline`（`providers.py`）。這次抓取開始於 22:06:58.988，距 `refresh()` 的 deadline（22:07:01.416）約 2.4 秒；子程序實際在 1,992 毫秒時結束，也就是拿到的時限約 2 秒，而本場成功嘗試的最短耗時為 2,618 毫秒。因此判定為**整體 deadline 截斷了一筆進行中的請求**，不是 Yahoo 的 10 秒逾時。這是依程式與時間點的推論；Yahoo 那一筆本來是否較慢，無從證明。它在第 8 批，第 8 批整批不計入 `c`。
+- **00743：`invalid_payload | normalization_failed | executed=true`，3,040 毫秒**。回應可解析，但 `symbol`、`regularMarketPrice` 等 8 個欄位全為 null。00743 在官方清單中（頁面顯示名稱「國泰中國A150」）；Yahoo 為何回空欄位（已下市、代號對應不同或暫時性）**未查證**。它有實際送出請求，依計畫書計入 `c`（在第 2 批）。
+- 沒有 `rate_limited`、`http_429`，也沒有 `content_type` 之類的封鎖跡象。
+
+**人工核對時另外看到的**：
+- **`session_unknown` 出現在 24／34 檔**。帶此旗標的成交時間為 13:30:08–13:30:39，沒有帶的為 13:30:01–13:30:05（另有 00870B 見下）。這與 R4 記下的規則（日曆收盤加 5 秒之外即標記）一致，並把 R4「6 檔中 3 檔」的影響範圍擴大到一個較大的樣本：本場 33 檔收盤成交中，有 24 檔落在 5 秒之外。是否放寬規則仍是另一個決定，本場不處理。
+- **00870B 帶 `stale`**：最後成交在 09-29 11:03:43，`session=closed`、宣告延遲 1200 秒。這是檔低成交量的標的，當天午後可能沒有成交，但 `stale` 的觸發條件**未逐條對照 `quality.py` 核對**，也沒有獨立的成交資料佐證。
+- **第一次請求（2897）耗時 7,973 毫秒**，與 R3、R4 的第一檔（7.5、7.4 秒）同一量級。這使第 1 批的 `c` 為 3.97，其他批為 2.74–2.95。暖機在 `min-instances=0` 下每次冷啟動都要付一次，但只付一次，所以另外列出不含第 1 批的值。
+
+**本場量不到的**，不得因本場而宣稱：
+- **美股的單檔成本**：處理到的 40 檔全是台股。R3 的美股逐檔 `elapsed_ms` 為 2,834–3,147，R4 為 2,525–2,746，只能作為**旁證**，而且 `elapsed_ms` 不含批次內的寫入，量法與 `c` 不同。
+- **一批含兩個市場時的截斷**：本場沒有跨市場的批。
+- **台股盤中的單檔成本**：本場在台股收盤後執行，Yahoo 對盤中標的的回應速度是否不同，未量測。
+- **請求路徑上進入 `run_job` 之前的時間**：125 秒的邊緣上限從請求進來就開始算，本場只給出上界 `F`。正式路徑的端到端由 `C7-2`、`C7-4` 確認。
+
+### R3、R5 寫入、待清除的資料
+
+| 資料 | 處置 |
+|---|---|
+| R3 runs `7010f9ff-b832-41db-bd0a-585b7ffd0d3a`、`6443d6c2-7c1b-4e1d-8f36-c05bec3b49e6`、`ba7ca41d-4952-492b-8be0-09cc359dddea`；更新工作 `aa60a176-7045-4294-a93b-c051a210ef6b` | 列入清除清單 |
+| R5 runs（8 筆，見上方 manifest）；更新工作 `b73cf54f-291d-4212-9361-77964821859b` | 列入清除清單 |
+| 持股 | R3 後 revision 為 3，R5 存入 150 檔後為 **4**。收尾時 `C76_MODE=reset` 以 `C76_EXPECT_REVISION=4` 還原，除非之後又有場次 |
+
+至此，清除清單包含 R1、R2、R3、R4、R5 五場的 manifest。五場都沒有 429，預期不會有仍由這些嘗試維持的來源冷卻；`cloud_db purge` 本身也會檢查，遇到時整筆拒絕。
 
 ## C7-7（提前執行）　冷啟動量測
 
