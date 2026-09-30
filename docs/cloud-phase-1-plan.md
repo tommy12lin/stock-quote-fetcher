@@ -4,7 +4,7 @@
 > - `worker/index.js` 是 `/api/*` 代理，`wrangler.jsonc` 是 `finpo` 的設定。它們只在本機測試過，**沒有部署、沒有動 `finpo`**，`C1-6` 的 canary 仍在。部署與 `C7-1` 一起做。
 > - `tests/worker.test.mjs` 為 8 passed。跨語言那組用後端的 `web_auth.Auth` 驗 Worker 送出的簽章，含反面案例。注入 11 種錯誤，10 種會被抓到；抓不到的那種碰不到，理由見 C7 證據。
 > - **界線**：測試跑在 Node，不是 Workers 執行環境。GFE 會不會改寫路徑、在 Workers 裡設定 `Origin` 標頭會不會生效、5 MiB 上傳的 CPU 耗時、`compatibility_date`，都**未實測**。
-> - 推送 Worker 檔案原本會觸發映像建置，多用掉一個回滾窗口。使用者決定把這些檔案加進建置的 `paths-ignore`，改 workflow 的那次提交仍會建置一次。
+> - 推送 Worker 檔案原本會觸發映像建置，多用掉一個回滾窗口。使用者決定把這些檔案加進建置的 `paths-ignore`，改 workflow 的那次提交仍會建置一次。**同日補記**：已推送（`f903fab`、`c88b258`），建置 run `36694568081` 成功，產出映像 `c88b258728f4`，沒有服務或 Job 使用它。`244fd00583bb` 因此出了保留窗口，**服務與 `finpo-catalog-refresh` 用的映像都還在窗口內**。**下一次推程式變更會擠掉 `ab1667ccf7f7`**，也就是 `finpo-catalog-refresh` 的映像；推送前要先把該 Job 改指向較新的映像並以 `describe` 核對。`paths-ignore` 是否生效，要等第一次只改 Worker 檔案的推送才看得到。
 > - **新立 `C7-8`**：Worker 驗證 Access JWT。現在 Worker 替任何到得了它的請求簽章，Access 被誤關就等於繞過後端驗證。尚未排入順序。
 >
 > 詳見 [C7 證據](cloud-C7-evidence.md)「`C7-2` 代理程式（本機）」節。
