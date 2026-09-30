@@ -515,7 +515,7 @@ R4 原始日誌存於本機 `output/c76/r4.jsonl`（Git 忽略）。這台沒有
 
 | 資源 | 狀態 |
 |---|---|
-| Cloud Run Job `c76-source-probe` | **存在**，待 R2–R5 與清除完成後刪除。2026-09-23 映像由 `06e2df807527` 改為 `218b4b962c5a` |
+| Cloud Run Job `c76-source-probe` | ~~**存在**，待 R2–R5 與清除完成後刪除。~~2026-09-23 映像由 `06e2df807527` 改為 `218b4b962c5a`。**2026-09-30 補記：已刪除**（03:30Z），見「收尾」節 |
 | Cloud Run Job `finpo-catalog-refresh` | **保留**：這是請求外清單更新的執行者，不是臨時資源（`C6-3`） |
 
 ### R2　台股盤中（2026-09-29）
@@ -784,7 +784,40 @@ R4 原始日誌存於本機 `output/c76/r4.jsonl`（Git 忽略）。這台沒有
 | R5 runs（8 筆，見上方 manifest）；更新工作 `b73cf54f-291d-4212-9361-77964821859b` | 列入清除清單 |
 | 持股 | R3 後 revision 為 3，R5 存入 150 檔後為 **4**。收尾時 `C76_MODE=reset` 以 `C76_EXPECT_REVISION=4` 還原，除非之後又有場次 |
 
-至此，清除清單包含 R1、R2、R3、R4、R5 五場的 manifest。五場都沒有 429，預期不會有仍由這些嘗試維持的來源冷卻；`cloud_db purge` 本身也會檢查，遇到時整筆拒絕。
+至此，清除清單包含 R1、R2、R3、R4、R5 五場的 manifest。五場都沒有 429，預期不會有仍由這些嘗試維持的來源冷卻；`cloud_db purge` 本身也會檢查，遇到時整筆拒絕。**2026-09-30 補記：已清除**，見下節。
+
+### 收尾（2026-09-30）
+
+**結論：五場的量測資料已全部清除，假持股已還原為空，`c76-source-probe` 已刪除。清除後以唯讀查詢核對：以 id 查各表都是 0 筆，官方清單沒有被動到。** `refresh_max_tickers` 由使用者決定取 **27**，理由與算式見 R5 節及 `deploy/cloud.toml` 的註解。
+
+**執行機器與分工**：在執行 R1、R2 的那台（本 repo 的這個工作目錄）執行。這天，我方的自動執行權限擋下了 `reset` 與清除清單的準備，所以使用者決定由本人執行這兩步；`purge` 本來就只能由管理者執行（runtime 沒有 DELETE）。使用者的 `!` 前綴這天跑在 Windows PowerShell 5.1，**讀日誌一律改用 Git Bash**，以避開本檔 R3 節記錄的 5.1 靜默 0 筆問題。在 5.1 下執行 dry-run 時，`!` 介面會印出 `Read-Host` 的提示卻收不到輸入，所以 `purge` 改在獨立的 PowerShell 視窗執行。
+
+| 步驟 | 執行者與方式 | 結果 |
+|---|---|---|
+| 1. `reset` | 使用者，PowerShell 5.1：`gcloud run jobs execute c76-source-probe --region=asia-northeast1 --update-env-vars="C76_MODE=reset,C76_EXPECT_REVISION=4" --wait` | execution `c76-source-probe-rhfjb`，02:01:01Z 建立、02:01:19Z 成功。日誌：`start` 行為 `mode: reset`，接著 **`reset`，`revision: 5`**，最後 `exit(0)`。**用 5.1 傳帶引號逗號的參數，實測沒有被拆開。**原始日誌 `output/c76/reset.jsonl`，SHA-256 `3d59420e88cd293d7e75272fdfb4debde993d30a1cfe65f96da11d45e74112d6`。`start` 行的 `max_tickers: 0` 是因為 Job 還在用舊映像，不是設定錯誤 |
+| 2. 合併清除清單 | 使用者，以 `[IO.File]::WriteAllText` 寫成不帶 BOM 的 UTF-8 檔（5.1 的 `Set-Content -Encoding utf8` 會帶 BOM，而 `json.loads` 會拒絕） | `output/c76/purge-manifest.json`，SHA-256 `3477709ad56ae8a985d3767bc263bf3a07bc84f4071096d1783f189942c5580e`。以 `cloud_db.load_manifest` 在本機讀回：**17 個 run、5 個更新工作**，開頭沒有 BOM。R1、R2 兩場的 manifest 與這台的原始日誌 `r1.jsonl`、`r2.jsonl` 逐字相同；R3–R5 的原始日誌不在這台，以本檔的紀錄為準 |
+| 3. dry-run | 使用者，以管理者帳號從本機連線，`DB_SSLROOTCERT` 指向 `deploy/supabase-ca.crt`；密碼以 `Read-Host -AsSecureString` 輸入，只放在該行程的環境變數，指令結束即移除 | `{"apply": false, "valuations": 73, "valuation_totals": 20, "quotes": 67, "fetch_attempts": 73, "cycles": 20, "holdings": 73, "runs": 17, "refresh_jobs": 5}`，沒有任何拒絕訊息 |
+| 4. `--apply` | 同上，另加 `--apply` | `{"apply": true, …}`，**各表筆數與 dry-run 完全相同**；工具在同一交易內重做全部檢查，若實際刪除筆數與預覽不符會整筆回復，本次沒有觸發 |
+| 5. 清除後核對 | 我方，唯讀，方式同上方「補查結果」：執行一次 `c76-source-probe`，只在該次覆寫 `C76_PROBE` 為 [`c76-purge-check.py`](c76-purge-check.py)，並把 `C76_MODE` 覆寫為原探針不接受的 `purge-check` | 見下表 |
+| 6. 刪除 Job | 我方，經使用者確認：`gcloud run jobs delete c76-source-probe --region=asia-northeast1 --quiet` | `Deleted job [c76-source-probe].`，隨後 03:30:23Z 的 `gcloud run jobs list` 只剩 `finpo-catalog-refresh` |
+
+**dry-run 筆數與各場紀錄的對照**（在 `--apply` 前核對）：`fetch_attempts` 73 = R2、R3、R4 各 11 ＋ R5 40；`holdings`、`valuations` 也是 73，每次嘗試一檔、一筆估值；`quotes` 67 = 11 × 3 ＋ R5 的成功 34；`cycles`、`valuation_totals` 20 = R2–R4 每場 4 個（第 2 批跨兩市場，佔 2 個）＋ R5 每批 1 個 × 8。每一項都說得出由來，沒有多也沒有少。
+
+**清除後核對**（execution `c76-source-probe-zbpxg`，02:42:58Z，資料庫回報 `transaction_read_only = on`；腳本 SHA-256 `15f27edc8b5743de102140042854f1d72b6edb9e8c54eca95255b548886d094a`，blob `2fccb0dd7afddbaf3ed783b8cfc73ed530bc0b5b`，與容器內算出的雜湊相同；原始日誌 `output/c76/purge-check.jsonl`，SHA-256 `568d2ca497ff73d300b63ff7fc6dc9e5842cfb56c0b5b2e14c4f5a82f43a34c8`）：
+
+| 項目 | 結果 |
+|---|---|
+| 以清單的 17 個 run 查 `RUN_TABLES`，範圍用 `cloud_db` 自己的 `run_scope`；以 5 個 id 查 `refresh_jobs` | **全部 0 筆** |
+| 整個 `dashboard` 各表筆數 | `campaigns`、`scheduled_cycles`、`runs`、`holdings`、`cycles`、`fetch_attempts`、`quotes`、`valuations`、`valuation_totals`、`refresh_jobs` 都是 **0**；`portfolio` 1 列 |
+| `portfolio` | revision **5**，`rows` 0、`instruments` 0、`fx` null |
+| 官方清單 | 3 代、`catalog_instruments` 共 **40,311** 列，等於 13,457 ＋ 13,427 × 2，與上方「補查結果」一致，**沒有被動到**（使用者 09-23 決定保留） |
+| Job 設定 | 上午補查、`reset` 與本次核對，三次執行之後的 `describe`，其 `spec.template` 都與補查前相同 |
+
+**與計畫書不一致、照實記下的地方**：
+- 計畫書要求刪除後「`gcloud run jobs list` 為 0 筆」，實際剩 1 筆 `finpo-catalog-refresh`。那句話寫在這支 Job 建立之前；這支 Job 是 `C6-3` 的常設資源，不是量測的臨時資源（見 R4 節的臨時資源表）。
+- 「沒有其他 run」這一點，只證明了截至 02:42:58Z 沒有，不能推到之後。`C6-2` 尚未部署，正式服務還不存在，所以目前沒有其他寫入者。
+- **`refresh_max_tickers = 27` 寫入後的測試**：本機以 `load_refresh_config` 讀回 `deadline_seconds=110, max_tickers=27`。另由使用者在本機執行 `uv run --frozen pytest tests/test_deploy_config.py -q`，結果為 `7 passed in 0.21s`（當天我方的自動執行權限擋下了這支測試）。**完整套件沒有以隔離容器程序重跑**，所以不宣稱完整套件通過。
+- **本次沒有做反面測試**：沒有另外驗證清單以外的 id 會被 `purge` 拒絕。那部分由 `tests/test_cloud_db.py` 的案例守住（計畫書 `C7-6` 的「測試資料清除」補記），這裡沒有在雲端重測。
 
 ## C7-7（提前執行）　冷啟動量測
 
