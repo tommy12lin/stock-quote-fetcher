@@ -9,7 +9,7 @@
 > **`C6-2` 未勾選完成**，還有四項：
 > - 從服務連資料庫與正向驗簽都尚未實測，由 `C7-2` 承接。
 > - 日誌的內容與保留量未處理。
-> - ~~部署是以 `gcloud` 直接執行，偏離 `D6` 的 `workflow_dispatch`，待使用者決定。~~ 同日 `D6` 已改寫為接受手動 `gcloud`。新的待決事項是：`finpo-deploy` 的 `run.admin` 與 `serviceAccountUser` 已無用途，要不要撤除。
+> - ~~部署是以 `gcloud` 直接執行，偏離 `D6` 的 `workflow_dispatch`，待使用者決定。~~ 同日 `D6` 已改寫為接受手動 `gcloud`。~~新的待決事項是：`finpo-deploy` 的 `run.admin` 與 `serviceAccountUser` 已無用途，要不要撤除。~~ 這兩個權限已無用途，同日已撤除。撤除後的第一次建置尚待確認。
 > - 下一步為 `C6-3`、`C6-4`。
 >
 > 詳見 [C6 證據](cloud-C6-evidence.md) 的 `C6-2` 節。
@@ -446,7 +446,7 @@ Cloud Run 的「CPU always allocated」可讓背景執行緒續跑，但需為�
   - Cloud Build **維持不啟用**。
   - **2026-09-30 修訂（使用者決定）：第一階段的部署改為由管理者手動執行 `gcloud run deploy`，不另立 deploy workflow。** 「手動觸發、不自動上線」與「建置由 Actions 以 WIF 完成」兩條不變，改的只有部署由誰執行。
     - **為什麼**：`C6-2` 的首次部署就是以 `gcloud` 手動執行（見 [C6 證據](cloud-C6-evidence.md)）。第一階段單人、max=1，部署次數很少；另寫 deploy workflow 並驗證它，工作量與它帶來的好處不成比例。
-    - **權限面的後果（2026-09-30 以 `get-iam-policy` 核對）**：`finpo-deploy` 在 `C1-9` 時就已預先取得專案層的 `roles/run.admin`，以及對 `finpo-runtime` 的 `roles/iam.serviceAccountUser`（見 C1 證據），原本就是給 deploy workflow 用的。改為手動部署後，**這兩個權限沒有任何用途**，卻仍在帶著 `id-token: write`、在 public repository 上執行的建置 workflow 手上。建置只需要 `artifactregistry.writer`。要不要撤掉這兩個權限，另待使用者決定；**撤除前，被汙染的 action 可拿走的權限仍包含部署 Cloud Run 服務**。
+    - **權限面的後果（2026-09-30 以 `get-iam-policy` 核對）**：`finpo-deploy` 在 `C1-9` 時就已預先取得專案層的 `roles/run.admin`，以及對 `finpo-runtime` 的 `roles/iam.serviceAccountUser`（見 C1 證據），原本就是給 deploy workflow 用的。改為手動部署後，**這兩個權限沒有任何用途**，卻仍在帶著 `id-token: write`、在 public repository 上執行的建置 workflow 手上。建置只需要 `artifactregistry.writer`。~~要不要撤掉這兩個權限，另待使用者決定；**撤除前，被汙染的 action 可拿走的權限仍包含部署 Cloud Run 服務**。~~ **同日已撤除（使用者決定）**，`finpo-deploy` 只剩 `artifactregistry.writer`，見 [C1 證據](cloud-C1-evidence.md) `C1-9` 節的補記。撤除後的建置尚未實測，下一次建置時確認。
     - **失去的東西**：原訂的 workflow 會把「用哪個 digest 部署」留在公開的 run log 裡，現在沒有這個自動留痕。`C6-4` 的回滾紀錄改為：**每次部署都把完整的 `gcloud run deploy` 指令（去除識別資訊）、映像 digest 與部署後的 `describe` 結果寫進 C6 證據**。回滾就是以舊 digest 重跑同一條指令。映像 digest 本身仍由建置 workflow 記錄在 run log。
     - **何時重新評估**：開放多人、需要多環境（staging／prod），或部署頻率上升到人工記錄容易出錯時。
 - **目的**：決定映像由誰建、憑證怎麼給。原訂 `C6-1` 的本機建置在本專案的實際環境下有三個具體障礙，換到 Actions 可一次解決。

@@ -215,6 +215,6 @@ PowerShell 5.1 在參數裡帶了引號的逗號，這次**沒有被拆開**（6
 - **從服務連資料庫：未實測。** 啟動時不連資料庫（`Dashboard.__init__` 只載入設定），而每個 `/api/` 端點都要簽章。自行簽章就得把 `proxy-hmac-secret` 取到本機，所以不這樣做；由 `C7-2` 的 Worker 以正式路徑送出第一個帶簽章的請求時一併確認。**在那之前，不得宣稱服務能讀寫資料庫。**
 - **正向的驗簽：未實測。** 目前只證明了「沒簽或簽錯會被拒」，還沒證明「簽對會放行」。同樣由 `C7-2` 承接（Worker 與後端對同一 canonical string 產生相同簽章）。
 - **日誌的內容與保留量：未處理。** `C6-2` 要求「限制內容與保留量」。目前沿用 Cloud Logging 預設的 bucket 與保留期，沒有另外設定，也沒有逐項核對日誌內容不含敏感資料。啟動日誌印出的是 allowed hosts 與 origins，不含秘密。
-- **部署方式偏離 `D6`。** `D6` 定「部署到 Cloud Run 一律手動觸發（`workflow_dispatch`）」，本檔 `C6-1` 節也寫了「`C6-2` 另立 workflow」。這次是由使用者以 `gcloud run deploy` 直接部署，deploy workflow **尚未實作**。~~要補上 workflow，還是改寫 `D6` 接受手動 `gcloud`，待使用者決定；這也牽動 `C6-4`「以 digest 手動觸發重新部署」的回滾方式。~~ **同日使用者決定改寫 `D6`，接受手動 `gcloud`**（見計畫書 `D6` 的 09-30 修訂）。部署紀錄與回滾改以本檔為準。附帶查明：`finpo-deploy` 仍持有已無用途的 `roles/run.admin` 與對 `finpo-runtime` 的 `serviceAccountUser`，是否撤除待決定。
+- **部署方式偏離 `D6`。** `D6` 定「部署到 Cloud Run 一律手動觸發（`workflow_dispatch`）」，本檔 `C6-1` 節也寫了「`C6-2` 另立 workflow」。這次是由使用者以 `gcloud run deploy` 直接部署，deploy workflow **尚未實作**。~~要補上 workflow，還是改寫 `D6` 接受手動 `gcloud`，待使用者決定；這也牽動 `C6-4`「以 digest 手動觸發重新部署」的回滾方式。~~ **同日使用者決定改寫 `D6`，接受手動 `gcloud`**（見計畫書 `D6` 的 09-30 修訂）。部署紀錄與回滾改以本檔為準。附帶查明：`finpo-deploy` 仍持有已無用途的 `roles/run.admin` 與對 `finpo-runtime` 的 `serviceAccountUser`，~~是否撤除待決定~~ 同日已撤除（見 C1 證據 `C1-9` 節補記）。**往後部署與回滾都由管理者以自己的帳號執行 `gcloud`**，建置 workflow 已無法部署。
 - **回滾：未實測**，屬 `C6-4`。
 - **冷啟動：未在正式服務上量測**，屬 `C7-7` 的正式驗收（見上方 startup CPU boost 一段）。

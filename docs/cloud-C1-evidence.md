@@ -403,8 +403,8 @@ t2  更新 Cloud Run → S2                    恢復
 | Attribute mapping | `google.subject=assertion.sub`、`attribute.repository=assertion.repository` |
 | **Attribute condition** | `assertion.repository == 'tommy12lin/stock-quote-fetcher'` |
 | deploy SA | `finpo-deploy`（`@finpo-508709.iam.gserviceaccount.com`） |
-| deploy SA 專案層角色 | `roles/artifactregistry.writer`、`roles/run.admin` |
-| deploy SA 對 runtime SA | `roles/iam.serviceAccountUser`，綁在 `finpo-runtime` **資源層**，非專案層 |
+| deploy SA 專案層角色 | `roles/artifactregistry.writer`、~~`roles/run.admin`~~（**2026-09-30 撤除**，見本節末） |
+| deploy SA 對 runtime SA | ~~`roles/iam.serviceAccountUser`，綁在 `finpo-runtime` **資源層**，非專案層~~（**2026-09-30 撤除**） |
 | WIF 綁定 | `principalSet://iam.googleapis.com/projects/896096883650/locations/global/workloadIdentityPools/github/attribute.repository/tommy12lin/stock-quote-fetcher` → `roles/iam.workloadIdentityUser` |
 | service account 金鑰 | **0 個**（`keys list --managed-by=user` 輸出為空） |
 
@@ -413,6 +413,18 @@ t2  更新 Cloud Run → S2                    恢復
 **deploy SA 命名（與計畫書原文不同）**：計畫書寫 `stock-quote-deploy`，實建為 `finpo-deploy`。理由是實際的 runtime SA 名為 `finpo-runtime`（見 `C1-3` 的更正），基礎設施層資源一律以**專案**命名（Artifact Registry repository 亦為 `finpo`），且 deploy SA 部署的是專案下的任何服務、本質上不綁單一服務。過程中曾先建出 `stock-quote-deploy`，發現與實況不一致後刪除重建，兩條專案 binding 一併重做，已確認無殘留（以 `stock-quote-deploy` 過濾專案 policy 輸出為空）。SA 不可改名，此決定為終局。
 
 **`roles/run.admin` 授在專案層的理由**：Cloud Run 服務要到 `C6-2` 才存在，首次部署時沒有可綁定的服務資源，只能授在專案層。相對地 `Service Account User` 刻意綁在 `finpo-runtime` 資源上——那是 deploy SA 唯一能冒用的身分，避免它能以專案內任何 SA 的身分部署服務。
+
+**2026-09-30 補記：`roles/run.admin` 與 `serviceAccountUser` 已撤除（使用者決定）**。
+- **為什麼撤**：計畫書 `D6` 同日修訂，第一階段改由管理者手動執行 `gcloud run deploy`，不另立 deploy workflow。這兩個權限原本是預先授給那個 workflow 用的，此後沒有用途，卻仍在帶著 `id-token: write`、在 public repository 上執行的建置 workflow 手上。
+- **怎麼發現的**：撰寫 `D6` 修訂時，初稿寫「deploy SA 只能推映像」，送出前以 `get-iam-policy` 核對，才發現它仍持有這兩個權限。
+- **撤除**：`gcloud projects remove-iam-policy-binding … --role=roles/run.admin --condition=None`，以及 `gcloud iam service-accounts remove-iam-policy-binding finpo-runtime@… --role=roles/iam.serviceAccountUser`，兩者都回報 `Updated IAM policy`。
+- **撤除後核對**（05:29Z）：
+  - `finpo-deploy` 的專案層角色只剩 `roles/artifactregistry.writer`；
+  - `finpo-runtime` 的 SA 層 policy 為空；
+  - `finpo-deploy` 的 SA 層 policy 仍只有 WIF 的 `workloadIdentityUser`；
+  - 已部署的服務 `stock-quote-00001-dx4` 仍為 Ready。已部署的服務以 `finpo-runtime` 身分執行，不依賴 deploy SA。
+- **對建置的影響：推論為無，未實測**。`build-image.yml` 只執行 `docker login` 與 `docker push`，不呼叫 Cloud Run API。下一次非純文件的提交觸發建置時，才是撤除後的第一次實測，屆時要確認推送成功。
+- **日後若改回 workflow 部署**：要重新授予這兩個權限。`run.admin` 可改授在 `stock-quote` 服務資源上，不必再授在專案層：服務已經存在，當初只能授在專案層的理由已經不成立。
 
 ### 驗證：GitHub Actions 實測推送（run `35196067829`）
 
