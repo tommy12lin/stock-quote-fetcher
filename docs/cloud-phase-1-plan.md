@@ -9,7 +9,7 @@
 > **`C6-2` 未勾選完成**，還有四項：
 > - 從服務連資料庫與正向驗簽都尚未實測，由 `C7-2` 承接。
 > - 日誌的內容與保留量未處理。
-> - 部署是以 `gcloud` 直接執行，偏離 `D6` 的 `workflow_dispatch`，待使用者決定。
+> - ~~部署是以 `gcloud` 直接執行，偏離 `D6` 的 `workflow_dispatch`，待使用者決定。~~ 同日 `D6` 已改寫為接受手動 `gcloud`。新的待決事項是：`finpo-deploy` 的 `run.admin` 與 `serviceAccountUser` 已無用途，要不要撤除。
 > - 下一步為 `C6-3`、`C6-4`。
 >
 > 詳見 [C6 證據](cloud-C6-evidence.md) 的 `C6-2` 節。
@@ -442,8 +442,13 @@ Cloud Run 的「CPU always allocated」可讓背景執行緒續跑，但需為�
 - **決定（2026-09-16）**：
   - 建置與推送：**GitHub Actions**（`ubuntu-latest` 標準 runner），取代原訂的本機建置。
   - GCP 認證：**Workload Identity Federation（OIDC）**，不產生也不保存 service account 金鑰。
-  - 觸發方式：push 到 `main` 時**建置並推送映像**；**部署到 Cloud Run 一律手動觸發**（`workflow_dispatch`），驗收期間不自動上線。
+  - 觸發方式：push 到 `main` 時**建置並推送映像**；**部署到 Cloud Run 一律手動觸發**~~（`workflow_dispatch`）~~，驗收期間不自動上線。
   - Cloud Build **維持不啟用**。
+  - **2026-09-30 修訂（使用者決定）：第一階段的部署改為由管理者手動執行 `gcloud run deploy`，不另立 deploy workflow。** 「手動觸發、不自動上線」與「建置由 Actions 以 WIF 完成」兩條不變，改的只有部署由誰執行。
+    - **為什麼**：`C6-2` 的首次部署就是以 `gcloud` 手動執行（見 [C6 證據](cloud-C6-evidence.md)）。第一階段單人、max=1，部署次數很少；另寫 deploy workflow 並驗證它，工作量與它帶來的好處不成比例。
+    - **權限面的後果（2026-09-30 以 `get-iam-policy` 核對）**：`finpo-deploy` 在 `C1-9` 時就已預先取得專案層的 `roles/run.admin`，以及對 `finpo-runtime` 的 `roles/iam.serviceAccountUser`（見 C1 證據），原本就是給 deploy workflow 用的。改為手動部署後，**這兩個權限沒有任何用途**，卻仍在帶著 `id-token: write`、在 public repository 上執行的建置 workflow 手上。建置只需要 `artifactregistry.writer`。要不要撤掉這兩個權限，另待使用者決定；**撤除前，被汙染的 action 可拿走的權限仍包含部署 Cloud Run 服務**。
+    - **失去的東西**：原訂的 workflow 會把「用哪個 digest 部署」留在公開的 run log 裡，現在沒有這個自動留痕。`C6-4` 的回滾紀錄改為：**每次部署都把完整的 `gcloud run deploy` 指令（去除識別資訊）、映像 digest 與部署後的 `describe` 結果寫進 C6 證據**。回滾就是以舊 digest 重跑同一條指令。映像 digest 本身仍由建置 workflow 記錄在 run log。
+    - **何時重新評估**：開放多人、需要多環境（staging／prod），或部署頻率上升到人工記錄容易出錯時。
 - **目的**：決定映像由誰建、憑證怎麼給。原訂 `C6-1` 的本機建置在本專案的實際環境下有三個具體障礙，換到 Actions 可一次解決。
 
 **為什麼從本機建置改為 Actions**：
@@ -578,7 +583,7 @@ Dockerfile 三處 `company_ca` 掛載本來就是條件式（`if [ -f /run/secre
   - [ ] `C6-3` 以獨立管理者執行 `python -m stock_quote_fetcher.cloud_db bootstrap-sql` 產生的 SQL，再以 runtime 執行 `web --refresh-catalog`。C5 已先完成首次 schema／空持股初始化並驗證可重跑；C6 仍須完成部署環境的一次性執行程序與官方清單更新。**不得以 runtime 執行 migration／web --initialize**，其 CREATE 權限已於 C5-2 撤除；Web 啟動仍不自動 migration。
 
     **2026-09-23 補記**：`web --refresh-catalog` 不再只是一次性初始化，而是**唯一的清單更新途徑**。`C7-6` R1 量得請求內更新清單需 135 秒，超過邊緣上限，雲端因此設 `refresh_in_request = false`。清單每 168 小時到期，**到期前須由管理者再執行一次**，建議建成常設的 Cloud Run Job，只附加 `--args=--refresh-catalog`（未實測）。見 [C7 證據](cloud-C7-evidence.md) 的 `C7-6` 節。
-  - [ ] `C6-4` 記錄映像 digest、部署設定與 secret 版本，確認可回滾。digest 由 `D6` 的 workflow 輸出並留存於 run log，回滾即以該 digest 手動觸發重新部署。資料庫 migration 需向後相容：回滾映像不等於回滾資料庫。
+  - [ ] `C6-4` 記錄映像 digest、部署設定與 secret 版本，確認可回滾。digest 由 `D6` 的 workflow 輸出並留存於 run log，回滾即以該 digest 手動觸發重新部署。資料庫 migration 需向後相容：回滾映像不等於回滾資料庫。**2026-09-30 補記（`D6` 修訂後）**：部署不經 workflow，所以部署紀錄改以 C6 證據為準，每次都記下完整指令、digest 與部署後的 `describe`。回滾就是以舊 digest 重跑同一條 `gcloud run deploy`。建置的 digest 仍在建置 workflow 的 run log 裡。
 - **完成條件**：服務可由記錄的映像 digest 重新部署並啟動成功，初始化步驟可獨立重跑。
 - **證據**：映像 digest、部署設定輸出、初始化執行紀錄。
 
