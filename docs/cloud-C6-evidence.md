@@ -10,7 +10,7 @@
 |---|---|---|
 | `C6-1` GitHub Actions 建置與推送 | ✅ 完成 | run `35806642267`，digest 已取得並經 GCP 端獨立核對 |
 | `C6-2` 部署設定 | 🟡 已部署（2026-09-30） | ~~**仍被 `C4-1` 的兩個數值擋住**，見下~~ 服務 `stock-quote` 已上線，設定逐項核對、反面測試通過。**未完成的有~~三項~~兩項**：從服務連資料庫尚未實測（要帶簽章的請求，由 `C7-2` 承接）；日誌的內容與保留量未處理；~~部署方式偏離 `D6`~~（同日 `D6` 已改寫為接受手動 `gcloud`，此項解除）。見下方 `C6-2` 節 |
-| `C6-3` 一次性初始化 | ⬜ 未開始 | |
+| `C6-3` 一次性初始化 | ✅ 完成（2026-09-30） | ~~⬜ 未開始~~ 管理者在正式 Supabase 重跑 bootstrap 成功，前後快照除清單多一代外相同；runtime 更新清單成功（`finpo-catalog-refresh` 在新映像上的第一次執行），`cloud_db check` 通過。界線（bootstrap 是否實際改動分不出來、沒有重做 DELETE 被拒的反面測試、新一代列數未讀出）見下方 `C6-3` 節 |
 | `C6-4` digest 與回滾紀錄 | 🟡 部分 | digest 產出機制已建立（本項），回滾實測待 `C7-7`。**2026-09-30 補記**：`D6` 修訂後部署紀錄以本檔為準，首次部署的完整指令、digest 與 `describe` 已記在下方 `C6-2` 節 |
 
 ## C6-1　GitHub Actions 建置與推送
@@ -218,3 +218,63 @@ PowerShell 5.1 在參數裡帶了引號的逗號，這次**沒有被拆開**（6
 - **部署方式偏離 `D6`。** `D6` 定「部署到 Cloud Run 一律手動觸發（`workflow_dispatch`）」，本檔 `C6-1` 節也寫了「`C6-2` 另立 workflow」。這次是由使用者以 `gcloud run deploy` 直接部署，deploy workflow **尚未實作**。~~要補上 workflow，還是改寫 `D6` 接受手動 `gcloud`，待使用者決定；這也牽動 `C6-4`「以 digest 手動觸發重新部署」的回滾方式。~~ **同日使用者決定改寫 `D6`，接受手動 `gcloud`**（見計畫書 `D6` 的 09-30 修訂）。部署紀錄與回滾改以本檔為準。附帶查明：`finpo-deploy` 仍持有已無用途的 `roles/run.admin` 與對 `finpo-runtime` 的 `serviceAccountUser`，~~是否撤除待決定~~ 同日已撤除（見 C1 證據 `C1-9` 節補記）。**往後部署與回滾都由管理者以自己的帳號執行 `gcloud`**，建置 workflow 已無法部署。
 - **回滾：未實測**，屬 `C6-4`。
 - **冷啟動：未在正式服務上量測**，屬 `C7-7` 的正式驗收（見上方 startup CPU boost 一段）。
+
+## C6-3　一次性初始化與官方清單更新（2026-09-30）
+
+**結論：管理者在正式 Supabase 上重跑了 bootstrap SQL，成功，且重跑前後除了清單多一代，其餘狀態完全相同（`portfolio` 沒有被重設）。接著由 runtime 以 `web --refresh-catalog` 更新清單，這是 `finpo-catalog-refresh` 第一次在新映像上執行，成功。最後以臨時 Job 從 runtime 身分跑 `cloud_db check`，最小權限契約通過。**
+
+`C5-2` 已完成首次初始化；本項是在部署環境照正式程序再跑一遍，並證明初始化**在正式資料庫上可以獨立重跑**（`C6` 完成條件）。
+
+### 程序（往後重跑照此執行）
+
+| 順序 | 執行者 | 內容 |
+|---|---|---|
+| 1 | 管理者，Supabase SQL Editor | 執行 [`c6-db-snapshot.sql`](c6-db-snapshot.sql)（唯讀，單一 SELECT），留下初始化前的快照 |
+| 2 | 任何人，本機 | `python -m stock_quote_fetcher.cloud_db bootstrap-sql --schema dashboard --runtime-role finpo_app > output/c6/bootstrap.sql`。不需連線，也不含秘密 |
+| 3 | 管理者，Supabase SQL Editor | 執行步驟 2 的 SQL。整份在單一交易內：以 runtime 身分執行、collector 持有 advisory lock、migration 版本未知或 checksum 不符，任一種都會整筆回滾 |
+| 4 | 管理者，`gcloud` | `gcloud run jobs execute finpo-catalog-refresh --region=asia-northeast1 --wait`（以 `finpo-runtime` 執行 `web --refresh-catalog`） |
+| 5 | 管理者，`gcloud` | 以臨時 Job 從 runtime 身分執行 `cloud_db check`，核對後刪除（設定見下） |
+| 6 | 管理者，Supabase SQL Editor | 再跑一次步驟 1 的快照，逐項比對 |
+
+**不得以 runtime 執行 migration 或 `web --initialize`**（`C5-2`）。步驟 3 的 SQL 以 `current_user` 擋下 runtime，這次的快照也證實執行者為 `postgres`。
+
+### 執行紀錄
+
+| 步驟 | 時間（UTC） | 結果 |
+|---|---|---|
+| 1 快照（前） | `db_now` 05:49:21.88Z | 見下方比對表 |
+| 2 產生 SQL | 05:49 前 | 以 HEAD（`2903fd7`）產生，239 行，SHA-256 `877419d7bc52f23e85cf345e53f06509d9f4c4e805cc8baa3c88de58e2dfc19e`（Windows 下以 shell 轉向寫檔，換行為 CRLF，雜湊依此計算）。migration 自 `3afdace`（`C5-2`）起未變，已部署映像 `ab1667c` 內的 migration 與此相同 |
+| 3 bootstrap | 05:49:21Z–05:50:42Z 之間 | SQL Editor 回報 `Success. No rows returned`。確切執行時間沒有記錄，上下界分別是前快照與步驟 4 觸發的時間 |
+| 4 清單更新 | 觸發 05:50:42Z；execution 05:50:50.64Z–05:51:23.46Z | `finpo-catalog-refresh-tsp9t`，成功。映像 `sha256:7da85b3a…`（`ab1667ccf7f7`），**是這支 Job 在新映像上的第一次執行**。日誌：05:51:20.93Z `Dashboard catalog refreshed.`、05:51:21.07Z `Container called exit(0).` |
+| 5 runtime 核對 | execution 05:53:08.64Z–05:53:25.47Z | `c6-3-runtime-check-p58h6`，成功。stdout 為 `{"runtime_permissions": "passed"}`（Cloud Logging 將它解析為 `jsonPayload`，所以 `textPayload` 為空）。Job 已於 05:54Z 刪除，之後 `gcloud run jobs list` 只剩 `finpo-catalog-refresh` |
+| 6 快照（後） | `db_now` 06:07:52.41Z | 見下方比對表 |
+
+**臨時 Job `c6-3-runtime-check` 的設定**（建立後以 `describe` 核對）：映像同上（digest）；command `/app/.venv/bin/python`，args `-m stock_quote_fetcher.cloud_db check --config /app/cloud.toml`；身分 `finpo-runtime`；`DB_HOST`／`DB_PORT`／`DB_NAME`／`DB_USER` 由 `finpo-catalog-refresh` 的 `describe` 讀出後原樣帶入，沒有印出（`DB_HOST`、`DB_USER` 依 `C1-4` 不記錄）；`DB_PASSWORD` 掛 `db-password:latest`；timeout 120 秒、`maxRetries` 0。在 Git Bash 下建立，以 `MSYS2_ARG_CONV_EXCL` 排除 `--command=`、`--args=`、`--image=` 的路徑轉換，`describe` 讀回的 command 與 args 與預期相同。
+
+### 前後快照比對
+
+快照 SQL 為 [`c6-db-snapshot.sql`](c6-db-snapshot.sql)（SHA-256 `071b277b7c424250a245714147edfbc8a4dcf71c080a20838a32a832f286edae`）。14 項中只有 `db_now` 與 `catalog_generations` 不同；兩份原始結果存於本機 `output/c6/snapshot-{before,after}.json`（Git 忽略），以程式逐項比對。
+
+| 項目 | 前（05:49Z） | 後（06:07Z） |
+|---|---|---|
+| `current_user` | `postgres` | 同左 |
+| migrations | `0001` `44b28fa8b5a3`、`0002` `73d426bf735c`、`0003` `d80724dadb15`，皆為 `cloud-bootstrap` | 同左；三個 checksum 前 12 碼與本機 `migration_sources()` 算出的相同 |
+| `portfolio` | `revision=5 rows=0` | **同左，未被重設** |
+| `refresh_jobs` | 0 | 同左 |
+| 清單 generation | **3**，最新 `completed_at` 09-29 14:35:34.66Z、`expires_at` 10-06 14:35:34.66Z | **4**，最新 `completed_at` **09-30 05:51:20.26Z**、`expires_at` **10-07 05:51:20.26Z（台北 13:51）** |
+| 表數／RLS | 14／14 啟用 | 同左 |
+| 表擁有者 | 只有 `postgres` | 同左 |
+| policy | 14 條，`runtime_access` ALL 或 SELECT，對象 `finpo_app` | 同左 |
+| `finpo_app` 表權限 | 13 張表 INSERT+SELECT+UPDATE，`schema_migrations` 只有 SELECT | 同左 |
+| schema ACL | `{postgres=UC/postgres,finpo_app=U/postgres}` | 同左 |
+| `finpo_app` 對 `app` 的 USAGE | false | 同左 |
+| 已授予的 advisory lock | 0 | 同左 |
+
+### 未驗證、有界線的部分
+
+- **bootstrap 是否真的套用了語句，快照分不出來。** 所有 migration 都已存在，SQL 只會走「已存在且 checksum 相符」的分支，GRANT／POLICY 則是撤銷後重建成相同結果，所以「跑了但沒變」和「沒跑」在快照上長得一樣。能證明它有執行的，只有 SQL Editor 的 `Success`。
+- **快照沒有涵蓋的項目**：policy 的 `USING`／`WITH CHECK` 內容、欄位層級權限、對 `PUBLIC` 的表權限、兩個 domain 的擁有者。這幾項由 bootstrap SQL 設定，但前後沒有比對。其中 RLS 與表權限的實際效果，已由 `cloud_db check` 從 runtime 端核對。
+- **`cloud_db check` 是以 `has_table_privilege` 逐項核對權限，沒有實際嘗試 DELETE 或 CREATE。** 實際被拒（SQLSTATE 42501）的反面測試是 `C5-2` 在 09-22 做的，這次沒有重做。
+- **新 generation 的列數沒有讀出。** 快照只數 generation 的代數；09-29 那一代為 13,457 列。Job 以結束碼 0 完成，而 `save_instrument_catalog` 要求五個來源各恰好一次、否則拋例外（`storage.py`），所以推定寫入完整，但沒有逐列核對。
+- **清單更新耗時**：以 C7 證據的同一量法（execution 開始 → 輸出 `Dashboard catalog refreshed.`）為 05:50:50.64Z → 05:51:20.93Z，**約 30.3 秒**；09-29 約 13 秒、09-23 約 70.7 秒。觸發到 `--wait` 返回為 05:50:42Z → 05:51:34Z，約 52 秒（時間取自本機 `date`，不是日誌）。各來源的 `fetched_at` 沒有讀出，所以這 30 秒花在哪裡沒有拆開。依 C7 證據，不得以任何單一樣本當作典型耗時。
+- **保留規則**：現在有 4 代。依 `C5-6`，只有明確執行 `cloud_db prune` 時才會清除；本次沒有執行 `prune`。

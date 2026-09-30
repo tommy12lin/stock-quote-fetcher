@@ -1,6 +1,15 @@
 # 雲端部署第一階段執行計畫
 
-> **最新進度（2026-09-30 下午）。`C6-2`：服務 `stock-quote` 已部署**：
+> **最新進度（2026-09-30 下午）。`C6-3` 完成**：
+> - 管理者在正式 Supabase 以 SQL Editor 重跑 bootstrap SQL，成功。前後以唯讀快照（[`c6-db-snapshot.sql`](c6-db-snapshot.sql)）比對 14 項，只有清單的代數變了；`portfolio` 仍為 revision 5，沒有被重設。
+> - runtime 以 `finpo-catalog-refresh` 更新清單，成功（`tsp9t`）。這是它**在新映像上的第一次執行**。
+> - 以臨時 Job 從 runtime 身分跑 `cloud_db check`，最小權限契約通過，Job 已刪除。
+> - **清單到期時間改為 10-07 05:51Z（台北 13:51）**，下一次清單更新須在這之前執行。
+> - 界線：bootstrap 是否實際改動了什麼，快照分不出來；DELETE 被拒的反面測試沒有重做（`C5-2` 做過）；新一代的列數沒有讀出。
+>
+> 下一步為 `C6-4`（回滾實測）。詳見 [C6 證據](cloud-C6-evidence.md) 的 `C6-3` 節。
+>
+> **更早的進度（2026-09-30 下午）。`C6-2`：服務 `stock-quote` 已部署**：
 > - revision `stock-quote-00001-dx4`，映像 `ab1667ccf7f7`。
 > - 設定：1 vCPU／1 GiB、min 0／max 1、concurrency 10、timeout 150。timeout 與 concurrency 都是依算式或慣例選的，不是量測值。
 > - `WEB_ALLOWED_HOSTS` 只有決定性網址 `stock-quote-896096883650.asia-northeast1.run.app`，**`C7-2` 的 Worker 必須呼叫這個網址**。
@@ -10,7 +19,7 @@
 > - 從服務連資料庫與正向驗簽都尚未實測，由 `C7-2` 承接。
 > - 日誌的內容與保留量未處理。
 > - ~~部署是以 `gcloud` 直接執行，偏離 `D6` 的 `workflow_dispatch`，待使用者決定。~~ 同日 `D6` 已改寫為接受手動 `gcloud`。~~新的待決事項是：`finpo-deploy` 的 `run.admin` 與 `serviceAccountUser` 已無用途，要不要撤除。~~ 這兩個權限已無用途，同日已撤除。撤除後的第一次建置尚待確認。
-> - 下一步為 `C6-3`、`C6-4`。
+> - 下一步為 `C6-3`、`C6-4`。（同日補記：`C6-3` 已完成，見上。）
 >
 > 詳見 [C6 證據](cloud-C6-evidence.md) 的 `C6-2` 節。
 >
@@ -22,7 +31,7 @@
 > ~~**剩下的**：`deploy/cloud.toml` 已在本機寫入 `refresh_max_tickers = 27`，**尚未提交**，推送前要先跑 `tests/test_deploy_config.py`。推送後建置完成，要立刻把 `finpo-catalog-refresh` 改指向新映像，並以 `describe` 核對（下方第 6 項）。這幾步完成後 `C6-2` 才能開始。~~ **同日補記：都已完成**：
 > - `cloud.toml` 已推送（`ab1667c`，推送前 `test_deploy_config` 為 7 passed；完整套件沒有以隔離容器重跑）。
 > - 新映像 `ab1667ccf7f7`（`sha256:7da85b3a…`）建置成功。
-> - `finpo-catalog-refresh` 已改指向新映像，以 `describe` 核對只有映像變了。它**在新映像上還沒執行過**，下一次清單更新須在 10-06 22:35（台北）前執行，屆時一併核對。
+> - `finpo-catalog-refresh` 已改指向新映像，以 `describe` 核對只有映像變了。~~它**在新映像上還沒執行過**，下一次清單更新須在 10-06 22:35（台北）前執行，屆時一併核對。~~ **同日補記**：已在 `C6-3` 於新映像上執行成功（`tsp9t`），清單到期時間改為 10-07 13:51（台北）。
 >
 > **`C7-6` 的收尾到此完成，`C6-2` 可以開始。**詳見 [C7 證據](cloud-C7-evidence.md)「收尾」節。
 >
@@ -40,7 +49,7 @@
 > | `C4` 工作生命週期 | ✅ 程式完成；**雲端驗收欠 `C7-5`** |
 > | `C5` Supabase／TLS | ✅ 完成 |
 > | `C6-1` 建置推送 | ✅ 完成（見 [C6 證據](cloud-C6-evidence.md)） |
-> | `C6-2`–`C6-4` 部署 | ⬜ ~~**被 `refresh_max_tickers` 擋住**，見下~~ 值已定為 27（09-30），~~待 `cloud.toml` 推送、新映像建置並把 `finpo-catalog-refresh` 改指向新映像後開始~~ **前提已全部滿足，可以開始**（09-30）。**同日 `C6-2` 已部署**（🟡，連資料庫與正向驗簽待 `C7-2`，另有~~日誌與 `D6` 兩項~~日誌一項未處理；`D6` 已於同日改寫為接受手動 `gcloud`，不再是未處理項）；~~`C6-3`、`C6-4` ⬜~~ `C6-3` ⬜；`C6-4` 🟡（與 C6 證據對齊：digest 產出機制已建立，首次部署的指令、digest 與 `describe` 已記在 C6 證據 `C6-2` 節；回滾未實測） |
+> | `C6-2`–`C6-4` 部署 | ⬜ ~~**被 `refresh_max_tickers` 擋住**，見下~~ 值已定為 27（09-30），~~待 `cloud.toml` 推送、新映像建置並把 `finpo-catalog-refresh` 改指向新映像後開始~~ **前提已全部滿足，可以開始**（09-30）。**同日 `C6-2` 已部署**（🟡，連資料庫與正向驗簽待 `C7-2`，另有~~日誌與 `D6` 兩項~~日誌一項未處理；`D6` 已於同日改寫為接受手動 `gcloud`，不再是未處理項）；~~`C6-3`、`C6-4` ⬜~~ `C6-3` ~~⬜~~ ✅（同日完成）；`C6-4` 🟡（與 C6 證據對齊：digest 產出機制已建立，首次部署的指令、digest 與 `describe` 已記在 C6 證據 `C6-2` 節；回滾未實測） |
 > | `C7-2` 逾時量測 | ✅ 完成；`C7-2` 其餘要求待 `C6` 部署後 |
 > | `C7-7` 冷啟動 | ✅ 提前完成（2.3–3.4 秒） |
 > | `C7-6` 外部來源驗收 | 🟡 **R1、R4 已完成；R2 已於 2026-09-29 執行**（11/11 抓價成功，台股 6 檔均為一般時段；MIS 逐秒對齊 0/6，價格正確性證據不足）。~~**R3、R5 未執行**~~ **R3、R5 已於 09-29 晚上執行**（R3 `dnxnv`：美股取得當日成交、價格證據不足，台股等於 09-29 官方收盤；R5 `h8cz4`：`partial` 收尾正確，`c` 3.967／2.947 秒／檔）。~~**`refresh_max_tickers` 待使用者決定；尚未收尾**。~~ **2026-09-30：取 27；清除已完成，Job 已刪除，~~`cloud.toml` 待推送~~ `cloud.toml` 已推送，`finpo-catalog-refresh` 已改指向新映像。量測與收尾完成。** ~~官方清單約於 09-30 17:10（台北）到期，到期前須請求外更新。~~ 清單已於 09-29 更新，09-30 以資料庫核對，到期時間為 10-06 22:35（台北）。詳見 [C7 證據](cloud-C7-evidence.md)。 |
@@ -580,9 +589,11 @@ Dockerfile 三處 `company_ca` 掛載本來就是條件式（`if [ -f /run/secre
 
     **2026-09-23 完成**（run `35806642267`，48 秒，digest `sha256:99ee3a38…`，tag 取 commit SHA 前 12 碼）。三條待辦全數處置：(a) 兩個 action 釘 commit SHA 並只留這兩個——`id-token: write` 之下每多一個第三方 action 就多一個等同交出 deploy SA 權限的入口；(b) ref 限制以 job 層 `if: github.ref == 'refs/heads/main'` 實作，**provider 層的 `assertion.ref` 刻意未加**（加了會使日後無法從分支驗證 workflow 改動）；(c) cleanup policy 已設保留最近 3 個版本。映像已從 Artifact Registry 拉回實測：ENTRYPOINT 確為 web、非 root、`linux/amd64`、`cloud.toml` 與 `supabase-ca.crt` 就位、`/tmp` 無公司 CA 殘骸。**新增一項須留意**：`ubuntu-latest` 將於 2026-10-19 起遷移至 Ubuntu 26，建置環境會在無人改動下改變。詳見 [C6 證據](cloud-C6-evidence.md)。
   - [ ] `C6-2` 部署設定：1 vCPU／1 GiB、min=0、max=1，concurrency 依 `D3` 設定（**不可為 1**；`C4-1` 完成後更新期間通常沒有並行輪詢，但長請求佔住實例時 `/healthz` 探測仍須能被回應，否則實例會被判定不健康而遭終止），request timeout 依 `D3` 對齊且**必須大於 `refresh_deadline_seconds`**，否則平台會在程式自己收尾前切斷請求；**部署前必須先把 `C4-1` 的 `refresh_deadline_seconds` 與 `refresh_max_tickers` 依 `C7-2`／`C7-6` 的量測值寫進 `deploy/cloud.toml`**；`DB_PASSWORD` 與必要 provider key 放 Secret Manager（`db-password` 已於 `C1-3` 建立並授權給 `finpo-runtime`）；簽章秘密以 `proxy-hmac-secret` 與 `proxy-hmac-secret-prev` 兩個環境變數掛載（皆參照 `latest`），兩組於 `C1-7` 已建立，因此輪替時不需變更部署設定；日誌輸出 stdout／stderr 並限制內容與保留量。若設定 startup／liveness probe，**指向 `C2-4` 新增的 `GET /healthz`，不可指向任何 `/api/` 路徑**（`C3-1` 上線後探測無法簽章，會全數 401）；`web` 映像已自帶啟動命令，**不需覆寫 command／args**。**另須設定 `C2-2` 的兩個環境變數**：`WEB_ALLOWED_HOSTS`（Cloud Run 服務主機名，或明確設為 `*`）與 `WEB_ALLOWED_ORIGINS`（前端 Worker 的 `https://` 來源）；兩者未設定時服務會套用本機預設值而把所有雲端請求判 403。
-  - [ ] `C6-3` 以獨立管理者執行 `python -m stock_quote_fetcher.cloud_db bootstrap-sql` 產生的 SQL，再以 runtime 執行 `web --refresh-catalog`。C5 已先完成首次 schema／空持股初始化並驗證可重跑；C6 仍須完成部署環境的一次性執行程序與官方清單更新。**不得以 runtime 執行 migration／web --initialize**，其 CREATE 權限已於 C5-2 撤除；Web 啟動仍不自動 migration。
+  - [x] `C6-3` 以獨立管理者執行 `python -m stock_quote_fetcher.cloud_db bootstrap-sql` 產生的 SQL，再以 runtime 執行 `web --refresh-catalog`。C5 已先完成首次 schema／空持股初始化並驗證可重跑；C6 仍須完成部署環境的一次性執行程序與官方清單更新。**不得以 runtime 執行 migration／web --initialize**，其 CREATE 權限已於 C5-2 撤除；Web 啟動仍不自動 migration。
 
     **2026-09-23 補記**：`web --refresh-catalog` 不再只是一次性初始化，而是**唯一的清單更新途徑**。`C7-6` R1 量得請求內更新清單需 135 秒，超過邊緣上限，雲端因此設 `refresh_in_request = false`。清單每 168 小時到期，**到期前須由管理者再執行一次**，建議建成常設的 Cloud Run Job，只附加 `--args=--refresh-catalog`（未實測）。見 [C7 證據](cloud-C7-evidence.md) 的 `C7-6` 節。
+
+    **2026-09-30 完成**：常設 Job 即 `finpo-catalog-refresh`（09-23 建立，09-29、09-30 各執行一次）。管理者在正式 Supabase 重跑 bootstrap SQL 成功，前後快照除清單多一代外完全相同，`portfolio` 未被重設，證明初始化可在正式資料庫獨立重跑。runtime 更新清單成功，`cloud_db check` 從 runtime 端通過。程序、紀錄與界線見 [C6 證據](cloud-C6-evidence.md) 的 `C6-3` 節。
   - [ ] `C6-4` 記錄映像 digest、部署設定與 secret 版本，確認可回滾。digest 由 `D6` 的 workflow 輸出並留存於 run log，回滾即以該 digest 手動觸發重新部署。資料庫 migration 需向後相容：回滾映像不等於回滾資料庫。**2026-09-30 補記（`D6` 修訂後）**：部署不經 workflow，所以部署紀錄改以 C6 證據為準，每次都記下完整指令、digest 與部署後的 `describe`。回滾就是以舊 digest 重跑同一條 `gcloud run deploy`。建置的 digest 仍在建置 workflow 的 run log 裡。
 - **完成條件**：服務可由記錄的映像 digest 重新部署並啟動成功，初始化步驟可獨立重跑。
 - **證據**：映像 digest、部署設定輸出、初始化執行紀錄。
