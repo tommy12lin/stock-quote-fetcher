@@ -1,6 +1,15 @@
 # 雲端部署第一階段執行計畫
 
-> **最新進度（2026-09-30 傍晚）。`C6-2` 的日誌項已處理**：
+> **最新進度（2026-09-30 晚上）。`C7-2` 的 Worker 程式已在本機完成，未部署**：
+> - `worker/index.js` 是 `/api/*` 代理，`wrangler.jsonc` 是 `finpo` 的設定。它們只在本機測試過，**沒有部署、沒有動 `finpo`**，`C1-6` 的 canary 仍在。部署與 `C7-1` 一起做。
+> - `tests/worker.test.mjs` 為 8 passed。跨語言那組用後端的 `web_auth.Auth` 驗 Worker 送出的簽章，含反面案例。注入 11 種錯誤，10 種會被抓到；抓不到的那種碰不到，理由見 C7 證據。
+> - **界線**：測試跑在 Node，不是 Workers 執行環境。GFE 會不會改寫路徑、在 Workers 裡設定 `Origin` 標頭會不會生效、5 MiB 上傳的 CPU 耗時、`compatibility_date`，都**未實測**。
+> - 推送 Worker 檔案原本會觸發映像建置，多用掉一個回滾窗口。使用者決定把這些檔案加進建置的 `paths-ignore`，改 workflow 的那次提交仍會建置一次。
+> - **新立 `C7-8`**：Worker 驗證 Access JWT。現在 Worker 替任何到得了它的請求簽章，Access 被誤關就等於繞過後端驗證。尚未排入順序。
+>
+> 詳見 [C7 證據](cloud-C7-evidence.md)「`C7-2` 代理程式（本機）」節。
+>
+> **更早的進度（2026-09-30 傍晚）。`C6-2` 的日誌項已處理**：
 > - 盤點時實測發現，Cloud Run 平台的請求日誌會把 URL 連同查詢字串記下，驗簽前就記、401 也記；而上傳預覽原本把使用者的 Excel **檔名與工作表名稱放在查詢字串**。已改為以標頭 `X-Upload-Filename`／`X-Upload-Sheet` 傳遞（`a1fb03f`），並已部署。
 > - **現行 revision 為 `stock-quote-00004-4v6`，映像 `a1fb03ff680d`**。`describe` 只有映像改變；帶檔名標頭的請求，日誌裡搜不到檔名。
 > - **`C7-2` 的 Worker 必須轉發這兩個標頭**。它們不在 HMAC 簽章範圍內（取捨見 C6 證據）。
@@ -69,7 +78,8 @@
 > | `C5` Supabase／TLS | ✅ 完成 |
 > | `C6-1` 建置推送 | ✅ 完成（見 [C6 證據](cloud-C6-evidence.md)） |
 > | `C6-2`–`C6-4` 部署 | ⬜ ~~**被 `refresh_max_tickers` 擋住**，見下~~ 值已定為 27（09-30），~~待 `cloud.toml` 推送、新映像建置並把 `finpo-catalog-refresh` 改指向新映像後開始~~ **前提已全部滿足，可以開始**（09-30）。**同日 `C6-2` 已部署**（🟡，連資料庫與正向驗簽待 `C7-2`，另有~~日誌與 `D6` 兩項~~~~日誌一項未處理~~；日誌已於同日處理；`D6` 已於同日改寫為接受手動 `gcloud`，不再是未處理項）；~~`C6-3`、`C6-4` ⬜~~ `C6-3` ~~⬜~~ ✅（同日完成）；`C6-4` ~~🟡（與 C6 證據對齊：digest 產出機制已建立，首次部署的指令、digest 與 `describe` 已記在 C6 證據 `C6-2` 節；回滾未實測）~~ ✅（同日回滾已實測，見 C6 證據 `C6-4` 節） |
-> | `C7-2` 逾時量測 | ✅ 完成；`C7-2` 其餘要求待 `C6` 部署後 |
+> | `C7-2` 逾時量測 | ✅ 完成；`C7-2` 其餘要求待 `C6` 部署後。**09-30 補記**：代理程式已在本機完成並通過 Node 測試，未部署；雲端的正向驗簽等項目隨 `C7-1` 部署時做 |
+| `C7-8` Worker 驗 Access JWT | ⬜ 09-30 新立，未排入順序 |
 > | `C7-7` 冷啟動 | ✅ 提前完成（2.3–3.4 秒） |
 > | `C7-6` 外部來源驗收 | 🟡 **R1、R4 已完成；R2 已於 2026-09-29 執行**（11/11 抓價成功，台股 6 檔均為一般時段；MIS 逐秒對齊 0/6，價格正確性證據不足）。~~**R3、R5 未執行**~~ **R3、R5 已於 09-29 晚上執行**（R3 `dnxnv`：美股取得當日成交、價格證據不足，台股等於 09-29 官方收盤；R5 `h8cz4`：`partial` 收尾正確，`c` 3.967／2.947 秒／檔）。~~**`refresh_max_tickers` 待使用者決定；尚未收尾**。~~ **2026-09-30：取 27；清除已完成，Job 已刪除，~~`cloud.toml` 待推送~~ `cloud.toml` 已推送，`finpo-catalog-refresh` 已改指向新映像。量測與收尾完成。** ~~官方清單約於 09-30 17:10（台北）到期，到期前須請求外更新。~~ 清單已於 09-29 更新，09-30 以資料庫核對，到期時間為 10-06 22:35（台北）。詳見 [C7 證據](cloud-C7-evidence.md)。 |
 > | 其餘 `C7` | ⬜ 未開始 |
@@ -630,6 +640,8 @@ Dockerfile 三處 `company_ca` 掛載本來就是條件式（`if [ -f /run/secre
   - [ ] `C7-2`（**逾時量測已於 2026-09-22 完成，其餘待 `C6`**）依 `D2` 在同一 Worker 內實作 `/api/*` 代理，`assets.run_worker_first` 僅列 `/api/*`，並以實際請求核對靜態檔路徑不會啟動 Worker；驗證 Worker 端 WebCrypto 與後端 Python 對同一 canonical string 產生相同簽章；以故意延遲回應的測試端點量出代理的實際逾時上限，並對齊前端、代理與後端的逾時。**`C2-2` 追加的必辦事項：Worker 轉發時必須原樣帶上瀏覽器的 `Origin` 標頭**，否則後端會把所有寫入請求判 403；理由是 HMAC 簽章擋不住「惡意網站以 `credentials:'include'` 觸發、Access 放行、Worker 照簽」這條跨站路徑，Origin 白名單是該路徑唯一的防線（見 `docs/cloud-C2-evidence.md` 的 `C2-2`）。**`C6-2` 追加的必辦事項（2026-09-30）：Worker 必須原樣轉發 `X-Upload-Filename` 與 `X-Upload-Sheet`**，否則上傳一律回「只接受 .xlsx 檔案」。上傳的檔名原本放在查詢字串，會被 Cloud Run 請求日誌記下，已改由這兩個標頭傳遞；它們不在 HMAC 簽章範圍內（見 [C6 證據](cloud-C6-evidence.md)「`C6-2` 補記：日誌」節）。另須核對 Worker 上線後請求日誌的 `remoteIp`、`userAgent` 記到的是什麼。
 
     **逾時量測結果（2026-09-22，見 [C7 證據](cloud-C7-evidence.md)）**：Worker→Cloud Run 的 subrequest 上限為 **125 秒**（最後成功點 124 秒；130／150／300／600 皆在 125.0–125.2 秒被 524 切斷），client-facing 則到 600 秒無上限。**524 是以 upstream response 的形式回到 Worker 手上，`fetch()` 不會 throw**——正式 Worker 必須檢查這個狀態碼並轉成給前端的明確錯誤，否則瀏覽器只會拿到一個看似成功的空回應。量測用的慢 origin 不能是另一個 Worker（`error code: 1042`），已改以拋棄式 Cloud Run 服務取得，該服務與映像已刪除。**本項其餘要求（代理實作、`run_worker_first` 核對、HMAC 互通、`Origin` 轉發、三層逾時對齊）仍待 `C6` 部署後執行。** 另：經 Access 保護路徑的逾時確認原訂在此處做，因會覆寫 `finpo` Worker 上的 `C1-6` canary 而改排到 `C7-1`。
+
+    **2026-09-30 補記：代理程式已在本機完成，未部署**（`worker/index.js`、`wrangler.jsonc`、`tests/worker.test.mjs`）。`run_worker_first` 只列 `/api/*`；`Origin` 與兩個上傳標頭都已原樣轉發；524 轉成 JSON 的 504。另追加一項計畫沒要求的處置：上游的 HTML 錯誤頁與 3xx 也會轉成 JSON，因為 `app.js` 把任何 `text/html` 回應都當成 Access 過期而重新整理整頁。HMAC 互通只在 Node 上以後端的 `Auth` 驗過；**雲端的正向驗簽、靜態檔不啟動 Worker 的核對、三層逾時對齊都還沒做**，要等部署，而部署要和 `C7-1` 一起做。見 [C7 證據](cloud-C7-evidence.md)「`C7-2` 代理程式（本機）」節。
   - [ ] `C7-3` 啟用入口驗證，並驗證無法繞過代理直接呼叫 `run.app`。後端驗證需依賴可靠簽章或憑證，不得只檢查可偽造的標頭。另須實測：未授權的 Google 帳號被 Access 拒絕、無痕視窗開啟會導向 Google 登入、session 過期後前端可自行恢復。**本項承接 `C3-3` 的雲端驗收**：`C3-3` 的勾選只涵蓋程式與模擬測試，C3 完成條件中「閒置至服務縮容後再操作，不需手動重新整理即可繼續使用」要在此處取得實測證據。此處未過即視為 C3 尚未收尾，不得因 `C3-3` 已勾選而略過。
   - [ ] `C7-4` 功能驗收：上傳 Excel、預覽、儲存、版本衝突（409）、報價更新、缺價／失敗、查詢結果與前端提示。使用 `D5` 決定的資料。
   - [ ] `C7-5` 持久性驗收：關閉瀏覽器、等待縮容後重開，確認持股仍在；更新中途終止與重新部署，確認 job 不永久卡住。**本項承接 `C4` 的雲端完成條件**：`C4` 的勾選只涵蓋程式與資料庫整合測試，真實容器終止與 rollout 下的 job 狀態要在此處取得實測證據。
@@ -876,6 +888,7 @@ Dockerfile 三處 `company_ca` 掛載本來就是條件式（`if [ -f /run/secre
           - **09-26 以這個做法實測通過**：`compare` 輸出了摘要行（18 筆快照，偏移都是 3600 秒），`record` 記錄 6 秒寫入 2 筆，檔案落在 `main` 的 `output/c76`。**實測時抓到一個坑**：worktree 裡沒有 `output/c76`（被 Git 忽略），而它的父目錄是唯讀掛載，Docker 無法建立掛載點，容器會停在 `Created`，錯誤訊息是 `mkdirat …/workspace/output: read-only file system`。已在 worktree 裡**預先建立空的 `output\c76` 目錄**，Git 不追蹤它，不影響分支內容。若 worktree 重建過，要記得再建一次。
           - **收尾後**：`c76-source-probe` 刪除、不再需要 `218b4b962c5a` 之後，把 `c76-mis-dt-align` 合併進 `main` 再推送，然後以 `git worktree remove` 移除 worktree。
   - [ ] `C7-7` 營運驗收：DB 匯出與還原演練、前版映像回滾、計費與 DB 容量檢查、冷啟動與抓價耗時量測。
+  - [ ] `C7-8`（**2026-09-30 新立，使用者決定**）Worker 驗證 Access JWT。`C7-2` 的代理替任何到得了它的請求簽章，所以 Worker 本身只靠 Access 保護；Access 被誤關或設定錯誤時，後端的 HMAC 驗證就等於被繞過。做法是 Worker 以 WebCrypto 驗 `Cf-Access-Jwt-Assertion` 的簽章與 `aud`，公鑰取自 team domain 的 JWKS，驗不過就不簽章。這不牴觸 `D1`：`D1` 否決的是在**後端**驗 JWT，理由是要增加 Python 依賴；Worker 端沒有這個限制。**尚未排入順序，也未決定是否列為第一階段的完成條件**；JWKS 快取與金鑰輪替怎麼處理也還沒設計。
 - **完成條件**：評估文件第 6 節 C 的 8 項全部通過，且量測數據取代先前的估算假設。
 - **證據**：`docs/cloud-C7-evidence.md`，含各項實測輸出與量測值。
 
@@ -905,6 +918,7 @@ flowchart LR
 | Worker 不得 fetch 同 zone 的另一個 Worker | **新增（2026-09-22）**：`workers.dev` 全帳號同屬一個 zone，Worker 互打回 `error code: 1042`。本階段 `C7-2` 的代理打的是 `run.app`，不受影響；但封死「以第二個 Worker 分擔長工作」這個選項 | 若日後要拆 Worker，需改用 service binding 或自有網域 |
 | ~~自動產生的 `_routes.json` 是否只涵蓋 `/api/*`~~ | **已解除**：`D2` 改採 Workers static assets 後，改以 wrangler 的 `run_worker_first` 明文宣告，無自動產生的失敗模式 | — |
 | ~~Access 能否保護免費子網域（含 preview URL）~~ | **已解決**：`C1-6` 實測 `workers.dev` 可受 Worker-level Access 保護，未登入時靜態檔不送出、`/api/*` 亦在保護傘內，`D5` 的「不買網域」成立 | — |
+| Worker 替任何到得了它的請求簽章 | **新增（2026-09-30）**：Worker 不驗 Access JWT，Access 被誤關或設定錯誤時，後端的 HMAC 驗證等於被繞過 | `C7-8`；尚未排入順序 |
 | Worker-level Access 不支援 WebSocket | 已知行為；本階段以 `fetch` 輪詢，不受影響，但封死日後改用 WebSocket 推播的選項 | 若日後要改推播，需改用 hostname-based Access |
 | Supabase Free 專案閒置 7 天被暫停 | 已知行為；每日更新不會觸發，驗收若中斷一週以上會誤判為程式故障 | `C7` 期間留意 |
 | ~~pooler 是否接受 startup options~~ | **已解決（2026-09-22）**：連線後 SET＋SHOW 已實作，Supabase 上已驗證設定值與實際兩種逾時 | C5-4 完成，證據見 cloud-C5-evidence.md |

@@ -9,12 +9,13 @@
 | 項目 | 狀態 | 備註 |
 |---|---|---|
 | `C7-1` Workers static assets 部署 | ⬜ 未開始 | |
-| `C7-2` `/api/*` 代理與逾時對齊 | 🟡 部分完成 | **逾時量測已完成**（本檔）；代理實作、`run_worker_first`、HMAC 跨語言互通與 `Origin` 轉發待 `C6` 部署後 |
+| `C7-2` `/api/*` 代理與逾時對齊 | 🟡 部分完成 | **逾時量測已完成**（本檔）；代理實作、`run_worker_first`、HMAC 跨語言互通與 `Origin` 轉發待 `C6` 部署後。**2026-09-30 補記**：代理程式已在本機完成，只有 Node 測試，未部署，見「`C7-2` 代理程式（本機）」節 |
 | `C7-3` 入口驗證與繞過測試 | ⬜ 未開始 | 承接 `C3-3` 的雲端驗收 |
 | `C7-4` 功能驗收 | ⬜ 未開始 | |
 | `C7-5` 持久性驗收 | ⬜ 未開始 | 承接 `C4` 的雲端完成條件 |
 | `C7-6` 外部來源驗收 | 🟡 進行中 | **R1、R4 已完成**，見下文。**2026-09-29 R2 已執行**：GCP 11/11 抓價成功，台股 6 檔為當日一般時段，但 MIS 嚴格逐秒對齊為 0/6，價格正確性證據不足；~~R3、R5 未執行~~。**同日晚上 R3、R5 已執行**：R3 美股 5 檔取得當日一般時段成交（價格正確性證據不足），台股 6 檔等於 09-29 官方收盤；R5 截斷收尾正確，`c` 為 3.967（含暖機）／2.947（不含第 1 批）秒／檔，**`refresh_max_tickers` 待使用者決定**。五場都沒有 429。尚待收尾（清單更新、`reset`、`purge`、刪除 Job）。 |
 | `C7-7` 營運驗收 | 🟡 部分 | **冷啟動已提前量測**（本檔），其餘（匯出還原、回滾、計費、抓價耗時）未開始；含 `C1-8` 的預算通知送達 |
+| `C7-8` Worker 驗 Access JWT | ⬜ 未開始 | 2026-09-30 新立，見計畫書 |
 
 ## C7-2　代理逾時量測
 
@@ -203,6 +204,87 @@ export default {
 - Worker 轉發時原樣帶上瀏覽器 `Origin` 標頭（`C2-2` 追加的必辦事項）
 - 前端、代理與後端三層逾時的實際對齊
 - **經 Access 保護路徑的逾時確認**：上表的 125 秒得自不受 Access 保護的 `finpo-probe-proxy`。Access 在 Worker 之前執行、且不參與回應路徑，理論上不會縮短該上限，但這是推論而非實測。原訂以探針頁部署到 `finpo` 取得實測，因會覆寫上述 canary 而放棄；改於 `C7-1` 部署真實前端（canary 功成身退時）一併確認
+
+**2026-09-30 補記**：上列第一、二、三項的**程式**已在本機完成，見下節；雲端的核對仍未做。
+
+## C7-2　代理程式（本機，2026-09-30）
+
+**本節只有本機的 Node 測試，沒有部署，也沒有動 `finpo`。** 部署要和 `C7-1` 一起做，因為兩者是同一支 Worker（`D2`），第一次部署就會換掉 `C1-6` 的 canary。
+
+### 檔案
+
+| 檔案 | 內容 |
+|---|---|
+| `worker/index.js` | `/api/*` 代理，依 `D1` 加上 `X-Timestamp` 與 `X-Signature` |
+| `wrangler.jsonc` | `name: finpo`；`assets.directory` 指向 `src/stock_quote_fetcher/static/`；`run_worker_first: ["/api/*"]`；`UPSTREAM_ORIGIN` 為決定性網址。秘密 `PROXY_HMAC_SECRET` 以 `wrangler secret put` 設定，不寫進檔案 |
+| `tests/worker.test.mjs` | 以 Node 內建的 `node --test` 執行，不需要安裝任何套件 |
+
+### 行為
+
+| 情況 | 處理 | 理由 |
+|---|---|---|
+| 簽章的 path+query | 從實際 `fetch` 的那個 URL 物件讀回 | 簽的就是送上線路的請求列，包括 URL 解析器做過的編碼 |
+| 簽章的 body | 用 `request.arrayBuffer()` 讀一次，雜湊和轉發都用這份 | `D2` 的實作注意 |
+| 轉發的請求標頭 | 只轉 `Content-Type`、`Origin`、`X-Portfolio-Token`、`X-Upload-Filename`、`X-Upload-Sheet` | Access 的 cookie 與 `Cf-Access-Jwt-Assertion` 不會送到後端，也就不會進 Cloud Run 日誌。代價是後端以後新讀的標頭必須加進清單，就像 `C6-2` 的上傳標頭一樣 |
+| 轉回的回應標頭 | 只轉 `Content-Type`、`Content-Disposition`、`Cache-Control`、`Content-Security-Policy`、`X-Content-Type-Options`、`Referrer-Policy` | 不轉 `Server`、`X-Cloud-Trace-Context` 之類的平台標頭 |
+| `/api` 以外的路徑 | 404，不轉發 | 找不到靜態檔的路徑會回落到 Worker，不擋的話會被簽章送到後端 |
+| body 超過 5 MiB | 413，不雜湊、不轉發 | 與 `web_input.MAX_UPLOAD` 相同。先擋是為了不讓大檔的雜湊耗掉 CPU |
+| 秘密缺少或短於 32 bytes，或 `UPSTREAM_ORIGIN` 未設 | 500，不轉發 | 失敗時關閉 |
+| 上游 524 | 504 的 JSON，`code: upstream_timeout` | 本檔的逾時量測：524 以回應的形式回到 Worker |
+| 上游 3xx，或 4xx／5xx 且不是 JSON | JSON，`code: upstream_error`；3xx 改為 502，其餘保留原狀態碼 | **計畫沒要求，追加的**。`app.js` 收到任何 `text/html` 回應都會當成 Access 過期而重新整理整頁；後端的錯誤一律是 JSON 且從不轉址，所以這類回應只可能來自前面的平台 |
+| `fetch` 丟例外 | 502 的 JSON，`code: upstream_unreachable` | |
+| 其他回應 | 狀態碼與 body 原樣轉回 | 含範本 xlsx 的二進位內容 |
+| 上游轉址 | `redirect: 'manual'`，不跟隨 | |
+
+錯誤 JSON 的格式與後端 `WebError.payload` 相同（`code`、`message`、`issues`）。
+
+### 測試
+
+| 指令 | 結果 |
+|---|---|
+| `node --check worker/index.js` | 通過 |
+| `PYTHON=.venv/Scripts/python.exe node --test tests/worker.test.mjs tests/web_session.test.cjs` | 17 passed、0 skipped（Node 24.21.0、Python 3.14.6） |
+
+跨語言的兩項測試會啟動 Python，以 `src` 內的 `stock_quote_fetcher.web_auth.Auth` 驗證。傳給 Python 的 `raw_path` 與查詢字串是從 Worker 實際 `fetch` 的 URL 拆出來的，比照 uvicorn 交給 `Guard` 的內容，**沒有沿用 Worker 自己簽的字串**。
+
+- 正向：GET、帶查詢與中文百分比編碼的 GET、含空白與中文的路徑、二進位上傳（含 `0x00`、`0xff`）、JSON 的 PUT，五個都通過驗證。
+- 反面：同一個請求分別竄改 body、路徑、查詢、方法、秘密，五個都被拒；未竄改的對照通過。
+
+找不到 Python 時這項測試會失敗，不會 skip。
+
+### 注入錯誤
+
+依本專案的規則，測試要在程式寫錯時會失敗。對 `worker/index.js` 的副本一次注入一個錯誤，再跑同一份測試：
+
+| 注入的錯誤 | 結果 |
+|---|---|
+| 簽章漏掉查詢字串 | 2 項失敗（跨語言正、反面） |
+| 簽章一律用空 body | 2 項失敗（同上） |
+| 轉發所有請求標頭 | 1 項失敗 |
+| 不轉換 524 | 1 項失敗 |
+| 不包裝 HTML 錯誤頁與 3xx | 1 項失敗 |
+| 拿掉 `/api` 前綴檢查 | 1 項失敗 |
+| 拿掉 5 MiB 上限 | 1 項失敗 |
+| 改為跟隨轉址 | 1 項失敗 |
+| 轉回所有回應標頭 | 1 項失敗 |
+| 拿掉秘密檢查 | 1 項失敗 |
+| 以 `new URL(path, base)` 組上游網址 | **0 項失敗** |
+
+最後一項抓不到，是因為它碰不到：會讓 `new URL(path, base)` 跑到別的主機的路徑（`//other.host/...`）不以 `/api` 開頭，已先被前綴檢查擋下。原本另有一個「上游主機不受路徑影響」的測試，它守的正是這個碰不到的情況，**已刪除**，對應的程式註解也改為不宣稱它有防護作用。注入用的腳本放在 session 的 scratchpad，沒有留存。
+
+### 未實測
+
+- **測試跑在 Node，不是 Workers 的執行環境**（workerd）。`Request`、`Headers`、WebCrypto 在兩者的行為推定相同，未核對。
+- **在 Workers 裡由程式設定 `Origin` 標頭會不會生效**。瀏覽器禁止設定它，Workers 推定允許，未實測。若不生效，所有寫入請求都會被後端判 403。
+- **GFE 會不會原樣把請求路徑交給 uvicorn**。若它改寫了編碼，正向驗簽就會失敗，只有部署後才看得到。
+- **5 MiB 上傳的 CPU 耗時**。Free 方案每次 10 ms，SHA-256 加 HMAC 是否在上限內沒有量過；一般的持股 Excel 遠小於這個大小。
+- **依 `Content-Length` 提前擋下的那條路徑**。Node 的 `Request` 不會設定這個標頭，所以測試只走到讀完 body 後再擋的那條。
+- **`compatibility_date`**（`2026-09-01`）沒有用 wrangler 核對過，這台也沒有安裝 wrangler。
+- 部署後還要核對：靜態檔路徑不會啟動 Worker、請求日誌的 `remoteIp` 與 `userAgent` 記到什麼、三層逾時的對齊。
+
+### 建置觸發
+
+建置的 `paths-ignore` 原本只排除 `docs/**` 與 `**.md`，推送這些檔案會觸發一次映像建置。映像內容其實不變，因為 `.dockerignore` 不放行它們，但每次建置都會把最舊的一個可回滾版本擠出保留窗口。**使用者決定**把 `worker/**`、`wrangler.jsonc`、`tests/*.mjs` 加進 `paths-ignore`；改到 workflow 檔的那一次提交本身仍會建置。
 
 ## C7-6　外部來源驗收（進行中）
 
