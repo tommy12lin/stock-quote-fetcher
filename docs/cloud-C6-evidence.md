@@ -9,7 +9,7 @@
 | 項目 | 狀態 | 備註 |
 |---|---|---|
 | `C6-1` GitHub Actions 建置與推送 | ✅ 完成 | run `35806642267`，digest 已取得並經 GCP 端獨立核對 |
-| `C6-2` 部署設定 | ⬜ 未開始 | **仍被 `C4-1` 的兩個數值擋住**，見下 |
+| `C6-2` 部署設定 | 🟡 已部署（2026-09-30） | ~~**仍被 `C4-1` 的兩個數值擋住**，見下~~ 服務 `stock-quote` 已上線，設定逐項核對、反面測試通過。**未完成的有三項**：從服務連資料庫尚未實測（要帶簽章的請求，由 `C7-2` 承接）；日誌的內容與保留量未處理；部署方式偏離 `D6`。見下方 `C6-2` 節 |
 | `C6-3` 一次性初始化 | ⬜ 未開始 | |
 | `C6-4` digest 與回滾紀錄 | 🟡 部分 | digest 產出機制已建立（本項），回滾實測待 `C7-7` |
 
@@ -141,3 +141,80 @@ GCP 端另以 `gcloud artifacts docker images list` 獨立核對：digest 與 ta
 | `refresh_max_tickers` | 完全無依據，待 `C7-6` 的實際抓價耗時 |
 
 `C6-2` 另須注意：request timeout 必須大於 `refresh_deadline_seconds`，但**無論設多大都無法超過 125 秒的邊緣上限**（`C7-2` 已證實限制在邊緣不在平台）。
+
+**2026-09-30 補記**：兩個數值都已回填（`refresh_deadline_seconds = 110`，`refresh_max_tickers = 27`，`ab1667c`），前提解除，`C6-2` 已執行，見下節。
+
+## C6-2　部署（2026-09-30）
+
+**結論：服務 `stock-quote` 已部署並啟動成功，設定逐項與下表一致；不帶簽章或簽章錯誤的 `/api/` 請求回 401，舊式網址因 Host 不在白名單而回 403。從服務連資料庫尚未實測，本項不勾選完成。**
+
+### 執行
+
+由使用者在 Windows PowerShell 5.1 執行。我方的自動執行權限以「弱化認證」為由擋下這條指令，指的是 `--allow-unauthenticated`；依 `D1`，這一項是必要的。部署開始於 05:20:48Z 左右（第一筆日誌的時間）。
+
+```
+gcloud run deploy stock-quote --region=asia-northeast1
+  --image=asia-northeast1-docker.pkg.dev/finpo-508709/finpo/stock-quote@sha256:7da85b3a2d0f97d3cad47968e2f3c59c79ace0e4cf56d8d352270d0e52346a1f
+  --service-account=finpo-runtime@finpo-508709.iam.gserviceaccount.com
+  --cpu=1 --memory=1Gi --min-instances=0 --max-instances=1 --concurrency=10 --timeout=150
+  --allow-unauthenticated
+  --set-env-vars="DB_HOST=…,DB_PORT=5432,DB_NAME=postgres,DB_USER=…,WEB_ALLOWED_HOSTS=stock-quote-896096883650.asia-northeast1.run.app,WEB_ALLOWED_ORIGINS=https://finpo.drhiromu.workers.dev"
+  --set-secrets="DB_PASSWORD=db-password:latest,PROXY_HMAC_SECRET=proxy-hmac-secret:latest,PROXY_HMAC_SECRET_PREV=proxy-hmac-secret-prev:latest"
+```
+
+（`DB_HOST` 與 `DB_USER` 屬識別資訊，依 `C1-4` 不記錄於本檔；兩者與 `finpo-catalog-refresh` 的設定相同。）
+
+### 設定值與依據
+
+| 設定 | 值 | 依據 |
+|---|---|---|
+| 服務名 | `stock-quote` | `C6-1`：repository 以專案命名、image 以服務命名 |
+| 映像 | `ab1667ccf7f7`，`sha256:7da85b3a…`（含 `refresh_max_tickers = 27`） | 09-30 run `36669128758` |
+| 規格 | 1 vCPU／1 GiB、min=0、max=1 | `C6-2`、`D3` |
+| request timeout | **150 秒** | **依算式選的，不是量測值**：必須大於 `refresh_deadline_seconds` 110，程式最晚約 118.5 秒收尾（`C7-7` 算式），邊緣在 125 秒切斷。超過 118.5 之後，這一層就不會是先觸發的那一層。多留約 30 秒，是因為冷啟動是否算進平台的計時**未實測**；而低於預設的 300，卡住的請求就不會佔住唯一的實例 5 分鐘。使用者選定 |
+| concurrency | **10** | **沒有量測依據**。計畫書只規定不可為 1。取與 `C7-2`、`C7-7` 兩個量測服務相同的值，使用者選定 |
+| `WEB_ALLOWED_HOSTS` | 只有決定性網址 `stock-quote-896096883650.asia-northeast1.run.app` | 範圍最窄，使用者選定。**`C7-2` 的 Worker 必須呼叫這個網址**；呼叫舊式網址會被判 403（下方反面測試） |
+| `WEB_ALLOWED_ORIGINS` | `https://finpo.drhiromu.workers.dev` | `C1-6` 的前端 Worker。preview URL 不在白名單內 |
+| 公開呼叫 | `allUsers` → `roles/run.invoker` | `D1`：Worker 以一般 HTTPS 呼叫，關卡在 `C3-1` 的 HMAC |
+| 秘密 | 三把都參照 `latest`，`finpo-runtime` 對三把都有 `secretAccessor`（部署前以 `get-iam-policy` 核對）；目前都只有版本 1，均為 enabled | `C1-3`、`C1-7` |
+| 探測 | 不另設，維持平台預設的 TCP 啟動探測 | `/healthz` 在公開網址不可用（C7 證據）；計畫書寫的是「若設定」。預設沒有 liveness probe |
+| command／args | 不覆寫 | 映像的 ENTRYPOINT 已帶 `--container --config /app/cloud.toml`；schema 用 `web` 的預設值 `dashboard` |
+
+### `describe` 核對（部署後）
+
+逐項讀出並與上表比對，**全部一致**：映像 digest、`cpu 1`／`memory 1Gi`、`maxScale 1`（`minScale` 未出現，即預設 0）、`containerConcurrency 10`、`timeoutSeconds 150`、`serviceAccountName finpo-runtime`、6 個一般環境變數與 3 個 secret 參照、command／args 為空、埠 8080、ingress `all`。IAM 只有 `allUsers` → `run.invoker` 一條。
+
+PowerShell 5.1 在參數裡帶了引號的逗號，這次**沒有被拆開**（6 個環境變數、3 把 secret 各自獨立出現），與 C7 證據「收尾」節的 `reset` 結果一致。
+
+平台自行加上、非由參數指定的：`run.googleapis.com/startup-cpu-boost: true`（gcloud 的預設值），以及預設的 TCP 啟動探測（`periodSeconds 240`、`timeoutSeconds 240`、`failureThreshold 1`）。**`C7-7` 量冷啟動時的服務是否也開了 startup CPU boost，當時沒有記錄**，所以兩者的冷啟動是否可比，未確認。
+
+| 項目 | 值 |
+|---|---|
+| revision | `stock-quote-00001-dx4`，Ready，100% 流量 |
+| `status.urls` | `https://stock-quote-896096883650.asia-northeast1.run.app`（決定性網址，與 `WEB_ALLOWED_HOSTS` 一致）、`https://stock-quote-nfmyvudecq-an.a.run.app`（舊式網址） |
+
+### 啟動日誌
+
+05:20:56Z `Starting new instance. Reason: DEPLOYMENT_ROLLOUT`；05:20:59.64Z 印出 `listening on 0.0.0.0:8080`，以及 allowed hosts、allowed origins 各一行，值與設定相同；05:20:59.83Z `Default STARTUP TCP probe succeeded after 1 attempt`。到 05:23:47Z 為止共 14 筆日誌，沒有任何 error、traceback 或 exception。
+
+### 反面測試（05:23:45Z–05:23:47Z，自本機以 curl 發出）
+
+| 請求 | 回應 | 說明 |
+|---|---|---|
+| 決定性網址 `GET /api/portfolio`，不帶簽章 | **401** `unauthorized` | `C3-1` 的驗簽生效 |
+| 決定性網址 `GET /api/session`，不帶簽章 | **401** | 同上；這個端點以前會對任何人發 token（`D1`） |
+| 決定性網址 `GET /api/portfolio`，帶格式正確但錯誤的 `X-Timestamp`／`X-Signature` | **401** | 錯誤簽章同樣被拒 |
+| 舊式網址 `GET /api/portfolio`、`GET /` | **403** `拒絕不合法的 Host。` | Host 白名單生效，而且 Host 檢查發生在驗簽之前 |
+| 決定性網址 `GET /healthz` | **404**，Google 前端的 HTML 錯誤頁 | 與已知限制相同（C7 證據）；日誌裡**沒有**這筆請求，證實它沒有抵達容器 |
+| 決定性網址 `GET /` | **404**，應用程式的 JSON（`找不到頁面。`） | 容器有回應。雲端的靜態檔由 Worker 提供（`D2`），容器不提供首頁 |
+
+日誌裡對應的請求都記錄了狀態碼（401／403／404），與 curl 看到的一致。這批請求落在部署時啟動的那個實例上，**所以不是冷啟動量測**。
+
+### 未完成、未實測的部分
+
+- **從服務連資料庫：未實測。** 啟動時不連資料庫（`Dashboard.__init__` 只載入設定），而每個 `/api/` 端點都要簽章。自行簽章就得把 `proxy-hmac-secret` 取到本機，所以不這樣做；由 `C7-2` 的 Worker 以正式路徑送出第一個帶簽章的請求時一併確認。**在那之前，不得宣稱服務能讀寫資料庫。**
+- **正向的驗簽：未實測。** 目前只證明了「沒簽或簽錯會被拒」，還沒證明「簽對會放行」。同樣由 `C7-2` 承接（Worker 與後端對同一 canonical string 產生相同簽章）。
+- **日誌的內容與保留量：未處理。** `C6-2` 要求「限制內容與保留量」。目前沿用 Cloud Logging 預設的 bucket 與保留期，沒有另外設定，也沒有逐項核對日誌內容不含敏感資料。啟動日誌印出的是 allowed hosts 與 origins，不含秘密。
+- **部署方式偏離 `D6`。** `D6` 定「部署到 Cloud Run 一律手動觸發（`workflow_dispatch`）」，本檔 `C6-1` 節也寫了「`C6-2` 另立 workflow」。這次是由使用者以 `gcloud run deploy` 直接部署，deploy workflow **尚未實作**。要補上 workflow，還是改寫 `D6` 接受手動 `gcloud`，待使用者決定；這也牽動 `C6-4`「以 digest 手動觸發重新部署」的回滾方式。
+- **回滾：未實測**，屬 `C6-4`。
+- **冷啟動：未在正式服務上量測**，屬 `C7-7` 的正式驗收（見上方 startup CPU boost 一段）。
