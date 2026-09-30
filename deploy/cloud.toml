@@ -46,11 +46,23 @@ sslrootcert = "/app/supabase-ca.crt"
 # and the user gets a failure instead of the partial result C4-1 is designed to return.
 refresh_deadline_seconds = 110
 #
-# refresh_max_tickers stays unset (0 = bounded by the deadline alone). C7-6 has not
-# measured what a single ticker actually costs against the real sources from GCP, and a
-# cap guessed without that number would silently defer holdings for no reason. The
-# deadline already bounds the work; the cap exists to bound it more predictably once the
-# per-ticker cost is known.
+# At most this many holdings per refresh, stalest first; the rest are deferred to the
+# next one. Measured from the GCP egress (C7-6 R5, 2026-09-29, a cold container):
+#
+#   floor((110 - F) / c) = floor((110 - 1.470) / 3.967) = 27
+#
+#   F      1.470s from run_job start to the first batch (upper bound).
+#   c      3.967s per ticker: p95 of seven batches' wall clock / tickers, Supabase writes
+#          included. With seven batches that is the slowest one, batch 1, which carries
+#          the ~8s first request every cold container pays (min=0). Without batch 1 the
+#          value is 2.947s and the cap would be 36, but R5 itself, cold, finished 35 in
+#          110s and was cut on the 36th, so 36 only fits a warm container.
+#
+# c is Taiwan stocks after the close: all 40 tickers R5 reached were TW. US per-ticker
+# cost and intraday cost are not measured (R3/R4 per-attempt times are side evidence
+# only). The deadline above still bounds the work if c turns out higher; C7-4 re-checks
+# it on the real path. Do not raise this without re-measuring c.
+refresh_max_tickers = 27
 
 [instruments]
 # Never refresh the official listing inside a request. From Cloud Run a full refresh took
