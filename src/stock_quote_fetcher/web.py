@@ -6,6 +6,7 @@ import json
 import os
 import re
 import sys
+from urllib.parse import unquote
 
 import anyio
 from fastapi import FastAPI, Request
@@ -88,6 +89,14 @@ def first(request, name, default=None):
     """Mirrors parse_qs: a repeated parameter resolves to its first value."""
     values = request.query_params.getlist(name)
     return values[0] if values else default
+
+
+def upload_name(request, header):
+    """Upload filename and sheet travel percent-encoded in headers, never in the query:
+    Cloud Run's request log records every URL with its query string, even for requests
+    the signature check rejects (C6-2). Like first(), a repeated header takes the first."""
+    values = request.headers.getlist(header)
+    return unquote(values[0]) if values else None
 
 
 async def body_bytes(request):
@@ -255,9 +264,9 @@ async def template(request: Request):
 @app.post('/api/imports/preview')
 async def preview(request: Request):
     raw = await body_bytes(request)
-    if not (first(request, 'filename') or '').lower().endswith('.xlsx'):
+    if not (upload_name(request, 'x-upload-filename') or '').lower().endswith('.xlsx'):
         raise WebError('只接受 .xlsx 檔案。')
-    return respond(200, await run_in_threadpool(bounded_preview, raw, first(request, 'sheet')))
+    return respond(200, await run_in_threadpool(bounded_preview, raw, upload_name(request, 'x-upload-sheet')))
 
 
 @app.put('/api/portfolio')
@@ -326,7 +335,7 @@ def main():
     print(f'Portfolio dashboard API: listening on {host}:{port}', flush=True)
     print(f'Allowed hosts: {hosts if hosts == ANY_HOST else ", ".join(sorted(hosts))}', flush=True)
     print(f'Allowed origins: {", ".join(sorted(origins))}', flush=True)
-    # Access logs would carry query strings, which hold filenames and market filters.
+    # Access logs would only repeat the platform's request log, which already records every URL.
     # proxy_headers=False: X-Forwarded-* reach this service unverified and nothing here needs them.
     uvicorn.run(Failsafe(Guard(app, hosts, origins, auth)), host=host, port=port,
                 access_log=False, server_header=False, proxy_headers=False, log_level='warning')

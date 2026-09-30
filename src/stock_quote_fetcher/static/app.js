@@ -31,8 +31,10 @@ async function renewSession() {
 function cutShort() {
   throw new Error('更新未能在連線時限內完成；既有價格保留，請稍後重試。若仍無法更新，請重新整理頁面。');
 }
-async function api(path, method='GET', body, retry=true, reloadOnRedirect=true) {
-  const headers = {}; if(method!=='GET') { headers['X-Portfolio-Token']=token; if(!(body instanceof File)) headers['Content-Type']='application/json'; }
+// Upload names ride in headers, not the query: Cloud Run's request log records every URL
+// with its query string, and a filename can carry a person's name (C6-2).
+async function api(path, method='GET', body, retry=true, reloadOnRedirect=true, extra={}) {
+  const headers = {...extra}; if(method!=='GET') { headers['X-Portfolio-Token']=token; if(body instanceof File) headers['X-Upload-Filename']=encodeURIComponent(body.name); else headers['Content-Type']='application/json'; }
   let response;
   try {
     response = await fetch(path, {method,headers,redirect:'manual',body:body===undefined?undefined:body instanceof File?body:JSON.stringify(body)});
@@ -45,7 +47,7 @@ async function api(path, method='GET', body, retry=true, reloadOnRedirect=true) 
   const data = await response.json();
   if(retry && path!=='/api/session' && [401,403].includes(response.status) && ['unauthorized','session_expired'].includes(data.code)) {
     await renewSession();
-    return api(path, method, body, false);
+    return api(path, method, body, false, undefined, extra);
   }
   if(!response.ok) throw new Error(data.message + (data.issues?.length?'\n'+data.issues.map(x=>`${x.sheet||''} 第 ${x.row||'?'} 列 ${fieldLabel(x.field)}：${x.message}`).join('\n'):''));
   return data;
@@ -115,7 +117,7 @@ function renderDetails(){
 }
 function saveStatus(text, error=false) { const status=$('save-status'); status.hidden=false; status.textContent=text; status.style.color=error?'#ad3e4a':'#237057'; status.style.whiteSpace='pre-line'; }
 async function save(fxOnly=false){if(loading||!saved)return;loading=true;saveStatus('儲存中…');$('save').textContent='儲存中…';$('save').disabled=true;$('apply-fx').disabled=true;try{const fx=$('fx').value.trim(); const editing=JSON.stringify(draft);const p=await api('/api/portfolio','PUT',{revision:recoveredRevision??saved.revision,rows:fxOnly?saved.rows:draft.map(r=>({...r})),fx});saved=p;recoveredRevision=null;saveStatus(fxOnly?'匯率已保存。':'持股已保存。');if(!fxOnly&&editing===JSON.stringify(draft)) {draft=structuredClone(p.rows);dirty=$('fx').value.trim()!==fx;draftRender();}else if(fxOnly){dirty=JSON.stringify(draft)!==JSON.stringify(p.rows)||$('fx').value.trim()!==fx;}$('draft-state').textContent=dirty?'有未保存的修改 · 總覽仍使用已保存清單':'已保存 · 總覽使用此版本';$('draft-state').className=dirty?'dirty':'';savedRender();await loadValuation();message(fxOnly?'匯率已套用，已使用既有價格重新換算。':'持股已保存。可按「更新報價」取得新價格。',true);if(!fxOnly&&valuation&&valuation.coverage<valuation.count)refresh();}catch(e){saveStatus('儲存失敗，草稿仍保留。'+String.fromCharCode(10)+e.message,true);message(e.message);}finally{loading=false;$('save').textContent='儲存持股';$('save').disabled=false;$('apply-fx').disabled=false;}}
-async function upload(sheet){if(!file)return;const current=file;$('confirm-import').disabled=true;try{const result=await api('/api/imports/preview?filename='+encodeURIComponent(current.name)+(sheet?'&sheet='+encodeURIComponent(sheet):''),'POST',current);if(file!==current)return;preview=result;$('filename').textContent=current.name;$('sheets').replaceChildren(...preview.sheets.map(name=>{const o=el('option',name);o.value=name;return o;}));$('sheets').value=preview.sheet;$('preview').replaceChildren();preview.rows.forEach((r,i)=>{const tr=el('tr');[String(i+2),r.ticker,r.quantity,r.buy_price].forEach(x=>tr.append(el('td',x)));$('preview').append(tr);});$('import-errors').textContent=preview.issues.map(x=>`第 ${x.row} 列 ${fieldLabel(x.field)}：${x.message}`).join('\n');const old=new Set(draft.map(r=>r.ticker.trim().toUpperCase())),next=new Set(preview.rows.map(r=>r.ticker));$('replace-note').textContent=`確認後將取代整份草稿：新增 ${[...next].filter(x=>!old.has(x)).length} 檔、移除 ${[...old].filter(x=>!next.has(x)).length} 檔。仍需點「儲存持股」才會保存。`;$('confirm-import').disabled=preview.issues.length>0;if(!$('import-dialog').open)$('import-dialog').showModal();}catch(e){message(e.message);}}
+async function upload(sheet){if(!file)return;const current=file;$('confirm-import').disabled=true;try{const result=await api('/api/imports/preview','POST',current,true,true,sheet?{'X-Upload-Sheet':encodeURIComponent(sheet)}:{});if(file!==current)return;preview=result;$('filename').textContent=current.name;$('sheets').replaceChildren(...preview.sheets.map(name=>{const o=el('option',name);o.value=name;return o;}));$('sheets').value=preview.sheet;$('preview').replaceChildren();preview.rows.forEach((r,i)=>{const tr=el('tr');[String(i+2),r.ticker,r.quantity,r.buy_price].forEach(x=>tr.append(el('td',x)));$('preview').append(tr);});$('import-errors').textContent=preview.issues.map(x=>`第 ${x.row} 列 ${fieldLabel(x.field)}：${x.message}`).join('\n');const old=new Set(draft.map(r=>r.ticker.trim().toUpperCase())),next=new Set(preview.rows.map(r=>r.ticker));$('replace-note').textContent=`確認後將取代整份草稿：新增 ${[...next].filter(x=>!old.has(x)).length} 檔、移除 ${[...old].filter(x=>!next.has(x)).length} 檔。仍需點「儲存持股」才會保存。`;$('confirm-import').disabled=preview.issues.length>0;if(!$('import-dialog').open)$('import-dialog').showModal();}catch(e){message(e.message);}}
 // The work now runs inside this request (D3), so the wait is the request itself. A job
 // still comes back queued/running in one case: another instance holds a live lease, and
 // then the existing poll is what follows it.

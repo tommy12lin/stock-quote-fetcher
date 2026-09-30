@@ -56,6 +56,17 @@ test('a cut-short long refresh reports the cut instead of reloading',async()=>{
  assert.equal(s.reloads(),0);assert.equal(s.calls.length,1);
  }
 });
+test('upload names ride in headers and survive a session retry',async()=>{
+ const s=setup([response(403,{code:'session_expired'}),response(200,{token:'renewed'}),response(200,{ok:true})]);
+ s.run("upload_file=new File();upload_file.name='王小明的持股.xlsx'");
+ await s.run("api('/api/imports/preview','POST',upload_file,true,true,{'X-Upload-Sheet':encodeURIComponent('持股')})");
+ for(const call of [s.calls[0],s.calls[2]]){
+  assert.equal(call.path,'/api/imports/preview');
+  assert.equal(call.options.headers['X-Upload-Filename'],encodeURIComponent('王小明的持股.xlsx'));
+  assert.equal(call.options.headers['X-Upload-Sheet'],encodeURIComponent('持股'));
+ }
+ assert.equal(s.calls[2].options.headers['X-Portfolio-Token'],'renewed');
+});
 test('a refresh cut short leaves no login draft behind',async()=>{
  const s=setup([new TypeError('network')]);
  s.run("dirty=true;draft=[{ticker:'TEST'}];saved={revision:2}");

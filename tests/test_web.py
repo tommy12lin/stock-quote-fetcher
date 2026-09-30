@@ -3,12 +3,13 @@ import json
 import hashlib
 import hmac
 import time
+from urllib.parse import quote
 
 import pytest
 from starlette.testclient import TestClient
 
 from stock_quote_fetcher import web
-from stock_quote_fetcher.web_input import MAX_UPLOAD, WebError
+from stock_quote_fetcher.web_input import MAX_UPLOAD, WebError, preview_xlsx, template_xlsx
 
 SECRET = 'test-secret-' * 4
 AUTH = web.Auth(SECRET)
@@ -173,8 +174,43 @@ def test_undecodable_body_is_a_400(client):
     assert response.json() == {'message': '請求格式錯誤。'}
 
 
+def upload(filename, sheet=None):
+    headers = dict(WRITE, **{'X-Upload-Filename': quote(filename)})
+    if sheet is not None:
+        headers['X-Upload-Sheet'] = quote(sheet)
+    return headers
+
+
+@pytest.fixture
+def inline_preview(monkeypatch):
+    # These tests are about where the names come from. The worker subprocess is skipped:
+    # on Windows its stdout is cp950 and the parent decodes UTF-8, a separate defect.
+    monkeypatch.setattr(web, 'bounded_preview', preview_xlsx)
+
+
+def test_upload_names_travel_in_headers(client, inline_preview):
+    # A non-ASCII filename and sheet, percent-encoded as app.js sends them.
+    response = client.post('/api/imports/preview', headers=upload('王小明的持股.xlsx', '持股'), content=template_xlsx())
+    assert response.status_code == 200
+    assert response.json()['sheet'] == '持股'
+
+
+def test_sheet_header_selects_the_sheet(client, inline_preview):
+    response = client.post('/api/imports/preview', headers=upload('x.xlsx', '不存在'), content=template_xlsx())
+    assert response.status_code == 400
+    assert response.json()['message'] == '找不到工作表。'
+
+
+def test_filename_in_the_query_is_not_read(client, inline_preview):
+    # Cloud Run logs every URL with its query string (C6-2), so a client still putting
+    # the filename there must fail loudly rather than keep leaking it.
+    response = client.post('/api/imports/preview?filename=x.xlsx', headers=WRITE, content=template_xlsx())
+    assert response.status_code == 400
+    assert response.json()['message'] == '只接受 .xlsx 檔案。'
+
+
 def test_oversized_upload_is_refused(client, service):
-    response = client.post(f'/api/imports/preview?filename=x.xlsx', headers=WRITE, content=b'x' * (MAX_UPLOAD + 1))
+    response = client.post('/api/imports/preview', headers=upload('x.xlsx'), content=b'x' * (MAX_UPLOAD + 1))
     assert response.status_code == 413
     assert response.json()['message'] == '檔案不得超過 5 MiB。'
     assert service.calls == []
@@ -185,12 +221,12 @@ def test_upload_cap_holds_without_content_length(client):
         for _ in range((MAX_UPLOAD // 65536) + 2):
             yield b'x' * 65536
 
-    response = client.post('/api/imports/preview?filename=x.xlsx', headers=WRITE, content=chunks())
+    response = client.post('/api/imports/preview', headers=upload('x.xlsx'), content=chunks())
     assert response.status_code == 413
 
 
 def test_non_xlsx_upload_is_refused(client):
-    response = client.post('/api/imports/preview?filename=holdings.csv', headers=WRITE, content=b'data')
+    response = client.post('/api/imports/preview', headers=upload('holdings.csv'), content=b'data')
     assert response.status_code == 400
     assert response.json()['message'] == '只接受 .xlsx 檔案。'
 
