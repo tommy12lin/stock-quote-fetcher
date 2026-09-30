@@ -423,7 +423,7 @@ t2  更新 Cloud Run → S2                    恢復
   - `finpo-runtime` 的 SA 層 policy 為空；
   - `finpo-deploy` 的 SA 層 policy 仍只有 WIF 的 `workloadIdentityUser`；
   - 已部署的服務 `stock-quote-00001-dx4` 仍為 Ready。已部署的服務以 `finpo-runtime` 身分執行，不依賴 deploy SA。
-- **對建置的影響：推論為無，未實測**。`build-image.yml` 只執行 `docker login` 與 `docker push`，不呼叫 Cloud Run API。下一次非純文件的提交觸發建置時，才是撤除後的第一次實測，屆時要確認推送成功。
+- **對建置的影響：推論為無，未實測**。`build-image.yml` 只執行 `docker login` 與 `docker push`，不呼叫 Cloud Run API。下一次非純文件的提交觸發建置時，才是撤除後的第一次實測，屆時要確認推送成功。**同日補記：已實測，推送成功**。撤除後第一次建置是 `a1fb03f`（run `36684955673`，07:39Z 觸發），`build-push` 成功，映像 `a1fb03ff680d`（`sha256:df4a49e8…`）已出現在 Artifact Registry，digest 與 run log 相同（見 C6 證據「`C6-2` 補記：日誌」節）。
 - **日後若改回 workflow 部署**：要重新授予這兩個權限。`run.admin` 可改授在 `stock-quote` 服務資源上，不必再授在專案層：服務已經存在，當初只能授在專案層的理由已經不成立。
 
 ### 驗證：GitHub Actions 實測推送（run `35196067829`）

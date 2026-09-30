@@ -9,7 +9,7 @@
 | 項目 | 狀態 | 備註 |
 |---|---|---|
 | `C6-1` GitHub Actions 建置與推送 | ✅ 完成 | run `35806642267`，digest 已取得並經 GCP 端獨立核對 |
-| `C6-2` 部署設定 | 🟡 已部署（2026-09-30） | ~~**仍被 `C4-1` 的兩個數值擋住**，見下~~ 服務 `stock-quote` 已上線，設定逐項核對、反面測試通過。**未完成的有~~三項~~兩項**：從服務連資料庫尚未實測（要帶簽章的請求，由 `C7-2` 承接）；日誌的內容與保留量未處理；~~部署方式偏離 `D6`~~（同日 `D6` 已改寫為接受手動 `gcloud`，此項解除）。見下方 `C6-2` 節 |
+| `C6-2` 部署設定 | 🟡 已部署（2026-09-30） | ~~**仍被 `C4-1` 的兩個數值擋住**，見下~~ 服務 `stock-quote` 已上線，設定逐項核對、反面測試通過。**未完成的有~~三項~~~~兩項~~一項**：從服務連資料庫尚未實測（要帶簽章的請求，由 `C7-2` 承接）；~~日誌的內容與保留量未處理~~（同日已處理，見文末「`C6-2` 補記：日誌」節；現行 revision 因此為 `stock-quote-00004-4v6`，映像 `a1fb03ff680d`）；~~部署方式偏離 `D6`~~（同日 `D6` 已改寫為接受手動 `gcloud`，此項解除）。見下方 `C6-2` 節 |
 | `C6-3` 一次性初始化 | ✅ 完成（2026-09-30） | ~~⬜ 未開始~~ 管理者在正式 Supabase 重跑 bootstrap 成功，前後快照除清單多一代外相同；runtime 更新清單成功（`finpo-catalog-refresh` 在新映像上的第一次執行），`cloud_db check` 通過。界線（bootstrap 是否實際改動分不出來、沒有重做 DELETE 被拒的反面測試、新一代列數未讀出）見下方 `C6-3` 節 |
 | `C6-4` digest 與回滾紀錄 | ~~🟡 部分~~ ✅ 完成（2026-09-30） | **同日補記：回滾已實測**，由 `ab1667ccf7f7` 回滾到 `244fd00583bb`（`00002-wl7`）再換回（`00003-qs6`），兩次都只有映像與 nonce 改變、啟動成功；secret 版本已記錄。界線（沒有觀察到舊版行為、資料庫向後相容沒有被考驗、secret 參照 `latest` 不隨映像回滾）與三個缺口見下方 `C6-4` 節。以下為原記錄：digest 產出機制已建立（本項），~~回滾實測待 `C7-7`~~ 回滾實測屬本項，未實測（2026-09-30 補記更正：C6 完成條件要求「服務可由記錄的映像 digest 重新部署並啟動成功」，本檔 `C6-2` 節亦記為「屬 `C6-4`」，與計畫書抬頭「下一步為 `C6-4`（回滾實測）」一致；`C7-7` 的「前版映像回滾」是營運驗收時的再次演練，不取代本項）。**2026-09-30 補記**：`D6` 修訂後部署紀錄以本檔為準，首次部署的完整指令、digest 與 `describe` 已記在下方 `C6-2` 節 |
 
@@ -214,7 +214,7 @@ PowerShell 5.1 在參數裡帶了引號的逗號，這次**沒有被拆開**（6
 
 - **從服務連資料庫：未實測。** 啟動時不連資料庫（`Dashboard.__init__` 只載入設定），而每個 `/api/` 端點都要簽章。自行簽章就得把 `proxy-hmac-secret` 取到本機，所以不這樣做；由 `C7-2` 的 Worker 以正式路徑送出第一個帶簽章的請求時一併確認。**在那之前，不得宣稱服務能讀寫資料庫。**
 - **正向的驗簽：未實測。** 目前只證明了「沒簽或簽錯會被拒」，還沒證明「簽對會放行」。同樣由 `C7-2` 承接（Worker 與後端對同一 canonical string 產生相同簽章）。
-- **日誌的內容與保留量：未處理。** `C6-2` 要求「限制內容與保留量」。目前沿用 Cloud Logging 預設的 bucket 與保留期，沒有另外設定，也沒有逐項核對日誌內容不含敏感資料。啟動日誌印出的是 allowed hosts 與 origins，不含秘密。
+- ~~**日誌的內容與保留量：未處理。** `C6-2` 要求「限制內容與保留量」。目前沿用 Cloud Logging 預設的 bucket 與保留期，沒有另外設定，也沒有逐項核對日誌內容不含敏感資料。啟動日誌印出的是 allowed hosts 與 origins，不含秘密。~~ 同日已處理：盤點時發現平台請求日誌會記下上傳的檔名，已修正並部署；保留期維持 30 天為明確選擇。見文末「`C6-2` 補記：日誌」節。
 - **部署方式偏離 `D6`。** `D6` 定「部署到 Cloud Run 一律手動觸發（`workflow_dispatch`）」，本檔 `C6-1` 節也寫了「`C6-2` 另立 workflow」。這次是由使用者以 `gcloud run deploy` 直接部署，deploy workflow **尚未實作**。~~要補上 workflow，還是改寫 `D6` 接受手動 `gcloud`，待使用者決定；這也牽動 `C6-4`「以 digest 手動觸發重新部署」的回滾方式。~~ **同日使用者決定改寫 `D6`，接受手動 `gcloud`**（見計畫書 `D6` 的 09-30 修訂）。部署紀錄與回滾改以本檔為準。附帶查明：`finpo-deploy` 仍持有已無用途的 `roles/run.admin` 與對 `finpo-runtime` 的 `serviceAccountUser`，~~是否撤除待決定~~ 同日已撤除（見 C1 證據 `C1-9` 節補記）。**往後部署與回滾都由管理者以自己的帳號執行 `gcloud`**，建置 workflow 已無法部署。
 - ~~**回滾：未實測**，屬 `C6-4`。~~ 同日已實測，見下方 `C6-4` 節。現行 revision 因此變為 `stock-quote-00003-qs6`（映像與 `00001-dx4` 相同）。
 - **冷啟動：未在正式服務上量測**，屬 `C7-7` 的正式驗收（見上方 startup CPU boost 一段）。
@@ -348,3 +348,81 @@ PowerShell 5.1 在參數裡帶了引號的逗號，這次**沒有被拆開**（6
 - **資料庫的向後相容沒有被考驗。** 兩版之間沒有 migration 變更，所以「回滾映像、資料庫維持新 schema」的情境這次不存在。計畫書要求 migration 向後相容；日後若有新 migration，回滾前要另外確認。
 - **流量切換期間是否有請求失敗，沒有量。** 部署期間沒有持續送請求。
 - **舊 revision 還在**：`00001-dx4`、`00002-wl7` 沒有流量，min=0 不會常駐實例。本次沒有刪除；以 `update-traffic --to-revisions` 切回舊 revision 也是一種回滾方式，但 `D6` 定的方式是重跑 `gcloud run deploy`，這次只測了後者。
+
+## `C6-2` 補記：日誌的內容與保留量（2026-09-30）
+
+**結論：程式自己輸出的日誌不含持股資料與秘密；但平台的請求日誌會把 URL 連同查詢字串記下，而上傳預覽原本把使用者的 Excel 檔名與工作表名稱放在查詢字串。已改為以標頭傳遞並部署（`a1fb03f`，`stock-quote-00004-4v6`）。保留期維持 30 天，是使用者的明確選擇。**
+
+### 盤點：程式輸出
+
+| 來源 | 內容 | 依據 |
+|---|---|---|
+| 啟動 | `listening on`、allowed hosts、allowed origins 三行 | `web.py` 的 `main()`；兩份白名單是設定值，不是秘密 |
+| 未處理的例外 | 只印例外類型、method 與路徑，不印訊息 | `Failsafe` 刻意如此，因為例外訊息可能帶 ticker；路徑中唯一的變數是 job id |
+| uvicorn | `access_log=False`、`log_level='warning'` | 同上 |
+| Excel 解析、抓價的子程序 | `capture_output=True`，stderr 不會進日誌；抓價子程序另外 `logging.disable(logging.CRITICAL)` | `web_input.py`、`providers.py`、`provider_worker.py` |
+| 清單更新（Job） | `Dashboard catalog refreshed.` | 只在 `finpo-catalog-refresh` |
+
+逐行讀原始碼得到的結論，沒有對每條程式路徑觸發過。第三方套件在主程序以 `warnings` 模組直接寫 stderr 的可能性沒有排除。
+
+### 盤點：平台請求日誌（實測）
+
+07:28:37Z 自本機送出不帶簽章的 `POST /api/imports/preview?filename=c6-2-log-probe.xlsx&sheet=probe-sheet`（空 body），回 401。`run.googleapis.com/requests` 的紀錄：
+
+```
+requestUrl: https://stock-quote-896096883650.asia-northeast1.run.app/api/imports/preview?filename=c6-2-log-probe.xlsx&sheet=probe-sheet
+status: 401
+remoteIp: （本機出口 IP）
+userAgent: curl/8.21.0
+```
+
+- **查詢字串完整記錄，而且在驗簽之前就記**：沒有簽章的請求也會把檔名寫進日誌。
+- 前端原本的寫法是 `/api/imports/preview?filename=…&sheet=…`，所以只要從儀表板上傳，檔名就會進日誌。檔名由使用者命名，可能含有人名。
+- 程式早就關掉 uvicorn 的 access log，理由註明「會帶出檔名」，但沒考慮到平台自己也記 URL。
+- 另一個查詢參數 `market` 只有 `ALL`／`TW`／`US`，維持原狀。
+- 附帶觀察：第一次送時沒帶 body，在 Google 前端就回 411，日誌裡沒有這筆，表示沒有抵達服務。
+- `remoteIp` 與 `userAgent` 會記錄。`C7-2` 上線後打到服務的是 Worker，這兩欄會變成 Cloudflare 的出口與 Worker 送出的值，**屆時要核對**，看是否仍帶到瀏覽器的資訊。
+
+### 修正（`a1fb03f`）
+
+- **前端**（`app.js`）：上傳檔案時，`api()` 自動帶 `X-Upload-Filename`；工作表以 `X-Upload-Sheet` 傳遞，兩者都經 percent-encoding（標頭只能放 ASCII），session 重試時一起重送。
+- **後端**（`web.py`）：改以 `upload_name()` 從標頭讀取並解碼。查詢字串的 `filename` 不再讀取，仍用舊寫法的客戶端會被明確拒絕，不會繼續外洩。
+- **取捨：這兩個值離開了 HMAC 的簽章範圍。** canonical string 是 timestamp、method、路徑加查詢字串、body 雜湊，不含一般標頭。要竄改得先攔到一個有效的簽章請求，竄改後也只影響該次上傳的副檔名檢查與工作表選擇，判斷影響很小。
+- **`C7-2` 的 Worker 必須原樣轉發 `X-Upload-Filename` 與 `X-Upload-Sheet`**，否則上傳一律回「只接受 .xlsx 檔案」。
+
+測試：新增 Python 測試 3 個、JS 測試 1 個，以 `git stash` 暫時移除 `src/` 的修改確認**修正前都因行為斷言失敗**。其中工作表的測試第一版在修正前也會通過（被 `.xlsx` 檢查先擋下，一樣回 400），改為斷言錯誤訊息「找不到工作表。」後才會失敗。`step-3-evidence.md` 的隔離容器程序：**395 passed、0 skipped、0 failed**；JS（`node --test`）9 passed。**`upload()` 組 URL 的那一行沒有自動化測試**：它位在現有 JS 測試載入範圍（`setDirty()` 之前）之外，由 `C7-4` 從真實前端上傳時確認。
+
+附帶發現、另案處理：Windows 上 `bounded_preview` 的子程序以 cp950 輸出，父程序以 UTF-8 解碼，含中文的 Excel（包括官方範本）在本機都無法預覽。雲端是 Linux，推定不受影響，未實測。新測試以 fixture 直接呼叫 `preview_xlsx`，繞過這個問題。
+
+### 建置與部署
+
+| 項目 | 值 |
+|---|---|
+| 建置 | run `36684955673`，07:39:24Z 觸發，`build-push` 成功。**這是撤除 `finpo-deploy` 的 `run.admin` 與 `serviceAccountUser` 後的第一次建置**，證實撤除不影響建置（C1 證據 `C1-9` 節已補記） |
+| 映像 | `a1fb03ff680d`，`sha256:df4a49e8267d9861fcc646e9b2e4f1cf949b132b242cf2eaa09d6ae55ba327cd`，run log 與 Artifact Registry 相同 |
+| 部署 | 使用者在 PowerShell 以 `C6-2` 同一條指令執行，只換 `--image`；`DB_HOST`、`DB_USER` 同 `C6-4` 取自 `describe` |
+| revision | `stock-quote-00004-4v6`，07:43:47Z 建立，Ready，100% 流量 |
+| `describe` 與 `C6-4` 部署前基準逐行 `diff` | 只有 `image` 與 nonce 不同；IAM 仍只有 `allUsers` → `run.invoker` |
+| 啟動 | 07:43:55.95Z 啟動實例（`DEPLOYMENT_ROLLOUT`），07:43:59.10Z `listening`，TCP 探測第 1 次成功；07:40Z 之後 `severity>=ERROR` 0 筆 |
+| 不帶簽章的請求（07:47:44Z） | `/api/portfolio`、`/api/session` 401；`/` 404；舊式網址 403 |
+| 帶檔名標頭、不帶簽章的上傳（07:47:45Z） | 401；請求日誌的 `requestUrl` 只有 `/api/imports/preview`。以 `"c6-2-hdr-probe"` 全文搜尋該服務近 1 小時的日誌，**0 筆**，平台沒有記錄這兩個標頭的值 |
+
+`finpo-catalog-refresh` 沒有改映像，仍為 `ab1667ccf7f7`：清單更新與這次修改無關，而 `ab1667ccf7f7` 要再推兩次程式變更才會被清除。
+
+**Artifact Registry**：`218b4b962c5a` 在 07:05Z 到 07:40Z 之間被清除政策刪除（`C6-4` 節「發現的缺口」第 2 項）。現有 `b6347e6`、`244fd00`、`ab1667c`、`a1fb03f` 四個，下次清除後應剩後三個。可回滾的舊版因此變成 `ab1667ccf7f7` 與 `244fd00583bb`。
+
+### 保留期
+
+| bucket | 保留期 | 內容 | 處置 |
+|---|---|---|---|
+| `_Default` | 30 天 | 服務的 stdout／stderr、請求日誌 | **維持 30 天，使用者選定**。30 天內免費，`C7` 驗收期間要查的日誌都還在。這是明確選擇，不是沒有設定 |
+| `_Required` | 400 天，已鎖定 | 稽核日誌（admin activity、system event） | 平台固定，無法更改，不含應用程式資料 |
+
+沒有設定 sink 或 exclusion。排除整類請求日誌的做法被否決：狀態碼與延遲在 `C7` 驗收時需要。
+
+### 未驗證、有界線的部分
+
+- **後端確實改讀標頭，只有單元測試證明。** 雲端上要送帶簽章的請求才看得到，這次沒有做（理由同 `C6-2`）。部署核對證明的是「新映像在跑」與「平台不記這兩個標頭」。
+- **從真實前端上傳時，日誌裡不再有檔名，未實測**，由 `C7-4` 確認。
+- **舊的日誌裡是否已有檔名：已搜尋，只有本節的探針。** 以 `httpRequest.requestUrl:"filename="` 搜尋該服務 30 天內的日誌，只有 07:28:38Z 那一筆 `c6-2-log-probe.xlsx`，它會留到 30 天保留期滿。該服務 30 天內的請求日誌共 20 筆，都是 `C6-2`、`C6-4` 與本節的測試請求。
+- **日誌量沒有量測，也沒有設定上限。** 上述 20 筆只說明目前沒有實際流量，不能當作上線後的量。
