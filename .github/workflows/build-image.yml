@@ -26,9 +26,14 @@ on:
     # 不濾掉會用文件把真正的程式版本擠出保留窗口（實際發生過，見 C6 證據）。
     # 只作用於 push：workflow_dispatch 不受影響，任何時候仍可手動建置同一份原始碼。
     # 同時觸及程式與文件的提交照常建置——paths-ignore 的判斷是「是否全部落在清單內」。
+    # Worker 的檔案同理（C7-2）：.dockerignore 不放行它們，映像內容不會因此改變，
+    # 部署走 wrangler 而非本 workflow。改到本檔自身的那一次提交仍會建置。
     paths-ignore:
       - 'docs/**'
       - '**.md'
+      - 'worker/**'
+      - 'wrangler.jsonc'
+      - 'tests/*.mjs'
   workflow_dispatch:
 
 # 預設最小權限；只有需要換取 GCP 憑證的 job 才另外加 id-token: write。

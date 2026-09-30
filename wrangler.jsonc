@@ -1,0 +1,23 @@
+// D2: one Worker serves the three static files and proxies /api/* to Cloud Run.
+// Do not deploy before C7-1: finpo still carries the C1-6 canary, the only thing that can
+// show whether Access is in effect.
+{
+  "name": "finpo",
+  "main": "./worker/index.js",
+  // Checked against the installed wrangler when C7-1 first deploys; not yet verified.
+  "compatibility_date": "2026-09-01",
+  "workers_dev": true,
+  "assets": {
+    "directory": "./src/stock_quote_fetcher/static/",
+    // /api/* starts the Worker first; other paths are served from here, and only a path
+    // with no matching file falls back to the Worker, which answers it 404.
+    "run_worker_first": ["/api/*"]
+  },
+  "vars": {
+    // The deterministic URL: WEB_ALLOWED_HOSTS admits only this host, so the legacy
+    // stock-quote-nfmyvudecq-an.a.run.app is answered 403 (C6-2).
+    "UPSTREAM_ORIGIN": "https://stock-quote-896096883650.asia-northeast1.run.app"
+  }
+  // PROXY_HMAC_SECRET is a secret, set with `wrangler secret put`, never written here.
+  // It holds the same value as Secret Manager's proxy-hmac-secret (C1-7).
+}
