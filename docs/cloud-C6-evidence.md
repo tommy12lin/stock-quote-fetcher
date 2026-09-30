@@ -11,7 +11,7 @@
 | `C6-1` GitHub Actions 建置與推送 | ✅ 完成 | run `35806642267`，digest 已取得並經 GCP 端獨立核對 |
 | `C6-2` 部署設定 | 🟡 已部署（2026-09-30） | ~~**仍被 `C4-1` 的兩個數值擋住**，見下~~ 服務 `stock-quote` 已上線，設定逐項核對、反面測試通過。**未完成的有~~三項~~兩項**：從服務連資料庫尚未實測（要帶簽章的請求，由 `C7-2` 承接）；日誌的內容與保留量未處理；~~部署方式偏離 `D6`~~（同日 `D6` 已改寫為接受手動 `gcloud`，此項解除）。見下方 `C6-2` 節 |
 | `C6-3` 一次性初始化 | ✅ 完成（2026-09-30） | ~~⬜ 未開始~~ 管理者在正式 Supabase 重跑 bootstrap 成功，前後快照除清單多一代外相同；runtime 更新清單成功（`finpo-catalog-refresh` 在新映像上的第一次執行），`cloud_db check` 通過。界線（bootstrap 是否實際改動分不出來、沒有重做 DELETE 被拒的反面測試、新一代列數未讀出）見下方 `C6-3` 節 |
-| `C6-4` digest 與回滾紀錄 | 🟡 部分 | digest 產出機制已建立（本項），~~回滾實測待 `C7-7`~~ 回滾實測屬本項，未實測（2026-09-30 補記更正：C6 完成條件要求「服務可由記錄的映像 digest 重新部署並啟動成功」，本檔 `C6-2` 節亦記為「屬 `C6-4`」，與計畫書抬頭「下一步為 `C6-4`（回滾實測）」一致；`C7-7` 的「前版映像回滾」是營運驗收時的再次演練，不取代本項）。**2026-09-30 補記**：`D6` 修訂後部署紀錄以本檔為準，首次部署的完整指令、digest 與 `describe` 已記在下方 `C6-2` 節 |
+| `C6-4` digest 與回滾紀錄 | ~~🟡 部分~~ ✅ 完成（2026-09-30） | **同日補記：回滾已實測**，由 `ab1667ccf7f7` 回滾到 `244fd00583bb`（`00002-wl7`）再換回（`00003-qs6`），兩次都只有映像與 nonce 改變、啟動成功；secret 版本已記錄。界線（沒有觀察到舊版行為、資料庫向後相容沒有被考驗、secret 參照 `latest` 不隨映像回滾）與三個缺口見下方 `C6-4` 節。以下為原記錄：digest 產出機制已建立（本項），~~回滾實測待 `C7-7`~~ 回滾實測屬本項，未實測（2026-09-30 補記更正：C6 完成條件要求「服務可由記錄的映像 digest 重新部署並啟動成功」，本檔 `C6-2` 節亦記為「屬 `C6-4`」，與計畫書抬頭「下一步為 `C6-4`（回滾實測）」一致；`C7-7` 的「前版映像回滾」是營運驗收時的再次演練，不取代本項）。**2026-09-30 補記**：`D6` 修訂後部署紀錄以本檔為準，首次部署的完整指令、digest 與 `describe` 已記在下方 `C6-2` 節 |
 
 ## C6-1　GitHub Actions 建置與推送
 
@@ -216,7 +216,7 @@ PowerShell 5.1 在參數裡帶了引號的逗號，這次**沒有被拆開**（6
 - **正向的驗簽：未實測。** 目前只證明了「沒簽或簽錯會被拒」，還沒證明「簽對會放行」。同樣由 `C7-2` 承接（Worker 與後端對同一 canonical string 產生相同簽章）。
 - **日誌的內容與保留量：未處理。** `C6-2` 要求「限制內容與保留量」。目前沿用 Cloud Logging 預設的 bucket 與保留期，沒有另外設定，也沒有逐項核對日誌內容不含敏感資料。啟動日誌印出的是 allowed hosts 與 origins，不含秘密。
 - **部署方式偏離 `D6`。** `D6` 定「部署到 Cloud Run 一律手動觸發（`workflow_dispatch`）」，本檔 `C6-1` 節也寫了「`C6-2` 另立 workflow」。這次是由使用者以 `gcloud run deploy` 直接部署，deploy workflow **尚未實作**。~~要補上 workflow，還是改寫 `D6` 接受手動 `gcloud`，待使用者決定；這也牽動 `C6-4`「以 digest 手動觸發重新部署」的回滾方式。~~ **同日使用者決定改寫 `D6`，接受手動 `gcloud`**（見計畫書 `D6` 的 09-30 修訂）。部署紀錄與回滾改以本檔為準。附帶查明：`finpo-deploy` 仍持有已無用途的 `roles/run.admin` 與對 `finpo-runtime` 的 `serviceAccountUser`，~~是否撤除待決定~~ 同日已撤除（見 C1 證據 `C1-9` 節補記）。**往後部署與回滾都由管理者以自己的帳號執行 `gcloud`**，建置 workflow 已無法部署。
-- **回滾：未實測**，屬 `C6-4`。
+- ~~**回滾：未實測**，屬 `C6-4`。~~ 同日已實測，見下方 `C6-4` 節。現行 revision 因此變為 `stock-quote-00003-qs6`（映像與 `00001-dx4` 相同）。
 - **冷啟動：未在正式服務上量測**，屬 `C7-7` 的正式驗收（見上方 startup CPU boost 一段）。
 
 ## C6-3　一次性初始化與官方清單更新（2026-09-30）
@@ -278,3 +278,73 @@ PowerShell 5.1 在參數裡帶了引號的逗號，這次**沒有被拆開**（6
 - **新 generation 的列數沒有讀出。** 快照只數 generation 的代數；09-29 那一代為 13,457 列。Job 以結束碼 0 完成，而 `save_instrument_catalog` 要求五個來源各恰好一次、否則拋例外（`storage.py`），所以推定寫入完整，但沒有逐列核對。
 - **清單更新耗時**：以 C7 證據的同一量法（execution 開始 → 輸出 `Dashboard catalog refreshed.`）為 05:50:50.64Z → 05:51:20.93Z，**約 30.3 秒**；09-29 約 13 秒、09-23 約 70.7 秒。觸發到 `--wait` 返回為 05:50:42Z → 05:51:34Z，約 52 秒（時間取自本機 `date`，不是日誌）。各來源的 `fetched_at` 沒有讀出，所以這 30 秒花在哪裡沒有拆開。依 C7 證據，不得以任何單一樣本當作典型耗時。
 - **保留規則**：現在有 4 代。依 `C5-6`，只有明確執行 `cloud_db prune` 時才會清除；本次沒有執行 `prune`。
+
+## C6-4　回滾實測（2026-09-30）
+
+**結論：以 `C6-2` 記錄的同一條 `gcloud run deploy`、只換映像 digest，把服務從 `ab1667ccf7f7` 回滾到上一版 `244fd00583bb`，再以同樣方式換回 `ab1667ccf7f7`。兩次部署都啟動成功並接到 100% 流量；與部署前的 `describe` 相比，兩次都只有映像與 nonce 不同。服務可由記錄的 digest 重新部署並啟動（`C6` 完成條件的前半）。**
+
+### 回滾目標的選擇
+
+部署前以 `gcloud artifacts docker images list` 列出 repository，有 4 個映像：
+
+| tag | digest | 建立（台北） |
+|---|---|---|
+| `218b4b962c5a` | `sha256:5ceea993…` | 09-23 17:00 |
+| `b6347e610e87` | `sha256:3a204775…` | 09-25 14:06 |
+| `244fd00583bb` | `sha256:44af174b…` | 09-26 11:04 |
+| `ab1667ccf7f7` | `sha256:7da85b3a…` | 09-30 12:30（現行） |
+
+選上一版 `244fd00583bb`。`git diff 244fd00583bb ab1667ccf7f7`（排除 `docs/`）只有 `deploy/cloud.toml` 一個檔案：上一版沒有 `refresh_max_tickers`（等於 0，只受 110 秒 deadline 約束），現行版為 27。兩版之間沒有程式碼與 migration 的變更，Web 啟動也不做 migration，所以這次回滾不會碰到資料庫。當時沒有實際使用者：前端 Worker 還沒上線，`/api/` 又要求簽章。
+
+### 執行
+
+兩次都由使用者在 PowerShell 執行（版本未確認），我方只做唯讀核對。指令與 `C6-2` 節相同，只把 `--image` 換成對應的 digest；`DB_HOST`、`DB_USER` 從部署前的 `describe` 讀出後帶入（見下方「發現的缺口」第 1 項）。
+
+| 步驟 | 映像 | revision | 建立 | 啟動實例 → `listening` | TCP 探測 |
+|---|---|---|---|---|---|
+| 部署前 | `ab1667ccf7f7` | `stock-quote-00001-dx4` | 05:20:48Z | — | — |
+| 1 回滾 | `244fd00583bb`（`sha256:44af174b…`） | `stock-quote-00002-wl7` | 07:17:56Z | 07:18:05.57Z → 07:18:08.42Z | 第 1 次成功 |
+| 2 換回 | `ab1667ccf7f7`（`sha256:7da85b3a…`） | `stock-quote-00003-qs6` | 07:21:02Z | 07:21:05.24Z → 07:21:09.32Z | 第 1 次成功 |
+
+啟動原因兩次都是 `DEPLOYMENT_ROLLOUT`，不是使用者請求觸發的冷啟動，所以上表的啟動時間**不是 `C7-7` 意義上的冷啟動量測**。
+
+### 核對（每步部署後）
+
+| 項目 | 步驟 1 | 步驟 2 |
+|---|---|---|
+| `describe --format=export` 與部署前逐行 `diff` | 只有 `image` 與 `client.knative.dev/nonce` 不同 | 同左 |
+| 流量 | 100% 到 `00002-wl7`，`latestRevision: true` | 100% 到 `00003-qs6` |
+| `Ready`／`ConfigurationsReady`／`RoutesReady` | 皆 True | `Ready` True |
+| IAM | 只有 `allUsers` → `run.invoker` | 同左 |
+| 不帶簽章的 `/api/portfolio`、`/api/session` | 401、401 | 401、401 |
+| 決定性網址 `GET /` | 404（應用程式回應） | 同左 |
+| 舊式網址 `/api/portfolio` | 403 | 同左 |
+| 日誌 | 啟動 3 行（listening、allowed hosts、allowed origins，值與設定相同）；上述 4 筆請求的狀態碼與 curl 一致 | 同左 |
+| 07:15Z 之後 `severity>=ERROR` | 0 筆 | 0 筆 |
+
+兩次在 `listening` 之後都有一筆內容空白的 INFO，查明是 Cloud Audit 的 system event（`cloudaudit.googleapis.com/system_event`，`/Services.ReplaceService`），不是應用程式輸出。
+
+`diff` 沒有變化的部分證實 6 個環境變數與 3 個 secret 參照都沒有被拆開或改動，與 `C6-2` 節的觀察一致。
+
+### secret 版本（本項要求記錄）
+
+| secret | 服務參照 | 現有版本 |
+|---|---|---|
+| `db-password` | `latest` | 1（enabled，09-16 建立） |
+| `proxy-hmac-secret` | `latest` | 1（enabled，09-16 建立） |
+| `proxy-hmac-secret-prev` | `latest` | 1（enabled，09-16 建立） |
+
+三把都參照 `latest`，**回滾映像不會讓 secret 回到舊版本**。若 secret 輪替後需要回滾，要另外決定掛哪個版本；這次三把都只有版本 1，這一點**沒有情境可測**。
+
+### 發現的缺口
+
+1. **`C6-2` 節記錄的指令不足以單獨重跑。** `DB_HOST`、`DB_USER` 依 `C1-4` 以「…」遮蔽，這次是從服務的 `describe` 讀回再帶入。往後回滾時，這兩個值從 `gcloud run services describe stock-quote` 或 `finpo-catalog-refresh` 的 `describe` 取得，兩者相同。服務本身若已損壞到無法 `describe`，還有 Job 可以查。
+2. **清除政策不是即時的。** repository 設定只保留最近 3 個版本，實際卻有 4 個：`218b4b962c5a` 在 `ab1667c` 建置（09-30 04:30Z）之後兩個多小時仍在。清除政策何時執行沒有查。依政策推定，下一次清除後剩 `b6347e6`、`244fd00`、`ab1667c`，而**每推一次程式變更，可回滾的舊版就少一個**：再推兩次，`244fd00583bb` 就會被刪，屆時只能回滾到當時的前一版。
+3. **服務層級有 `run.googleapis.com/maxScale: '20'`**（`metadata.annotations`，不是 revision template）。`C6-2` 的 `describe` 核對只記了 revision 層級的 `maxScale 1`，沒有記到這一項。它不是部署指令指定的，來源與作用沒有查；revision 層級仍是 1，三次部署前後都沒有變。
+
+### 未驗證、有界線的部分
+
+- **只證明了「跑的是舊 digest」，沒有觀察到舊版的行為。** 例如 `refresh_max_tickers` 未設時是否真的不限檔數，要送帶簽章的請求才看得到，這次沒有做（理由同 `C6-2`：不把 `proxy-hmac-secret` 取到本機）。
+- **資料庫的向後相容沒有被考驗。** 兩版之間沒有 migration 變更，所以「回滾映像、資料庫維持新 schema」的情境這次不存在。計畫書要求 migration 向後相容；日後若有新 migration，回滾前要另外確認。
+- **流量切換期間是否有請求失敗，沒有量。** 部署期間沒有持續送請求。
+- **舊 revision 還在**：`00001-dx4`、`00002-wl7` 沒有流量，min=0 不會常駐實例。本次沒有刪除；以 `update-traffic --to-revisions` 切回舊 revision 也是一種回滾方式，但 `D6` 定的方式是重跑 `gcloud run deploy`，這次只測了後者。
