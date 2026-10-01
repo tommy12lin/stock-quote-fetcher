@@ -1,6 +1,14 @@
 # 雲端部署第一階段執行計畫
 
-> **最新進度（2026-10-01 上午）。`C7-1`／`C7-2` 已部署，`C6-2` 完成。下一步為 `C7-8`**：
+> **最新進度（2026-10-01 下午）。`C7-8` 已設計，第 0 步已做，下一步為第 1、2 步**：
+> - **使用者決定**：白名單放 Worker secret `ACCESS_ALLOWED_EMAILS`；以 jose 驗 JWT（不先自己寫、之後再換）；雲端反面測試用只上傳、不部署的版本打 preview URL。
+> - **第 0 步**：已登入的請求 3/3 帶有 `cf-access-jwt-assertion`，Worker 收得到。tail 把值遮掉了，`aud` 讀不到，改由第 5 步的正向核對證明。
+> - **第 1、2 步**：使用者從儀表板抄出 AUD；Claude 核對 `versions upload` 與 preview URL 的行為。
+> - **未核對**：`versions upload`／`versions secret put` 是否不部署、是否產生 preview URL；jose 取 JWKS 是否走 `fetch`。
+>
+> 詳見計畫書 `C7-8` 項下「設計」補記。
+>
+> **更早的進度（2026-10-01 上午）。`C7-1`／`C7-2` 已部署，`C6-2` 完成。下一步為 `C7-8`**：
 > - **`finpo` 現行版本是 `ca71f76e`**（有 secret）。回滾目標有兩個：前一版 `39bb1a9b`（沒有 secret），或 canary `570ea2b7`。canary 已退場，`C7-1` 之前不得部署 `finpo` 的限制隨之解除。
 > - **分段部署照程序完成**。不放 secret 時，Access 在新 Worker 和 preview URL 上重新證明有效，Worker 會拒絕請求、不轉發；放 secret 後，雲端的正向驗簽、資料庫連線、`Origin` 與上傳標頭的轉發、`run_worker_first` 都實測通過。
 > - **`C6-2` 完成**：它剩下的兩項，從服務連資料庫與正向驗簽，都有證據了。
@@ -101,7 +109,7 @@
 > | `C6-2`–`C6-4` 部署 | ⬜ ~~**被 `refresh_max_tickers` 擋住**，見下~~ 值已定為 27（09-30），~~待 `cloud.toml` 推送、新映像建置並把 `finpo-catalog-refresh` 改指向新映像後開始~~ **前提已全部滿足，可以開始**（09-30）。**同日 `C6-2` 已部署**（🟡，連資料庫與正向驗簽待 `C7-2`，另有~~日誌與 `D6` 兩項~~~~日誌一項未處理~~；日誌已於同日處理；`D6` 已於同日改寫為接受手動 `gcloud`，不再是未處理項）；~~`C6-3`、`C6-4` ⬜~~ `C6-3` ~~⬜~~ ✅（同日完成）；`C6-4` ~~🟡（與 C6 證據對齊：digest 產出機制已建立，首次部署的指令、digest 與 `describe` 已記在 C6 證據 `C6-2` 節；回滾未實測）~~ ✅（同日回滾已實測，見 C6 證據 `C6-4` 節）。**10-01 補記：`C6-2` ✅**，連資料庫與正向驗簽已由 `C7-2` 的首次部署實測，`C6` 全部完成 |
 > | `C7-1` 前端部署 | 🟡 10-01 已部署（`ca71f76e`），canary 退場，安全標頭生效；Access 下的 125 秒確認未做 |
 > | `C7-2` 逾時量測 | ✅ 完成；`C7-2` 其餘要求待 `C6` 部署後。**09-30 補記**：代理程式已在本機完成並通過 Node 測試，未部署；雲端的正向驗簽等項目隨 `C7-1` 部署時做。**10-01 補記**：已部署，正向驗簽、`Origin`／上傳標頭轉發、`run_worker_first` 已實測；524 轉換與三層逾時對齊未做，維持 🟡 |
-> | `C7-8` Worker 驗 Access JWT | ⬜ 09-30 新立，~~未排入順序~~ 10-01 排定在 `C7-1`／`C7-2` 首次部署之後、`C7-4` 之前；列為第一階段完成條件，含 `email` 核對 |
+> | `C7-8` Worker 驗 Access JWT | ⬜ 09-30 新立，~~未排入順序~~ 10-01 排定在 `C7-1`／`C7-2` 首次部署之後、`C7-4` 之前；列為第一階段完成條件，含 `email` 核對。**10-01 下午補記**：已設計（Worker secret 白名單、jose、preview URL 反面測試），未實作；第 0 步已確認 Worker 收得到 JWT 標頭 |
 > | `C7-7` 冷啟動 | ✅ 提前完成（2.3–3.4 秒） |
 > | `C7-6` 外部來源驗收 | 🟡 **R1、R4 已完成；R2 已於 2026-09-29 執行**（11/11 抓價成功，台股 6 檔均為一般時段；MIS 逐秒對齊 0/6，價格正確性證據不足）。~~**R3、R5 未執行**~~ **R3、R5 已於 09-29 晚上執行**（R3 `dnxnv`：美股取得當日成交、價格證據不足，台股等於 09-29 官方收盤；R5 `h8cz4`：`partial` 收尾正確，`c` 3.967／2.947 秒／檔）。~~**`refresh_max_tickers` 待使用者決定；尚未收尾**。~~ **2026-09-30：取 27；清除已完成，Job 已刪除，~~`cloud.toml` 待推送~~ `cloud.toml` 已推送，`finpo-catalog-refresh` 已改指向新映像。量測與收尾完成。** ~~官方清單約於 09-30 17:10（台北）到期，到期前須請求外更新。~~ 清單已於 09-29 更新，09-30 以資料庫核對，到期時間為 10-06 22:35（台北）。詳見 [C7 證據](cloud-C7-evidence.md)。 |
 > | 其餘 `C7` | ⬜ 未開始（10-01 補記：`C7-1` 已另列於上） |
@@ -942,7 +950,38 @@ Dockerfile 三處 `company_ca` 掛載本來就是條件式（`if [ -f /run/secre
     2. **列為第一階段的完成條件**，見下方「完成條件」的同日補記。
     3. **Worker 除了簽章與 `aud`，另須核對 JWT 的 `email` claim 在白名單內。** 只驗簽章與 `aud` 擋得住「Access 被關閉」或「Traffic scope 被改成 `Previews only`」，**擋不住 policy 設得太寬**：`C1-6` 證據記載的陷阱是選 `Email domain` 並填個人 Gmail 的網域，等於放行所有 Gmail 使用者，此時 Access 簽發的 JWT 完全合法，Worker 照樣會簽章。代價是第一階段之後開放多人時，白名單要在 Access policy 與 Worker 兩處維護。
 
-    **仍未設計**：白名單的存放方式（repo 為 public，email 不能寫進 `wrangler.jsonc` 的 `vars`）、JWKS 快取與金鑰輪替。**驗收須含反面案例**：沒有 JWT、簽章錯誤、`aud` 不符、已過期、`email` 不在白名單，各自都要不簽章、不轉發；並以真實 Access 簽發的 JWT 做正向測試。
+    ~~**仍未設計**：白名單的存放方式（repo 為 public，email 不能寫進 `wrangler.jsonc` 的 `vars`）、JWKS 快取與金鑰輪替。~~ 10-01 已設計，見下方補記。**驗收須含反面案例**：沒有 JWT、簽章錯誤、`aud` 不符、已過期、`email` 不在白名單，各自都要不簽章、不轉發；並以真實 Access 簽發的 JWT 做正向測試。
+
+    **2026-10-01 補記：設計（使用者決定三項，其餘為 Claude 的設計選擇）**。本段是計畫，**尚未實作，也還沒做任何量測**。
+
+    使用者決定的三項：
+
+    1. **白名單放 Worker secret `ACCESS_ALLOWED_EMAILS`**，逗號分隔，以 `wrangler secret put` 放入，流程與 `PROXY_HMAC_SECRET` 相同。代價是 secret 讀不回來，要確認內容只能重放一次。沒選 Workers KV：要多建 namespace，每個請求多一次讀取，而且最終一致，改了不會立刻生效。沒選在 `vars` 放 email 的雜湊：知道當事人 email 的人一算就能確認，等於公開。
+    2. **以 jose 驗 JWT**，不自己寫。使用者提出第二階段要改 React，問要不要先自己寫、之後再換。Claude 不建議先寫後換：React 換掉的是靜態檔，驗 JWT 的程式仍在 Worker 裡，事後換成 jose 是一次獨立的安全性改寫，`C7-8` 的驗收要整套重做，而且會和 React 改寫混在同一段時間，出錯時分不出原因。自己寫的主要好處是「專案沒有 npm 依賴」，但第二階段一定會引入 npm。jose 的 `createRemoteJWKSet` 已處理 JWKS 的快取與重抓節流，Cloudflare 官方的 Worker 範例也用它。10-01 以 `npm view` 查得最新版為 `6.2.12`、沒有列出依賴，`exports` 只有 `webapi` 一種版本；**取 JWKS 走 `fetch`、因此 Node 測試能換掉 `fetch`，是從套件結構推論的，實作時確認**。
+    3. **雲端反面測試**：把白名單或 `aud` 改錯的版本只上傳、不部署，打它的 preview URL，確認回 403、Cloud Run 日誌沒有紀錄。正式流量不受影響。**這個指令組合（`wrangler versions upload`／`versions secret put` 是否不部署、是否產生 preview URL）的行為尚未核對**，動手前先查。過期的 JWT、簽章錯誤、沒有 JWT 這三種，在 Access 正常運作時到不了 Worker，雲端做不出來，只有 Node 的證據。沒選「短暫關閉 Access」：`C7-8` 若有缺陷，那段時間 API 就是公開的。
+
+    Claude 的設計選擇：
+
+    - **只讀 `Cf-Access-Jwt-Assertion` 標頭，不讀 `CF_Authorization` cookie**。Access 被關掉時，瀏覽器裡的 cookie 可能還有效；標頭只有 Access 這次真的執行了才會帶上。**Worker 層級的 Access 會不會把這個標頭帶給 Worker 本身，官方文件沒有寫**（文件只說帶給 origin），整個設計靠它，所以列為第 0 步，先實測再寫程式。收不到的話設計要改。
+    - **驗證項目**：`alg` 只接受 `RS256`（以 `jwtVerify` 的 `algorithms` 明確指定）、`iss` 等於 `https://khlin.cloudflareaccess.com`、`aud` 含本 application 的 AUD、`exp`／`nbf`、`email` 轉小寫後在白名單內。前四項交給 jose，`email` 由 Worker 自己比對。
+    - **位置**：在現行的設定檢查之後、讀 body 之前，驗不過的請求不花 CPU 算雜湊。設定（team domain、AUD、白名單、HMAC secret）缺任一項，回 500 `proxy_misconfigured`，不轉發。
+    - **驗不過回 403 `access_denied`**，不簽章、不轉發。錯誤碼刻意不用 `unauthorized`：`app.js` 碰到 `unauthorized`、`session_expired` 會重取 `/api/session` 再重試。正常的登入過期由 Access 在 Worker 之前處理（302，頁面重新整理），所以 Worker 這層驗不過代表有不正常的事，直接顯示訊息。JWKS 抓不到時回 503 `access_unverifiable`，同樣不轉發。`console.log` 只記失敗類別，不記 token、不記 email。
+    - **JWKS**：`https://khlin.cloudflareaccess.com/cdn-cgi/access/certs`，快取在 isolate 記憶體，碰到不認得的 `kid` 重抓（jose 的節流）。依官方文件，Access 預設每 6 週輪替金鑰，舊金鑰在輪替後還有效 7 天，這是文件的說法，未實測。快取時間與重抓間隔若不用 jose 的預設值，屬於設計選擇，不是量測值。
+    - **設定值**：team domain 與 AUD 放 `wrangler.jsonc` 的 `vars`。AUD 只是識別碼，驗證的安全性靠 Cloudflare 的私鑰。AUD 由使用者從 Zero Trust 的 Access controls → Applications 抄出。
+    - **npm 的連帶處理**：`package.json` 釘精確版本並提交 `package-lock.json`；兩者加進 `build-image.yml` 的 `paths-ignore`，否則推送它們會觸發映像建置、多吃掉一個回滾窗口（`.dockerignore` 不放行它們，映像不受影響）；測試前要先 `npm ci`。
+    - **測試**：Node 上以自產的 RSA 金鑰與假 JWKS，涵蓋上列反面案例加上 `alg` 被換、`iss` 不符、`nbf` 在未來、JWKS 抓不到、缺設定，每一案都斷言沒有轉發；正面案例含 `email` 大小寫不同、換 `kid` 後重抓。現行程式沒有 JWT 也會轉發，所以這些測試在修正前會因行為斷言而失敗。另比照 `C7-2` 做一輪錯誤注入。
+
+    **執行順序**：
+
+    0. **確認 Worker 收得到 `Cf-Access-Jwt-Assertion`**。以 `wrangler tail` 觀察已登入的請求，只看標頭名稱與 JWT 的結構（`alg`、`kid`、`iss`、`aud`、claim 名稱），不記錄 token 與 `email` 的值。
+    1. 使用者抄出 AUD，與第 0 步看到的 `aud` 核對。
+    2. 核對 `versions upload`／`versions secret put` 與 preview URL 的行為。
+    3. 實作與 Node 測試。
+    4. 使用者先放 `ACCESS_ALLOWED_EMAILS`（舊程式不讀它），再部署新程式；不登入打 `/` 確認 302。
+    5. 瀏覽器正向核對，從 tail 量驗簽的 CPU 時間（Free 方案上限 10 ms）與打包後的大小。
+    6. preview URL 的雲端反面測試。回滾目標為 `ca71f76e`。
+
+    **同日補記：第 0 步已做**。3 筆已登入的請求都帶有 `cf-access-jwt-assertion`，設計不必改成讀 cookie。但 tail 把值遮成 `REDACTED`，讀不到 `aud`，所以第 1 步的核對改由第 5 步承擔：新程式用抄出的 AUD 放行真實請求，才同時證明值是 JWT、AUD 抄對了。preview URL 上有沒有這個標頭沒有觀察，第 6 步要從 log 核對 403 的原因是預期的那一種。見 [C7 證據](cloud-C7-evidence.md)「`C7-8` 第 0 步」節。
 - **完成條件**：評估文件第 6 節 C 的 8 項全部通過，且量測數據取代先前的估算假設。**2026-10-01 補記（使用者決定）**：另加 `C7-8` 通過，含 `email` 白名單核對與上述反面案例。評估文件的 8 項沒有涵蓋它，所以在此明列；`C7-8` 未過，`C7` 與第一階段都不得宣稱完成。
 - **證據**：`docs/cloud-C7-evidence.md`，含各項實測輸出與量測值。
 

@@ -15,7 +15,7 @@
 | `C7-5` 持久性驗收 | ⬜ 未開始 | 承接 `C4` 的雲端完成條件 |
 | `C7-6` 外部來源驗收 | 🟡 進行中 | **R1、R4 已完成**，見下文。**2026-09-29 R2 已執行**：GCP 11/11 抓價成功，台股 6 檔為當日一般時段，但 MIS 嚴格逐秒對齊為 0/6，價格正確性證據不足；~~R3、R5 未執行~~。**同日晚上 R3、R5 已執行**：R3 美股 5 檔取得當日一般時段成交（價格正確性證據不足），台股 6 檔等於 09-29 官方收盤；R5 截斷收尾正確，`c` 為 3.967（含暖機）／2.947（不含第 1 批）秒／檔，**`refresh_max_tickers` 待使用者決定**。五場都沒有 429。尚待收尾（清單更新、`reset`、`purge`、刪除 Job）。 |
 | `C7-7` 營運驗收 | 🟡 部分 | **冷啟動已提前量測**（本檔），其餘（匯出還原、回滾、計費、抓價耗時）未開始；含 `C1-8` 的預算通知送達 |
-| `C7-8` Worker 驗 Access JWT | ⬜ 未開始 | 2026-09-30 新立，見計畫書。**2026-10-01 補記**：排在 `C7-1`／`C7-2` 首次部署之後、`C7-4` 之前，列為第一階段完成條件，另須核對 `email` claim |
+| `C7-8` Worker 驗 Access JWT | ⬜ 未開始 | 2026-09-30 新立，見計畫書。**2026-10-01 補記**：排在 `C7-1`／`C7-2` 首次部署之後、`C7-4` 之前，列為第一階段完成條件，另須核對 `email` claim。**同日下午補記**：已設計（見計畫書）；第 0 步確認 Worker 收得到 `Cf-Access-Jwt-Assertion`，但 tail 遮蔽了值，見「`C7-8` 第 0 步」節 |
 
 ## C7-1　部署前準備（2026-10-01）
 
@@ -465,6 +465,50 @@ export default {
 - wrangler 一律用 `npx --yes wrangler@4.145.0`，見「`C7-1` 部署前準備」節。
 - 這台在 `%LOCALAPPDATA%` 的 Cloud SDK 是壞的（`lib/gcloud.py` 不存在），所有 gcloud 指令都用 Git 忽略的可攜版 `output\tools\google-cloud-sdk\bin\gcloud.cmd`（R2 節記錄的 586.0.0）。
 - 這台找不到 PowerShell 7，日誌查詢以 5.1 執行。過濾條件的雙引號寫成 `\"`，寫在 `.ps1` 檔裡；查得 7 筆就是查詢沒有被靜默改壞的正向對照。
+
+## C7-8　第 0 步：Worker 收不收得到 Access 的 JWT（2026-10-01）
+
+設計見計畫書 `C7-8` 項下「設計」補記。官方文件只說 Access 會把 `Cf-Access-Jwt-Assertion` 帶給 origin，沒有說 Worker 層級的 Access 會帶給 Worker 本身；設計只讀這個標頭，所以先實測。本節沒有部署，也沒有改任何設定。
+
+### 方法
+
+Claude 以一支過濾腳本包住 `npx --yes wrangler@4.145.0 tail finpo --format=json`（`WRANGLER_SEND_METRICS=false`），只輸出標頭**名稱**；如果 JWT 的值看得到，再輸出 `alg`、`kid`、`iss`、`aud`、claim 名稱與有效期長度。token、`email` 與其他標頭的值都不印，tail 的原始輸出只留在記憶體，沒有寫入磁碟。腳本放在 session 的暫存目錄，沒有進 repo。使用者在已登入的瀏覽器重新整理 `finpo.drhiromu.workers.dev` 一次。
+
+### 結果
+
+tail 記到 3 筆，都是 `finpo.drhiromu.workers.dev`、版本 `ca71f76e` 的現行程式：
+
+| 時間（UTC） | 請求 | 狀態 | CPU（ms） | wall（ms） |
+|---|---|---|---|---|
+| 03:23:03 | GET `/api/session` | 200 | 2 | 4108 |
+| 03:23:07 | GET `/api/portfolio` | 200 | 2 | 221 |
+| 03:23:08 | GET `/api/portfolio/valuation` | 200 | 2 | 150 |
+
+3 筆的標頭名稱完全相同，共 23 個，**都有 `cf-access-jwt-assertion`**，另有 `cf-access-authenticated-user-email`、`cookie`、`cf-connecting-ip`、`x-real-ip` 等。
+
+| 核對 | 結果 | 證明什麼 |
+|---|---|---|
+| `cf-access-jwt-assertion` 的名稱 | 3/3 出現 | **Worker 層級的 Access 會把這個標頭帶給 Worker 本身**，至少在 `workers.dev` 主機上是如此。設計不必改成讀 cookie |
+| 它的值 | 長度 8、不是三段式，推定是 tail 把值換成 `REDACTED`（剛好 8 個字元）。`cookie` 的值同樣被遮成 `REDACTED` | **值看不到**，所以沒能確認它是 JWT，也讀不到 `alg`、`kid`、`iss`、`aud` |
+
+### 這個結果的界線
+
+- **值是不是合法的 Access JWT、`aud` 是什麼，都還沒證明。** 原定第 1 步「AUD 與第 0 步看到的 `aud` 核對」做不到了，改由第 5 步的正向核對承擔：新程式用使用者抄出的 AUD 驗證真實請求並放行，才同時證明值是 JWT、`aud` 也抄對了。
+- **preview URL 上有沒有這個標頭沒有觀察**，這次只打了正式主機。第 6 步的反面測試在 preview URL 上做，如果那裡沒有標頭，請求會因為「沒有 JWT」被擋下，而不是因為白名單或 `aud` 不符，測試就白做了。因此新程式的 `console.log` 要記失敗類別，第 6 步要從 tail 的 log 核對 403 的原因是預期的那一種。tail 會帶出 `console.log` 是 wrangler 的一般行為，本專案還沒實測過，第 5 步一併確認。
+- **`cf-access-authenticated-user-email` 不能拿來取代 JWT 的 `email` claim**。它只是 Access 加上的純文字標頭，Access 被關掉時用戶端可以自己帶，沒有簽章。設計只信任 JWT 裡的 `email`。
+- **用戶端自己帶 `Cf-Access-Jwt-Assertion` 時，Access 會不會覆蓋，沒有測試**。Access 正常時這不影響安全性：偽造的值過不了簽章驗證。
+- 現行程式（不驗 JWT）的 CPU time 這次是 2 ms，首次分段部署第 4 步那 7 筆都在 1 ms 以內。tail 只給整數 ms，這是基準線，不是驗簽的成本。
+
+### 第 2 步（部分）：`versions` 指令的說明
+
+以 `npx --yes wrangler@4.145.0 versions upload --help` 與 `versions secret put --help` 查得：
+
+| 指令 | 說明文字 | 對第 6 步的意義 |
+|---|---|---|
+| `versions upload` | 「Uploads your Worker code and config as a new Version」；有 `--var`、`--secrets-file`（與先前的 secret 疊加，沒列出的不刪）、`--preview-alias` | 可以只在這次上傳帶入改錯的 `ACCESS_AUD`（`--var`）或白名單（`--secrets-file`），不必改 repo 裡的 `wrangler.jsonc` |
+| `versions secret put` | 「Create or update a secret variable for a Worker」 | 沒說會不會部署 |
+
+**說明文字都沒有說「不部署」，也沒說會產生 preview URL。** 這兩點仍未核對。第 6 步每次上傳後，要立刻以唯讀的 `deployments status` 確認正式流量仍 100% 在原版本，再打 preview URL。萬一上傳真的部署了，後果是擁有者自己也被 403 擋下（拒絕方向，不是放行方向），回滾到第 4 步部署的版本即可。
 
 ## C7-6　外部來源驗收（進行中）
 
