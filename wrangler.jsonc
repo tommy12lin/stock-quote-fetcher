@@ -21,9 +21,11 @@
     "UPSTREAM_ORIGIN": "https://stock-quote-896096883650.asia-northeast1.run.app",
     // C7-8: the Access JWT's issuer, compared as an exact string, and where its keys are
     // published (/cdn-cgi/access/certs). A bare https origin: no trailing slash.
-    "ACCESS_TEAM_DOMAIN": "https://khlin.cloudflareaccess.com"
-    // ACCESS_AUD is added once copied from Zero Trust (Access controls → Applications →
-    // finpo); until then the Worker answers every /api request 500 proxy_misconfigured.
+    "ACCESS_TEAM_DOMAIN": "https://khlin.cloudflareaccess.com",
+    // C7-8: the Access application's audience tag. An identifier, not a secret: tokens are
+    // trusted for Cloudflare's signature. Read from the `kid` of the Access login redirect
+    // and confirmed by the user in the Zero Trust dashboard (2026-10-01).
+    "ACCESS_AUD": "fa06f0350059e4038d2927c1e83ac81e01825cc7930609d12bbdf3e41980c065"
   }
   // PROXY_HMAC_SECRET is a secret, set with `wrangler secret put`, never written here.
   // It holds the same value as Secret Manager's proxy-hmac-secret (C1-7).

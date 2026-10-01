@@ -503,6 +503,12 @@ tail 記到 3 筆，都是 `finpo.drhiromu.workers.dev`、版本 `ca71f76e` 的�
 - **用戶端自己帶 `Cf-Access-Jwt-Assertion` 時，Access 會不會覆蓋，沒有測試**。Access 正常時這不影響安全性：偽造的值過不了簽章驗證。
 - 現行程式（不驗 JWT）的 CPU time 這次是 2 ms，首次分段部署第 4 步那 7 筆都在 1 ms 以內。tail 只給整數 ms，這是基準線，不是驗簽的成本。
 
+### 第 1 步：AUD
+
+使用者在 finpo 的 application 頁面找不到 AUD。Claude 改以不登入的 `curl -sS` 打 `GET /`：回 302 導向 `khlin.cloudflareaccess.com/cdn-cgi/access/login/finpo.drhiromu.workers.dev`，查詢參數為 `kid`、`meta`、`redirect_url`，只讀出 `kid`，`meta` 沒有讀出。`kid` 為 `fa06f0350059e4038d2927c1e83ac81e01825cc7930609d12bbdf3e41980c065`，64 個十六進位字元。
+
+「登入網址的 `kid` 就是 AUD」原本是依 Access 的慣例推論的，**使用者隨後在儀表板核對，確認一致**。已寫入 `wrangler.jsonc` 的 `ACCESS_AUD`；JS 測試仍為 25 passed，dry-run 的 binding 多了 `ACCESS_AUD`，大小不變。真實 token 的 `aud` 是否含這個值，仍由第 5 步的正向核對證明。
+
 ### 第 2 步（部分）：`versions` 指令的說明
 
 以 `npx --yes wrangler@4.145.0 versions upload --help` 與 `versions secret put --help` 查得：
