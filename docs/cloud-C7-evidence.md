@@ -15,7 +15,7 @@
 | `C7-5` 持久性驗收 | ⬜ 未開始 | 承接 `C4` 的雲端完成條件 |
 | `C7-6` 外部來源驗收 | 🟡 進行中 | **R1、R4 已完成**，見下文。**2026-09-29 R2 已執行**：GCP 11/11 抓價成功，台股 6 檔為當日一般時段，但 MIS 嚴格逐秒對齊為 0/6，價格正確性證據不足；~~R3、R5 未執行~~。**同日晚上 R3、R5 已執行**：R3 美股 5 檔取得當日一般時段成交（價格正確性證據不足），台股 6 檔等於 09-29 官方收盤；R5 截斷收尾正確，`c` 為 3.967（含暖機）／2.947（不含第 1 批）秒／檔，**`refresh_max_tickers` 待使用者決定**。五場都沒有 429。尚待收尾（清單更新、`reset`、`purge`、刪除 Job）。 |
 | `C7-7` 營運驗收 | 🟡 部分 | **冷啟動已提前量測**（本檔），其餘（匯出還原、回滾、計費、抓價耗時）未開始；含 `C1-8` 的預算通知送達 |
-| `C7-8` Worker 驗 Access JWT | ⬜ 未開始 | 2026-09-30 新立，見計畫書。**2026-10-01 補記**：排在 `C7-1`／`C7-2` 首次部署之後、`C7-4` 之前，列為第一階段完成條件，另須核對 `email` claim。**同日下午補記**：已設計（見計畫書）；第 0 步確認 Worker 收得到 `Cf-Access-Jwt-Assertion`，但 tail 遮蔽了值，見「`C7-8` 第 0 步」節 |
+| `C7-8` Worker 驗 Access JWT | ⬜ 未開始 | 2026-09-30 新立，見計畫書。**2026-10-01 補記**：排在 `C7-1`／`C7-2` 首次部署之後、`C7-4` 之前，列為第一階段完成條件，另須核對 `email` claim。**同日下午補記**：已設計（見計畫書）；第 0 步確認 Worker 收得到 `Cf-Access-Jwt-Assertion`，但 tail 遮蔽了值，見「`C7-8` 第 0 步」節；第 3 步（jose 實作與 Node 測試）已完成，未部署，見同節 |
 
 ## C7-1　部署前準備（2026-10-01）
 
@@ -509,6 +509,79 @@ tail 記到 3 筆，都是 `finpo.drhiromu.workers.dev`、版本 `ca71f76e` 的�
 | `versions secret put` | 「Create or update a secret variable for a Worker」 | 沒說會不會部署 |
 
 **說明文字都沒有說「不部署」，也沒說會產生 preview URL。** 這兩點仍未核對。第 6 步每次上傳後，要立刻以唯讀的 `deployments status` 確認正式流量仍 100% 在原版本，再打 preview URL。萬一上傳真的部署了，後果是擁有者自己也被 403 擋下（拒絕方向，不是放行方向），回滾到第 4 步部署的版本即可。
+
+### 第 3 步：實作與 Node 測試（本機，未部署）
+
+**沒有部署，沒有動 `finpo`，也沒有放任何 secret。**
+
+| 檔案 | 內容 |
+|---|---|
+| `worker/index.js` | 設定檢查之後、讀 body 之前，先驗 `Cf-Access-Jwt-Assertion`：jose 的 `jwtVerify`，`algorithms: ['RS256']`、`issuer`、`audience`、`requiredClaims: ['exp', 'email']`；再比對 `email` 是否在白名單內（兩邊都去空白、轉小寫）。token 本身的問題回 403 `access_denied`；JWKS 抓不到、逾時或格式錯回 503 `access_unverifiable`。兩者都不簽章、不轉發，`console.log` 只記失敗類別 |
+| `worker/package.json`、`package-lock.json`、`.gitignore` | jose 釘在 `6.2.12`，lockfile 顯示沒有其他依賴；`node_modules/` 不進 repo |
+| `wrangler.jsonc` | 新增 `ACCESS_TEAM_DOMAIN`。**`ACCESS_AUD` 還沒填**，要等第 1 步由使用者抄出，不放推測值；缺它時 Worker 對所有 `/api` 回 500 `proxy_misconfigured`。另把檔頭「`C7-1` 之前不得部署」的舊註解改為現行的部署限制 |
+| `tests/worker.test.mjs` | 新增 8 個測試，見下；既有測試改為預設帶一個合法的 token |
+
+**與設計不同的一處**：計畫原本要把 `package.json`／`package-lock.json` 加進 `build-image.yml` 的 `paths-ignore`。改 workflow 本身的那次提交會觸發一次建置，所以改為把它們放在 `worker/` 底下，沿用既有的 `worker/**` 規則，不必動 workflow。代價是第二階段 React 的 npm 設定不會和它共用同一份 `package.json`。
+
+**jose 的行為，讀原始碼確認**（`dist/webapi/jwks/remote.js`、`lib/jwt_claims_set.js`）：
+
+- 取 JWKS 用全域 `fetch`，而且是呼叫當下才讀取，所以 Node 測試換掉 `globalThis.fetch` 就攔得到。設計時的推論成立。
+- 預設值：快取 10 分鐘、逾時 5 秒、碰到不認得的 `kid` 時最多每 30 秒重抓一次。在 Workers 環境下，它不在請求之間共用進行中的抓取。
+- `exp` 只在存在時檢查，所以要列進 `requiredClaims` 才會強制存在。`clockTolerance` 保持預設的 0，沒有另訂寬限。若第 5 步出現剛登入就被 `nbf` 擋下的情形，再依實測決定。
+
+**測試**：以 WebCrypto 自產 RSA 金鑰並**手工簽 token，不透過 jose 簽**，避免簽與驗共用同一份程式的缺陷。JWKS 由同一個被換掉的 `fetch`，在 `/cdn-cgi/access/certs` 提供。
+
+| 測試 | 涵蓋 |
+|---|---|
+| 缺設定或格式錯 | 缺 AUD、缺白名單、白名單只有空白、缺 team domain、team domain 結尾有 `/` 或帶路徑、`http://`。都回 500，**沒有轉發，也沒有抓 JWKS** |
+| 沒有 JWT | GET 與 PUT 都回 403，沒有轉發，log 為 `missing` |
+| 驗證失敗的 token（14 種） | 別的金鑰冒用信任的 `kid`、簽章不變但換掉 payload、`aud` 不符、`iss` 不符、已過期、`nbf` 在未來、沒有 `exp`、沒有 `email`、`email` 不在白名單、`email` 不是字串、`alg: none`、以公鑰當 HMAC 金鑰的 HS256、JWKS 裡沒有的 `kid`、不是 JWT。每一種都斷言 403、沒有轉發、log 的原因 |
+| 純文字的 email 標頭 | 帶 `Cf-Access-Authenticated-User-Email: <擁有者>`，但 JWT 的 `email` 是別人，回 403 |
+| 白名單比對 | 大小寫不同、前後有空白、名單有兩人，兩人都放行 |
+| JWKS 不可用（4 種） | 連不上、回 502、回 HTML、內容不是 key set。都回 503，沒有轉發 |
+| JWKS 快取 | 連續兩個請求只抓一次 |
+| 金鑰輪替 | 新金鑰在 30 秒冷卻內出現時回 403、不重抓；時間推進 31 秒後重抓並放行。用 `node:test` 的 mock timers 只模擬 `Date` |
+
+`PYTHON=.venv/Scripts/python.exe node --test tests/worker.test.mjs tests/web_session.test.cjs`：**25 passed、0 skipped**（Node 24.21.0）。執行前先跑過 `npm ci --prefix worker`。Python 程式沒有改，隔離容器的完整套件沒有重跑。
+
+**修正前會失敗**：把 `worker/index.js` 換回 `HEAD` 的版本，8 個新測試有 7 個失敗，原因都是行為斷言（例如預期 403、實得 200；預期抓 1 次 JWKS、實得 0 次），不是函式不存在。剩下的「白名單比對」在舊程式上會通過：它是正向測試，守的是「不該誤擋」，而舊程式什麼都放行。它的作用由下方錯誤注入證明。
+
+**錯誤注入**：一次注入一種，共 16 種，**16 種都被抓到**：
+
+| 注入的錯誤 | 抓到它的測試 |
+|---|---|
+| 沒有 JWT 也放行 | 沒有 JWT |
+| 忽略拒絕結果 | 5 個 |
+| 拿掉 `algorithms` | 驗證失敗（見下方說明） |
+| 拿掉 `issuer`／`audience` | 驗證失敗 |
+| `exp` 不列為必要 | 驗證失敗 |
+| `email` 不列為必要 | 驗證失敗（見下方說明） |
+| 不比對白名單 | 驗證失敗、email 標頭 |
+| 比對時 token 那側不轉小寫／名單那側不轉小寫 | 白名單比對 |
+| 所有錯誤都回 503／都回 403 | 驗證失敗、金鑰輪替／JWKS 不可用 |
+| 不檢查 team domain 格式／允許空白名單 | 缺設定 |
+| 每個請求都重建 key set | JWKS 快取、金鑰輪替 |
+| 改信任純文字的 email 標頭 | email 標頭 |
+
+**有兩種只靠原因字串抓到，請求其實仍被擋下**：
+
+- 拿掉 `algorithms` 後，`alg: none` 仍被 jose 擋下，原因變成 `ERR_JOSE_NOT_SUPPORTED`。jose 本來就不接受 `none`。
+- `email` 不列為必要 claim 後，沒有 `email` 的 token 仍被白名單比對擋下，原因變成 `email`。
+
+這兩項是多一層保險，拿掉了也不會放行，只有 log 的分類會變。
+
+**打包**：`npx --yes wrangler@4.145.0 deploy --dry-run --outdir <暫存目錄>`，沒有上傳。
+
+- Total Upload 為 **40.83 KiB／gzip 11.56 KiB**，打包後的 `index.js` 含 jose。
+- binding 有 `UPSTREAM_ORIGIN` 與 `ACCESS_TEAM_DOMAIN`。
+
+**未實測**：
+
+- 在 Workers 執行環境裡的行為，包括 jose 在 workerd 上取 JWKS。
+- 真實 Access token 的 `iss`、`aud`、`email` 格式。
+- 驗簽的 CPU 時間。
+
+以上都由第 5 步確認。
 
 ## C7-6　外部來源驗收（進行中）
 

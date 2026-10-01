@@ -1,6 +1,8 @@
 // D2: one Worker serves the three static files and proxies /api/* to Cloud Run.
-// Do not deploy before C7-1: finpo still carries the C1-6 canary, the only thing that can
-// show whether Access is in effect.
+// Deploy only with `npx --yes wrangler@4.145.0`, and after each deploy confirm that `/`
+// answers a signed-out request with a 302 to Access (C7-1).
+// The Worker's dependencies (C7-8: jose) live in worker/package.json; run
+// `npm ci --prefix worker` before deploying or testing.
 {
   "name": "finpo",
   "main": "./worker/index.js",
@@ -16,8 +18,15 @@
   "vars": {
     // The deterministic URL: WEB_ALLOWED_HOSTS admits only this host, so the legacy
     // stock-quote-nfmyvudecq-an.a.run.app is answered 403 (C6-2).
-    "UPSTREAM_ORIGIN": "https://stock-quote-896096883650.asia-northeast1.run.app"
+    "UPSTREAM_ORIGIN": "https://stock-quote-896096883650.asia-northeast1.run.app",
+    // C7-8: the Access JWT's issuer, compared as an exact string, and where its keys are
+    // published (/cdn-cgi/access/certs). A bare https origin: no trailing slash.
+    "ACCESS_TEAM_DOMAIN": "https://khlin.cloudflareaccess.com"
+    // ACCESS_AUD is added once copied from Zero Trust (Access controls → Applications →
+    // finpo); until then the Worker answers every /api request 500 proxy_misconfigured.
   }
   // PROXY_HMAC_SECRET is a secret, set with `wrangler secret put`, never written here.
   // It holds the same value as Secret Manager's proxy-hmac-secret (C1-7).
+  // ACCESS_ALLOWED_EMAILS is a secret too (C7-8): comma-separated, compared without case.
+  // The repository is public, so the list must not be written here.
 }

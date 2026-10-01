@@ -1,0 +1,9 @@
+{
+  "name": "finpo-worker",
+  "private": true,
+  "type": "module",
+  "description": "C7-8: dependencies of the finpo Worker. Kept under worker/ so that changing them does not trigger the image build.",
+  "dependencies": {
+    "jose": "6.2.12"
+  }
+}
