@@ -1,6 +1,19 @@
 # 雲端部署第一階段執行計畫
 
-> **最新進度（2026-10-01）。`C7-8` 已排定順序，下一步為 `C7-1`／`C7-2` 的首次部署**（使用者決定）：
+> **最新進度（2026-10-01 上午）。`C7-1`／`C7-2` 已部署，`C6-2` 完成。下一步為 `C7-8`**：
+> - **`finpo` 現行版本是 `ca71f76e`**（有 secret）。回滾目標有兩個：前一版 `39bb1a9b`（沒有 secret），或 canary `570ea2b7`。canary 已退場，`C7-1` 之前不得部署 `finpo` 的限制隨之解除。
+> - **分段部署照程序完成**。不放 secret 時，Access 在新 Worker 和 preview URL 上重新證明有效，Worker 會拒絕請求、不轉發；放 secret 後，雲端的正向驗簽、資料庫連線、`Origin` 與上傳標頭的轉發、`run_worker_first` 都實測通過。
+> - **`C6-2` 完成**：它剩下的兩項，從服務連資料庫與正向驗簽，都有證據了。
+> - **觀察到的兩件事**：Cloud Run 請求日誌的 `remoteIp` 是 Cloudflare 的出口位址，`userAgent` 是空的，日誌裡沒有使用者的 IP 和瀏覽器資訊。另外，`_headers` 的 `Referrer-Policy` 原本是 `no-referrer`，推定會讓所有寫入請求回 403，部署前已改為 `same-origin`（`90edd37`）。
+> - **還沒做**：Access 下的 125 秒確認、524 的轉換、三層逾時對齊、5 MiB 上傳的 CPU 耗時，所以 `C7-1`、`C7-2` 都還是 🟡。
+> - **`C7-8` 是現在唯一的安全缺口**：Worker 會替所有通過 Access 的請求簽章。排定在 `C7-4` 之前完成。動工前要先設計 `email` 白名單放在哪、JWKS 的快取與金鑰輪替。
+> - **映像**：registry 只剩 `a1fb03ff680d`（服務與 `finpo-catalog-refresh`）和 `ab1667ccf7f7`（回滾目標）。下一次推送程式變更不會擠掉任何映像。
+> - **清單**在 **10-07 13:51（台北）** 到期，到期前要執行一次 `finpo-catalog-refresh`。
+> - **操作環境**：wrangler 用 `npx --yes wrangler@4.145.0`。gcloud 用 `output\tools\google-cloud-sdk\bin\gcloud.cmd`，因為安裝版是壞的。這台沒有 pwsh 7。
+>
+> 詳見 [C7 證據](cloud-C7-evidence.md)「`C7-1`／`C7-2` 首次分段部署」節、[C6 證據](cloud-C6-evidence.md)「`C6-2` 補記：連資料庫與正向驗簽」節。
+>
+> **更早的進度（2026-10-01）。`C7-8` 已排定順序，下一步為 `C7-1`／`C7-2` 的首次部署**（使用者決定）：
 > - **順序**：`C7-1`／`C7-2` 首次部署 → `C7-8` → `C7-4`。`C7-8` 排在部署之後，是因為真實的 Access JWT、`aud` 與 JWKS 要等部署後才拿得到，而且首次部署的變因已經夠多。
 > - **首次部署分段**：先不設 `PROXY_HMAC_SECRET`，以未登入的請求重新證明 Access 生效後，才放 secret。程序見 `C7-1` 項下 10-01 補記。
 > - **`C7-8` 列為第一階段的完成條件**，而且 Worker 要另外核對 JWT 的 `email` claim。只驗簽章與 `aud` 擋不住 Access policy 設得太寬。
@@ -85,12 +98,13 @@
 > | `C4` 工作生命週期 | ✅ 程式完成；**雲端驗收欠 `C7-5`** |
 > | `C5` Supabase／TLS | ✅ 完成 |
 > | `C6-1` 建置推送 | ✅ 完成（見 [C6 證據](cloud-C6-evidence.md)） |
-> | `C6-2`–`C6-4` 部署 | ⬜ ~~**被 `refresh_max_tickers` 擋住**，見下~~ 值已定為 27（09-30），~~待 `cloud.toml` 推送、新映像建置並把 `finpo-catalog-refresh` 改指向新映像後開始~~ **前提已全部滿足，可以開始**（09-30）。**同日 `C6-2` 已部署**（🟡，連資料庫與正向驗簽待 `C7-2`，另有~~日誌與 `D6` 兩項~~~~日誌一項未處理~~；日誌已於同日處理；`D6` 已於同日改寫為接受手動 `gcloud`，不再是未處理項）；~~`C6-3`、`C6-4` ⬜~~ `C6-3` ~~⬜~~ ✅（同日完成）；`C6-4` ~~🟡（與 C6 證據對齊：digest 產出機制已建立，首次部署的指令、digest 與 `describe` 已記在 C6 證據 `C6-2` 節；回滾未實測）~~ ✅（同日回滾已實測，見 C6 證據 `C6-4` 節） |
-> | `C7-2` 逾時量測 | ✅ 完成；`C7-2` 其餘要求待 `C6` 部署後。**09-30 補記**：代理程式已在本機完成並通過 Node 測試，未部署；雲端的正向驗簽等項目隨 `C7-1` 部署時做 |
+> | `C6-2`–`C6-4` 部署 | ⬜ ~~**被 `refresh_max_tickers` 擋住**，見下~~ 值已定為 27（09-30），~~待 `cloud.toml` 推送、新映像建置並把 `finpo-catalog-refresh` 改指向新映像後開始~~ **前提已全部滿足，可以開始**（09-30）。**同日 `C6-2` 已部署**（🟡，連資料庫與正向驗簽待 `C7-2`，另有~~日誌與 `D6` 兩項~~~~日誌一項未處理~~；日誌已於同日處理；`D6` 已於同日改寫為接受手動 `gcloud`，不再是未處理項）；~~`C6-3`、`C6-4` ⬜~~ `C6-3` ~~⬜~~ ✅（同日完成）；`C6-4` ~~🟡（與 C6 證據對齊：digest 產出機制已建立，首次部署的指令、digest 與 `describe` 已記在 C6 證據 `C6-2` 節；回滾未實測）~~ ✅（同日回滾已實測，見 C6 證據 `C6-4` 節）。**10-01 補記：`C6-2` ✅**，連資料庫與正向驗簽已由 `C7-2` 的首次部署實測，`C6` 全部完成 |
+> | `C7-1` 前端部署 | 🟡 10-01 已部署（`ca71f76e`），canary 退場，安全標頭生效；Access 下的 125 秒確認未做 |
+> | `C7-2` 逾時量測 | ✅ 完成；`C7-2` 其餘要求待 `C6` 部署後。**09-30 補記**：代理程式已在本機完成並通過 Node 測試，未部署；雲端的正向驗簽等項目隨 `C7-1` 部署時做。**10-01 補記**：已部署，正向驗簽、`Origin`／上傳標頭轉發、`run_worker_first` 已實測；524 轉換與三層逾時對齊未做，維持 🟡 |
 > | `C7-8` Worker 驗 Access JWT | ⬜ 09-30 新立，~~未排入順序~~ 10-01 排定在 `C7-1`／`C7-2` 首次部署之後、`C7-4` 之前；列為第一階段完成條件，含 `email` 核對 |
 > | `C7-7` 冷啟動 | ✅ 提前完成（2.3–3.4 秒） |
 > | `C7-6` 外部來源驗收 | 🟡 **R1、R4 已完成；R2 已於 2026-09-29 執行**（11/11 抓價成功，台股 6 檔均為一般時段；MIS 逐秒對齊 0/6，價格正確性證據不足）。~~**R3、R5 未執行**~~ **R3、R5 已於 09-29 晚上執行**（R3 `dnxnv`：美股取得當日成交、價格證據不足，台股等於 09-29 官方收盤；R5 `h8cz4`：`partial` 收尾正確，`c` 3.967／2.947 秒／檔）。~~**`refresh_max_tickers` 待使用者決定；尚未收尾**。~~ **2026-09-30：取 27；清除已完成，Job 已刪除，~~`cloud.toml` 待推送~~ `cloud.toml` 已推送，`finpo-catalog-refresh` 已改指向新映像。量測與收尾完成。** ~~官方清單約於 09-30 17:10（台北）到期，到期前須請求外更新。~~ 清單已於 09-29 更新，09-30 以資料庫核對，到期時間為 10-06 22:35（台北）。詳見 [C7 證據](cloud-C7-evidence.md)。 |
-> | 其餘 `C7` | ⬜ 未開始 |
+> | 其餘 `C7` | ⬜ 未開始（10-01 補記：`C7-1` 已另列於上） |
 >
 > **`C7-6` 剩餘順序**（2026-09-25 補記，台北時間）。每一步的程序都在 `C7-6` 項下。原先要求在執行 R1 的機器上操作；**2026-09-29 補記**：這台已以經 SHA-256 核對的官方可攜版 gcloud 和既有登入成功執行 R2，因此 R3 亦可在這台執行，環境與證據見 [C7 證據](cloud-C7-evidence.md) R2 節。
 > **2026-09-29 跨電腦交接**：今晚可在另一台已登入同一 GCP project 的電腦執行 R3／R5；先拉取本文件與 [R2 證據](cloud-C7-evidence.md) 的最新 `main`。R2 已使正式 `dashboard` 的假持股 revision 為 **2**，R3／R5 預期依次為 **3／4**，但任何 `reset` 一律取最後一場日誌的實際 revision。R2 的待清除 manifest 已寫在證據檔，原始 JSONL 只在執行 R2 的電腦；R3／R5 不依賴 R2 本機比對分支。兩台不要同時執行 probe 或清單更新，也不要在 probe 收尾前推送程式變更。
@@ -112,7 +126,7 @@
 > **2026-09-23 新發現、~~處理方式待決定~~ 已於同日決定並實測（見本段補記）**：`C7-6` R1 量得官方清單更新從 GCP 需 **135 秒**（抓取約 62 秒、逐筆寫入 13,427 筆約 73 秒），**超過 125 秒的邊緣上限**，且這段路徑不受 `refresh_deadline_seconds` 約束。正式部署後，頁面上的「更新股票清單」會收到 524。影響 `C6-2`、`C7-2`、`C7-4`，不影響 `C7-6` 的報價量測。見 [C7 證據](cloud-C7-evidence.md) 的 `C7-6` 節。**同日補記：已決定兩者都做，程式已完成**（清單批次寫入；`[instruments] refresh_in_request = false`，清單改由管理者以 `stock-web --refresh-catalog` 在請求外更新）。雲端耗時尚未實測，須等新映像建置；另須確認單一 INSERT 能否在 10 秒的 `statement_timeout` 內完成。**同日再補記：已實測**。新映像 `218b4b962c5a` 以 Cloud Run Job `finpo-catalog-refresh`（`--args=--refresh-catalog`）執行成功：觸發到完成約 82 秒（R1 同一區間約 159 秒），INSERT 未碰到 10 秒上限。寫入耗時沒有單獨量出，界線見 C7 證據。**清單每 168 小時到期，到期前須由管理者手動更新一次。**
 >
 > **接手前必讀的三條硬性限制**：
-> 1. **`C7-1` 之前不得對 `finpo` Worker 做任何部署**——它承載 `C1-6` 的 canary，是目前唯一能驗證 Access 生效的東西。
+> 1. ~~**`C7-1` 之前不得對 `finpo` Worker 做任何部署**——它承載 `C1-6` 的 canary，是目前唯一能驗證 Access 生效的東西。~~ **2026-10-01 補記：已解除**，`C7-1` 已部署，canary 退場。改為：**部署 `finpo` 一律用 `npx --yes wrangler@4.145.0`**，每次部署後都要不登入打 `/` 確認回 302 導向 Access；`C7-8` 完成前，Worker 會替所有通過 Access 的請求簽章。
 > 2. **`GET /healthz` 在 Cloud Run 公開網址上不可用**（被前端攔截、不抵達容器，回 404）。健康檢查探針改用 `/`。見 [C7 證據](cloud-C7-evidence.md)。
 > 3. **抓價的時間預算是巢狀的**：125 秒邊緣硬上限 ⊃ `refresh_deadline_seconds` 110 ⊃ 一批內所有市場共用的 `budget` ⊃ `cycle_budget_seconds` 50 ⊃ `operation_timeout_seconds` 10。調高任何一層前先讀 `C7` 證據的算式。
 >
@@ -625,9 +639,11 @@ Dockerfile 三處 `company_ca` 掛載本來就是條件式（`if [ -f /run/secre
   - [x] `C6-1` 依 `D6` 以 GitHub Actions 建置 linux/amd64 並推送 Artifact Registry，沿用 lockfile 與非 root 設計；移除公司專用 `company_ca_file` 與 relaxed TLS 設定（config.example.toml 的 `[tls]`）。runner 不傳入 `company_ca` build secret，Dockerfile 的條件式掛載會自動跳過，不需改 Dockerfile。workflow 權限最小化：預設 `contents: read`，僅需換取 GCP 憑證的 job 才加 `id-token: write`。映像路徑固定為 `asia-northeast1-docker.pkg.dev/finpo-508709/finpo/stock-quote:<tag>`——repository 以專案命名、image 以服務命名，使同一財務系統的其他服務共用同一 repository；Artifact Registry 不支援 repository 改名，此路徑為終局。**由 `C1-9` 帶出的三條**：（a）workflow 引用的 action 須釘 commit SHA 而非可變 tag——帶 `id-token: write` 的 workflow 若用到被汙染的 action，等同交出 deploy SA 權限；（b）WIF provider 目前只限定 `assertion.repository`、未限定 ref，任何分支都能換到憑證，若部署只該由 `main` 觸發須另加 `assertion.ref` 條件或在 workflow 層限制；（c）須設 Artifact Registry cleanup policy 只保留最近數個 tag——實測（`C2-1`）第一個 tag 約 125 MB、其後每個增量 tag 約 82 MB，約第 6 個即超出 0.5 GB 免費額度，建議只留最近 3 個。**另須指定 `--target web`**（`C2-4` 新增的 stage）：預設目標 `runtime` 的 ENTRYPOINT 是 CLI，部署上去不會啟動服務。
 
     **2026-09-23 完成**（run `35806642267`，48 秒，digest `sha256:99ee3a38…`，tag 取 commit SHA 前 12 碼）。三條待辦全數處置：(a) 兩個 action 釘 commit SHA 並只留這兩個——`id-token: write` 之下每多一個第三方 action 就多一個等同交出 deploy SA 權限的入口；(b) ref 限制以 job 層 `if: github.ref == 'refs/heads/main'` 實作，**provider 層的 `assertion.ref` 刻意未加**（加了會使日後無法從分支驗證 workflow 改動）；(c) cleanup policy 已設保留最近 3 個版本。映像已從 Artifact Registry 拉回實測：ENTRYPOINT 確為 web、非 root、`linux/amd64`、`cloud.toml` 與 `supabase-ca.crt` 就位、`/tmp` 無公司 CA 殘骸。**新增一項須留意**：`ubuntu-latest` 將於 2026-10-19 起遷移至 Ubuntu 26，建置環境會在無人改動下改變。詳見 [C6 證據](cloud-C6-evidence.md)。
-  - [ ] `C6-2` 部署設定：1 vCPU／1 GiB、min=0、max=1，concurrency 依 `D3` 設定（**不可為 1**；`C4-1` 完成後更新期間通常沒有並行輪詢，但長請求佔住實例時 `/healthz` 探測仍須能被回應，否則實例會被判定不健康而遭終止），request timeout 依 `D3` 對齊且**必須大於 `refresh_deadline_seconds`**，否則平台會在程式自己收尾前切斷請求；**部署前必須先把 `C4-1` 的 `refresh_deadline_seconds` 與 `refresh_max_tickers` 依 `C7-2`／`C7-6` 的量測值寫進 `deploy/cloud.toml`**；`DB_PASSWORD` 與必要 provider key 放 Secret Manager（`db-password` 已於 `C1-3` 建立並授權給 `finpo-runtime`）；簽章秘密以 `proxy-hmac-secret` 與 `proxy-hmac-secret-prev` 兩個環境變數掛載（皆參照 `latest`），兩組於 `C1-7` 已建立，因此輪替時不需變更部署設定；日誌輸出 stdout／stderr 並限制內容與保留量。若設定 startup／liveness probe，**指向 `C2-4` 新增的 `GET /healthz`，不可指向任何 `/api/` 路徑**（`C3-1` 上線後探測無法簽章，會全數 401）；`web` 映像已自帶啟動命令，**不需覆寫 command／args**。**另須設定 `C2-2` 的兩個環境變數**：`WEB_ALLOWED_HOSTS`（Cloud Run 服務主機名，或明確設為 `*`）與 `WEB_ALLOWED_ORIGINS`（前端 Worker 的 `https://` 來源）；兩者未設定時服務會套用本機預設值而把所有雲端請求判 403。
+  - [x] `C6-2`（**2026-10-01 勾選**：最後兩項由 `C7-2` 的首次部署實測，見下方 10-01 補記）部署設定：1 vCPU／1 GiB、min=0、max=1，concurrency 依 `D3` 設定（**不可為 1**；`C4-1` 完成後更新期間通常沒有並行輪詢，但長請求佔住實例時 `/healthz` 探測仍須能被回應，否則實例會被判定不健康而遭終止），request timeout 依 `D3` 對齊且**必須大於 `refresh_deadline_seconds`**，否則平台會在程式自己收尾前切斷請求；**部署前必須先把 `C4-1` 的 `refresh_deadline_seconds` 與 `refresh_max_tickers` 依 `C7-2`／`C7-6` 的量測值寫進 `deploy/cloud.toml`**；`DB_PASSWORD` 與必要 provider key 放 Secret Manager（`db-password` 已於 `C1-3` 建立並授權給 `finpo-runtime`）；簽章秘密以 `proxy-hmac-secret` 與 `proxy-hmac-secret-prev` 兩個環境變數掛載（皆參照 `latest`），兩組於 `C1-7` 已建立，因此輪替時不需變更部署設定；日誌輸出 stdout／stderr 並限制內容與保留量。若設定 startup／liveness probe，**指向 `C2-4` 新增的 `GET /healthz`，不可指向任何 `/api/` 路徑**（`C3-1` 上線後探測無法簽章，會全數 401）；`web` 映像已自帶啟動命令，**不需覆寫 command／args**。**另須設定 `C2-2` 的兩個環境變數**：`WEB_ALLOWED_HOSTS`（Cloud Run 服務主機名，或明確設為 `*`）與 `WEB_ALLOWED_ORIGINS`（前端 Worker 的 `https://` 來源）；兩者未設定時服務會套用本機預設值而把所有雲端請求判 403。
 
     **2026-09-30 補記：日誌項已處理**。程式輸出不含持股資料與秘密；平台請求日誌會記下查詢字串，上傳的檔名與工作表名稱已改以標頭傳遞並部署（`a1fb03f`，`stock-quote-00004-4v6`）；`_Default` 保留期維持 30 天（使用者選定）。本項剩下連資料庫與正向驗簽，由 `C7-2` 承接。見 [C6 證據](cloud-C6-evidence.md)「`C6-2` 補記：日誌」節。
+
+    **2026-10-01 補記：完成**。`C7-1`／`C7-2` 首次部署後，經 Worker 送出的帶簽章請求在 Cloud Run 都回 200，`/api/portfolio` 讀得到資料庫；不帶簽章打 `run.app` 仍回 401。寫入資料庫的路徑屬 `C7-4`，沒有在這次觸發。見 [C6 證據](cloud-C6-evidence.md)「`C6-2` 補記：連資料庫與正向驗簽」節。
   - [x] `C6-3` 以獨立管理者執行 `python -m stock_quote_fetcher.cloud_db bootstrap-sql` 產生的 SQL，再以 runtime 執行 `web --refresh-catalog`。C5 已先完成首次 schema／空持股初始化並驗證可重跑；C6 仍須完成部署環境的一次性執行程序與官方清單更新。**不得以 runtime 執行 migration／web --initialize**，其 CREATE 權限已於 C5-2 撤除；Web 啟動仍不自動 migration。
 
     **2026-09-23 補記**：`web --refresh-catalog` 不再只是一次性初始化，而是**唯一的清單更新途徑**。`C7-6` R1 量得請求內更新清單需 135 秒，超過邊緣上限，雲端因此設 `refresh_in_request = false`。清單每 168 小時到期，**到期前須由管理者再執行一次**，建議建成常設的 Cloud Run Job，只附加 `--args=--refresh-catalog`（未實測）。見 [C7 證據](cloud-C7-evidence.md) 的 `C7-6` 節。
@@ -653,11 +669,21 @@ Dockerfile 三處 `company_ca` 掛載本來就是條件式（`if [ -f /run/secre
     3. 確認後才 `wrangler secret put PROXY_HMAC_SECRET`。
 
     Worker 讀不到 secret 時回 500 `proxy_misconfigured`、不轉發上游（[index.js](../worker/index.js) 的 secret 檢查）。這只由 `tests/worker.test.mjs` 的 `a missing or short secret fails closed without forwarding` 在 Node 上證明，**在 Workers 執行環境未實測**，第 1 步之後要以已登入的 `/api/...` 請求確認回的是這個 500。
+
+    **2026-10-01 補記：已依此程序部署**（`39bb1a9b` 不帶 secret，再以 `ca71f76e` 放入）。第 2 步的未登入檢查涵蓋 7 個路徑、POST 與 preview URL，全部 302、內容 0 次；登入後頁面正常，安全標頭生效、沒有 CSP 違規；`/api/session` 回 500 `proxy_misconfigured`，Cloud Run 日誌證實沒有轉發。部署前另發現 `_headers` 的 `Referrer-Policy: no-referrer` 推定會讓寫入請求帶 `Origin: null`，已改為 `same-origin`。**本項仍未勾選**：Access 下的 125 秒上限沒有確認。見 [C7 證據](cloud-C7-evidence.md)「`C7-1`／`C7-2` 首次分段部署」節。
   - [ ] `C7-2`（**逾時量測已於 2026-09-22 完成，其餘待 `C6`**）依 `D2` 在同一 Worker 內實作 `/api/*` 代理，`assets.run_worker_first` 僅列 `/api/*`，並以實際請求核對靜態檔路徑不會啟動 Worker；驗證 Worker 端 WebCrypto 與後端 Python 對同一 canonical string 產生相同簽章；以故意延遲回應的測試端點量出代理的實際逾時上限，並對齊前端、代理與後端的逾時。**`C2-2` 追加的必辦事項：Worker 轉發時必須原樣帶上瀏覽器的 `Origin` 標頭**，否則後端會把所有寫入請求判 403；理由是 HMAC 簽章擋不住「惡意網站以 `credentials:'include'` 觸發、Access 放行、Worker 照簽」這條跨站路徑，Origin 白名單是該路徑唯一的防線（見 `docs/cloud-C2-evidence.md` 的 `C2-2`）。**`C6-2` 追加的必辦事項（2026-09-30）：Worker 必須原樣轉發 `X-Upload-Filename` 與 `X-Upload-Sheet`**，否則上傳一律回「只接受 .xlsx 檔案」。上傳的檔名原本放在查詢字串，會被 Cloud Run 請求日誌記下，已改由這兩個標頭傳遞；它們不在 HMAC 簽章範圍內（見 [C6 證據](cloud-C6-evidence.md)「`C6-2` 補記：日誌」節）。另須核對 Worker 上線後請求日誌的 `remoteIp`、`userAgent` 記到的是什麼。
 
     **逾時量測結果（2026-09-22，見 [C7 證據](cloud-C7-evidence.md)）**：Worker→Cloud Run 的 subrequest 上限為 **125 秒**（最後成功點 124 秒；130／150／300／600 皆在 125.0–125.2 秒被 524 切斷），client-facing 則到 600 秒無上限。**524 是以 upstream response 的形式回到 Worker 手上，`fetch()` 不會 throw**——正式 Worker 必須檢查這個狀態碼並轉成給前端的明確錯誤，否則瀏覽器只會拿到一個看似成功的空回應。量測用的慢 origin 不能是另一個 Worker（`error code: 1042`），已改以拋棄式 Cloud Run 服務取得，該服務與映像已刪除。**本項其餘要求（代理實作、`run_worker_first` 核對、HMAC 互通、`Origin` 轉發、三層逾時對齊）仍待 `C6` 部署後執行。** 另：經 Access 保護路徑的逾時確認原訂在此處做，因會覆寫 `finpo` Worker 上的 `C1-6` canary 而改排到 `C7-1`。
 
     **2026-09-30 補記：代理程式已在本機完成，未部署**（`worker/index.js`、`wrangler.jsonc`、`tests/worker.test.mjs`）。`run_worker_first` 只列 `/api/*`；`Origin` 與兩個上傳標頭都已原樣轉發；524 轉成 JSON 的 504。另追加一項計畫沒要求的處置：上游的 HTML 錯誤頁與 3xx 也會轉成 JSON，因為 `app.js` 把任何 `text/html` 回應都當成 Access 過期而重新整理整頁。HMAC 互通只在 Node 上以後端的 `Auth` 驗過；**雲端的正向驗簽、靜態檔不啟動 Worker 的核對、三層逾時對齊都還沒做**，要等部署，而部署要和 `C7-1` 一起做。見 [C7 證據](cloud-C7-evidence.md)「`C7-2` 代理程式（本機）」節。
+
+    **2026-10-01 補記：已部署**。已實測的項目如下：
+    - 雲端的正向驗簽，涵蓋 GET、帶查詢的 GET 與二進位 POST。
+    - 靜態檔不啟動 Worker：tail 只記到 `/api/*` 與找不到檔案的路徑。
+    - `Origin` 與兩個上傳標頭的轉發：上傳預覽回 200。
+    - 請求日誌的內容：`remoteIp` 是 Cloudflare 出口，`userAgent` 為空。
+
+    **本項仍未勾選**：三層逾時的對齊、524 轉成 504 在雲端的行為、5 MiB 上傳的 CPU 耗時都還沒做。見 [C7 證據](cloud-C7-evidence.md)「`C7-1`／`C7-2` 首次分段部署」節。
   - [ ] `C7-3` 啟用入口驗證，並驗證無法繞過代理直接呼叫 `run.app`。後端驗證需依賴可靠簽章或憑證，不得只檢查可偽造的標頭。另須實測：未授權的 Google 帳號被 Access 拒絕、無痕視窗開啟會導向 Google 登入、session 過期後前端可自行恢復。**本項承接 `C3-3` 的雲端驗收**：`C3-3` 的勾選只涵蓋程式與模擬測試，C3 完成條件中「閒置至服務縮容後再操作，不需手動重新整理即可繼續使用」要在此處取得實測證據。此處未過即視為 C3 尚未收尾，不得因 `C3-3` 已勾選而略過。
   - [ ] `C7-4` 功能驗收：上傳 Excel、預覽、儲存、版本衝突（409）、報價更新、缺價／失敗、查詢結果與前端提示。使用 `D5` 決定的資料。
   - [ ] `C7-5` 持久性驗收：關閉瀏覽器、等待縮容後重開，確認持股仍在；更新中途終止與重新部署，確認 job 不永久卡住。**本項承接 `C4` 的雲端完成條件**：`C4` 的勾選只涵蓋程式與資料庫整合測試，真實容器終止與 rollout 下的 job 狀態要在此處取得實測證據。

@@ -8,8 +8,8 @@
 
 | 項目 | 狀態 | 備註 |
 |---|---|---|
-| `C7-1` Workers static assets 部署 | ⬜ 未開始 | **2026-10-01 補記**：部署前準備已核對，wrangler 固定為 `4.145.0`，登入有效，`finpo` 自 09-17 以來沒有再部署過，見「`C7-1` 部署前準備」節。尚未部署 |
-| `C7-2` `/api/*` 代理與逾時對齊 | 🟡 部分完成 | **逾時量測已完成**（本檔）；代理實作、`run_worker_first`、HMAC 跨語言互通與 `Origin` 轉發待 `C6` 部署後。**2026-09-30 補記**：代理程式已在本機完成，只有 Node 測試，未部署，見「`C7-2` 代理程式（本機）」節 |
+| `C7-1` Workers static assets 部署 | ⬜ 未開始 | **2026-10-01 補記**：部署前準備已核對，wrangler 固定為 `4.145.0`，登入有效，`finpo` 自 09-17 以來沒有再部署過，見「`C7-1` 部署前準備」節。~~尚未部署~~ **同日補記：🟡 已部署**（`ca71f76e`），canary 退場，Access 在新 Worker 與 preview URL 上重新證明有效，安全標頭生效。Access 下的 125 秒確認未做。見「`C7-1`／`C7-2` 首次分段部署」節 |
+| `C7-2` `/api/*` 代理與逾時對齊 | 🟡 部分完成 | **逾時量測已完成**（本檔）；代理實作、`run_worker_first`、HMAC 跨語言互通與 `Origin` 轉發待 `C6` 部署後。**2026-09-30 補記**：代理程式已在本機完成，只有 Node 測試，未部署，見「`C7-2` 代理程式（本機）」節。**2026-10-01 補記：已部署**，雲端正向驗簽、`Origin` 與上傳標頭轉發、`run_worker_first`、缺 secret 時不轉發都已實測；請求日誌的 `remoteIp` 是 Cloudflare 出口、`userAgent` 為空。524 轉換與三層逾時對齊未做。見「`C7-1`／`C7-2` 首次分段部署」節 |
 | `C7-3` 入口驗證與繞過測試 | ⬜ 未開始 | 承接 `C3-3` 的雲端驗收 |
 | `C7-4` 功能驗收 | ⬜ 未開始 | |
 | `C7-5` 持久性驗收 | ⬜ 未開始 | 承接 `C4` 的雲端完成條件 |
@@ -181,6 +181,8 @@ C1-6-CANARY-OK
 
 `meta` JWT 的 payload 內 `auth_status: "NONE"`、`hostname: "finpo.drhiromu.workers.dev"`，與 `C1-6` 記載的 Worker-level Access 行為一致。此複驗可隨時重跑，不需憑證、不需瀏覽器。
 
+**2026-10-01 補記：canary 已退場**。`C7-1` 部署了真實前端（版本 `39bb1a9b`，之後放 secret 成為 `ca71f76e`）。被保護的對象換成前端本身，它在未登入時的 0 次命中、登入後的頁面顯示，取代了 canary 的作用。canary 版本 `570ea2b7` 仍可回滾。見「`C7-1`／`C7-2` 首次分段部署」節。
+
 ### 附錄：探針原始碼
 
 臨時資源已刪除，原始碼留此以便 `C7-1` 複驗時重建。工作檔放在 session 的 scratchpad，跨 session 不留存。
@@ -322,6 +324,8 @@ export default {
 - **`compatibility_date`**（`2026-09-01`）沒有用 wrangler 核對過，這台也沒有安裝 wrangler。
 - 部署後還要核對：靜態檔路徑不會啟動 Worker、請求日誌的 `remoteIp` 與 `userAgent` 記到什麼、三層逾時的對齊。
 
+**2026-10-01 補記**：部署後，上列的 `Origin` 標頭、GFE 路徑（就這次用到的路徑而言）、`compatibility_date`、靜態檔不啟動 Worker、`remoteIp`／`userAgent` 都已在雲端核對；5 MiB 的 CPU 耗時、`Content-Length` 那條路徑、三層逾時的對齊仍未做。見「`C7-1`／`C7-2` 首次分段部署」節。
+
 ### 建置觸發
 
 建置的 `paths-ignore` 原本只排除 `docs/**` 與 `**.md`，推送這些檔案會觸發一次映像建置。映像內容其實不變，因為 `.dockerignore` 不放行它們，但每次建置都會把最舊的一個可回滾版本擠出保留窗口。**使用者決定**把 `worker/**`、`wrangler.jsonc`、`tests/*.mjs` 加進 `paths-ignore`；改到 workflow 檔的那一次提交本身仍會建置。
@@ -337,6 +341,130 @@ export default {
 | `c88b258728f4` | 09-30 17:12 | 無 | 窗口內 |
 
 建置後的清單仍列得到 5 個，兩個舊映像要等清除政策執行才會刪掉。**下一次推程式變更會擠掉 `ab1667ccf7f7`**，推送前要先把 `finpo-catalog-refresh` 改指向較新的映像。`paths-ignore` 的效果還沒觀察到，要等第一次只改 Worker 檔案的推送沒有觸發建置才算確認。
+
+**2026-10-01 更正**：上表「建立時間」一欄標為 UTC，實際是**台北時間**。`gcloud artifacts docker images list` 的 `CREATE_TIME` 以本機時區顯示：`90edd37e91fb` 列為 `10:07:58`，而它的建置 run `36804313065` 在 02:08:01Z 完成；`c88b258728f4` 列為 `17:12`，它的 run 在 09:11:58Z 觸發。各映像的先後順序不受影響。
+
+## C7-1／C7-2　首次分段部署（2026-10-01）
+
+依計畫書 `C7-1` 項下 10-01 補記的分段程序執行：先部署不帶 secret 的 Worker，以未登入與已登入的請求重新證明 Access 生效，然後才放 secret。**`C1-6` 的 canary 自此退場**。時間皆為 UTC。
+
+| 版本 | 建立時間 | 來源 | 內容 |
+|---|---|---|---|
+| `570ea2b7-ae77-44c6-930d-63ba6ab42f04` | 09-17 03:50 | Upload | `C1-6` canary（回滾用） |
+| `39bb1a9b-bf0e-4c08-86d8-6509b4d0da71` | 10-01 02:22:58 | deployment | 靜態檔、`_headers`、`/api/*` 代理，**沒有 secret** |
+| `ca71f76e-8d52-4d59-9e61-edbd9890c696` | 10-01 02:42:38 | Secret Change | 同上，加上 `PROXY_HMAC_SECRET`。**現行版本**，流量 100% |
+
+分工依使用者決定：wrangler 的唯讀指令與 curl 由 Claude 執行；部署、放 secret、刪除映像由使用者執行（Claude 執行 `wrangler deploy` 時被權限機制擋下）；瀏覽器操作由使用者執行。
+
+### 部署前（第 0、1 步）
+
+| 項目 | 結果 |
+|---|---|
+| `_headers` | 列指令時發現 `static/_headers` 以未追蹤檔的形式出現，`Referrer-Policy` 為 `no-referrer`。依 Fetch 規範，這會讓同源 POST 帶 `Origin: null`，被後端的 Origin 白名單判 403。改為 `same-origin` 後提交（`90edd37`） |
+| Job 改指向 | 因為 `90edd37` 會觸發建置，推送前由使用者把 `finpo-catalog-refresh` 改指向 `a1fb03ff680d`（`sha256:df4a49e8…`），generation 3，02:03:19Z。Job 不保留舊版設定，所以拿上一次 execution `tsp9t` 保存的範本比對：容器範本 22 行（args、env、secret、映像、資源）只有映像不同；`maxRetries`、SA、`timeoutSeconds`、`taskCount`、`gen2` 都相同 |
+| 建置 | run `36804313065` 成功，映像 `90edd37e91fb`（`sha256:6faccf750e7aa33e416ca64ddd4a11ed6b641416565bb72722fd1c00e034d2e7`） |
+| dry-run | `wrangler deploy --dry-run` 讀到 assets 目錄的 4 個檔案（三個靜態檔加 `_headers`），4.21 KiB；binding 只有 `UPSTREAM_ORIGIN`；`compatibility_date` 沒有警告 |
+| `secret list` | `[]` |
+| 基準 | 未登入 `GET /` 回 302 導向 `khlin.cloudflareaccess.com`，143 bytes，canary 字串 0 次 |
+
+### 第 2 步：部署，不放 secret
+
+使用者在 repo 根目錄執行 `npx --yes wrangler@4.145.0 deploy`（`WRANGLER_SEND_METRICS=false`），輸出 `Current Version ID: 39bb1a9b-…`。`versions view` 確認：handler `fetch`，`compatibility_date` 2026-09-01，binding 只有 `UPSTREAM_ORIGIN`。
+
+**未登入**（Claude 以 `curl -sS` 發出）：
+
+| 請求 | 結果 |
+|---|---|
+| GET `/`、`/index.html`、`/app.js`、`/style.css`、`/_headers`、`/api/portfolio`、`/nope` | 全部 302 導向 Access 登入，143 bytes；`MY PORTFOLIO` 與 canary 字串都是 0 次 |
+| POST `/api/portfolio` | 302 |
+| preview URL `39bb1a9b-finpo.drhiromu.workers.dev` | **存在**，302 導向 Access，內容 0 次 |
+
+**已登入**（使用者以瀏覽器操作，DevTools 開啟）：
+
+| 核對 | 結果 |
+|---|---|
+| 頁面 | 顯示「持股總覽」版面。這是 `C1-6` 要求的基準線：有它，上面的「0 次」才分得出是 Access 擋下，而不是檔案沒部署 |
+| `index.html` 的回應標頭 | 有 `Content-Security-Policy`、`X-Content-Type-Options: nosniff`、`Referrer-Policy: same-origin` |
+| Console | 沒有 CSP 違規。唯一的訊息是 `/api/session` 回 500 的網路錯誤 |
+| `/api/session` | 500，`code: proxy_misconfigured` |
+
+`/api/portfolio` 沒有發出：`app.js` 要等 `/api/session` 成功才會呼叫它（`app.js` 最後一行的啟動流程）。列核對項目時原本寫成兩者都應回 500，那是錯的。
+
+`wrangler tail finpo --format=json` 在這段期間記到 4 筆：`/api/session` 3 筆（500，沒有例外）、`/favicon.ico` 1 筆（404）。`/favicon.ico` 沒有對應的靜態檔，所以會回落到 Worker，這是 `wrangler.jsonc` 註明的行為。**`/`、`/app.js`、`/style.css` 都沒有出現**。
+
+### 第 3 步：放入 secret
+
+| 項目 | 結果 |
+|---|---|
+| 3a 格式檢查 | `len=64 printable=True`。指令只印出長度與「是否全為 0x21–0x7e」，不印值 |
+| 為何要檢查 | wrangler 4.145.0 的 `secret put` 會對讀到的值做 `trimEnd()`（`wrangler-dist/cli.js` 的 `trimTrailingWhitespace`）。管線多出的換行不會進入 Worker，但如果 Secret Manager 的值本身以空白結尾，Worker 拿到的會比後端短。這台只有 PowerShell 5.1，它把管線內容轉成字串再以 ASCII 重新編碼並補上 CRLF，所以值必須是可見 ASCII 才不會被改動 |
+| 3b | 使用者執行 `gcloud.cmd secrets versions access latest --secret=proxy-hmac-secret \| npx --yes wrangler@4.145.0 secret put PROXY_HMAC_SECRET --name finpo`，輸出 `Success! Uploaded secret PROXY_HMAC_SECRET` |
+| `secret list` | 只有 `PROXY_HMAC_SECRET`，`secret_text` |
+| 新部署 | `ca71f76e`，來源 `Secret Change`，流量 100% |
+| 未登入 `GET /`、`/api/session` | 都是 302 導向 Access |
+
+### 第 4 步：正向核對
+
+使用者在瀏覽器重新整理頁面、下載範本、以下載的 `持股範本.xlsx` 做三次上傳預覽，按取消，沒有套用或儲存。沒有按「更新報價」或「更新股票清單」。
+
+| 時間 | 請求 | tail 狀態 | Worker wall（ms） | Cloud Run 狀態 | 後端延遲（s） |
+|---|---|---|---|---|---|
+| 02:46:57 | GET `/api/session` | 200 | 3675 | 200 | 2.967 |
+| 02:47:01 | GET `/api/portfolio` | 200 | 343 | 200 | 0.220 |
+| 02:47:02 | GET `/api/portfolio/valuation?market=ALL` | 200 | 189 | 200 | 0.091 |
+| 02:48:45 | GET `/api/templates/holdings.xlsx` | 200 | 150 | 200 | 0.005 |
+| 02:49:08 | POST `/api/imports/preview` | 200 | 602 | 200 | 0.510 |
+| 02:49:33 | POST `/api/imports/preview` | 200 | 604 | 200 | 0.505 |
+| 02:49:58 | POST `/api/imports/preview` | 200 | 580 | 200 | 0.492 |
+
+所有請求的 CPU time 都在 1 ms 以內，沒有例外，版本都是 `ca71f76e`。靜態檔依然沒有出現在 tail。第一筆 `/api/session` 的 2.97 秒推定是冷啟動（`C7-7` 量得 2.3–3.4 秒），沒有另外核對。
+
+| 核對 | 結果 | 證明什麼 |
+|---|---|---|
+| `/api/session`、`/api/portfolio` 回 200，頁面顯示空持股 | ✅ | **雲端的正向驗簽通過，服務連得上資料庫**。這是 `C6-2` 剩下的兩項 |
+| 帶查詢字串的 GET（`valuation?market=ALL`）、二進位 body 的 POST 通過驗簽 | ✅ | 這些路徑上，GFE 沒有改寫 Worker 簽章的請求列與 body |
+| 上傳預覽回 200，對話框顯示工作表 | ✅ | Workers 裡由程式設定 `Origin` 會生效，兩個上傳標頭也有轉發。`same-origin` 下寫入請求的 `Origin` 正確 |
+| tail 只記到 `/api/*` 與無對應檔案的路徑 | ✅ | `run_worker_first` 只讓 `/api/*` 先進 Worker，靜態檔不啟動 Worker |
+| 直接 `GET run.app/api/session`、`/api/portfolio`，不帶簽章 | 401 `unauthorized` | 沒有改變 |
+| preview URL `ca71f76e-finpo.drhiromu.workers.dev` | 302 導向 Access | 新版本的 preview URL 也在 Access 保護內 |
+
+### Cloud Run 請求日誌
+
+以 `logging read` 查 `run.googleapis.com/requests`，`stock-quote`，02:20–03:00Z，共 **7 筆**，與第 4 步 tail 的 7 筆逐筆對應。
+
+- **第 2 步那 3 次 500 一筆都沒有**。同一條查詢查得到第 4 步的請求，所以這不是過濾條件寫錯（PowerShell 吃掉雙引號會靜默回 0 筆，見 R4 節）。「缺 secret 時不轉發」原本只有 Node 測試，至此有雲端的實測證據。
+- **`remoteIp`**：4 個不同位址，分屬 `172.68.`、`172.71.`、`162.158.` 開頭的網段，推定是 Cloudflare 的出口，沒有對照 Cloudflare 公布的 IP 清單。使用者本人的 IP 不在日誌裡。完整位址不寫入本檔。
+- **`userAgent`**：7 筆都是空字串。Worker 只轉發白名單內的標頭（見「`C7-2` 代理程式（本機）」節），`User-Agent` 不在其中。所以日誌裡沒有使用者的 IP，也沒有瀏覽器資訊，事後要從 Cloud Run 日誌追查請求來源比較困難，要靠 Cloudflare 那一側。這是觀察結果，沒有判定為缺陷。
+- **檔名**：上傳的 `持股範本.xlsx`，不論原字或百分比編碼，在 7 筆的完整 JSON 裡都查不到，`X-Upload-Filename` 也查不到。日誌裡出現的 `holdings.xlsx` 是下載範本的 GET 路徑。這是 `C6-2` 日誌修正在真實前端上的第一次觀察，正式驗收仍在 `C7-4`。
+
+### 映像整理
+
+使用者要求刪除沒有用途的映像。以 build context 會放行的路徑（`src`、`pyproject.toml`、`uv.lock`、`README.md`、`deploy/cloud.toml`、`deploy/supabase-ca.crt`、`Dockerfile`）比對 `git diff`：
+
+| 映像 | 使用者 | 與現行 `a1fb03ff680d` 的差異 | 處置 |
+|---|---|---|---|
+| `a1fb03ff680d` | 服務 `00004-4v6`、Job `finpo-catalog-refresh` | — | 保留 |
+| `ab1667ccf7f7` | revision `00001-dx4`、`00003-qs6` | 上傳檔名改走標頭之前的版本 | 保留，唯一能回滾到不同程式的目標 |
+| `c88b258728f4` | 無 | 沒有差異 | 使用者以 digest 刪除 |
+| `90edd37e91fb` | 無 | 只多了 `_headers`，後端不提供靜態路由，用不到它 | 使用者以 digest 刪除；需要時可以 `workflow_dispatch` 重建 |
+
+刪除後 registry 只剩 `a1fb03ff680d` 與 `ab1667ccf7f7`。保留政策是 3 版，所以**下一次程式推送不會擠掉任何映像**，第二次才會擠掉 `ab1667ccf7f7`。revision `00002-wl7` 的 `244fd00583bb` 先前已被清除。
+
+### 未實測、未做
+
+- **Access 下的 125 秒上限**（`C7-1` 承接）、**524 的轉換**、**三層逾時的對齊**（`C7-2`）。
+- **5 MiB 上傳的 CPU 耗時**，以及依 `Content-Length` 提前擋下的那條路徑。這次的上傳只是範本，CPU time 在 1 ms 以內。
+- **含中文百分比編碼的路徑**在雲端的驗簽。這次的請求沒有用到；Node 測試涵蓋了。
+- **`no-referrer` 會導致 403 的反面測試**沒有做，`Origin: null` 的推論只有規範依據。
+- **從 preview URL 寫入**：preview 主機不在 `WEB_ALLOWED_ORIGINS`，推定寫入會被判 403（`C6-2` 的設計），沒有實測。
+- **遙測**：設了 `WRANGLER_SEND_METRICS=false`，wrangler 仍印出遙測提示，實際有沒有送出沒有核對。
+- `C7-3`、`C7-4`、`C7-5`、`C7-8` 都還沒開始。**`C7-8` 依計畫排在 `C7-4` 之前**。
+
+### 操作環境
+
+- wrangler 一律用 `npx --yes wrangler@4.145.0`，見「`C7-1` 部署前準備」節。
+- 這台在 `%LOCALAPPDATA%` 的 Cloud SDK 是壞的（`lib/gcloud.py` 不存在），所有 gcloud 指令都用 Git 忽略的可攜版 `output\tools\google-cloud-sdk\bin\gcloud.cmd`（R2 節記錄的 586.0.0）。
+- 這台找不到 PowerShell 7，日誌查詢以 5.1 執行。過濾條件的雙引號寫成 `\"`，寫在 `.ps1` 檔裡；查得 7 筆就是查詢沒有被靜默改壞的正向對照。
 
 ## C7-6　外部來源驗收（進行中）
 
