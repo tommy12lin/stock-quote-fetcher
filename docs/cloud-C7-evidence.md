@@ -8,7 +8,7 @@
 
 | 項目 | 狀態 | 備註 |
 |---|---|---|
-| `C7-1` Workers static assets 部署 | ⬜ 未開始 | |
+| `C7-1` Workers static assets 部署 | ⬜ 未開始 | **2026-10-01 補記**：部署前準備已核對，wrangler 固定為 `4.145.0`，登入有效，`finpo` 自 09-17 以來沒有再部署過，見「`C7-1` 部署前準備」節。尚未部署 |
 | `C7-2` `/api/*` 代理與逾時對齊 | 🟡 部分完成 | **逾時量測已完成**（本檔）；代理實作、`run_worker_first`、HMAC 跨語言互通與 `Origin` 轉發待 `C6` 部署後。**2026-09-30 補記**：代理程式已在本機完成，只有 Node 測試，未部署，見「`C7-2` 代理程式（本機）」節 |
 | `C7-3` 入口驗證與繞過測試 | ⬜ 未開始 | 承接 `C3-3` 的雲端驗收 |
 | `C7-4` 功能驗收 | ⬜ 未開始 | |
@@ -16,6 +16,46 @@
 | `C7-6` 外部來源驗收 | 🟡 進行中 | **R1、R4 已完成**，見下文。**2026-09-29 R2 已執行**：GCP 11/11 抓價成功，台股 6 檔為當日一般時段，但 MIS 嚴格逐秒對齊為 0/6，價格正確性證據不足；~~R3、R5 未執行~~。**同日晚上 R3、R5 已執行**：R3 美股 5 檔取得當日一般時段成交（價格正確性證據不足），台股 6 檔等於 09-29 官方收盤；R5 截斷收尾正確，`c` 為 3.967（含暖機）／2.947（不含第 1 批）秒／檔，**`refresh_max_tickers` 待使用者決定**。五場都沒有 429。尚待收尾（清單更新、`reset`、`purge`、刪除 Job）。 |
 | `C7-7` 營運驗收 | 🟡 部分 | **冷啟動已提前量測**（本檔），其餘（匯出還原、回滾、計費、抓價耗時）未開始；含 `C1-8` 的預算通知送達 |
 | `C7-8` Worker 驗 Access JWT | ⬜ 未開始 | 2026-09-30 新立，見計畫書。**2026-10-01 補記**：排在 `C7-1`／`C7-2` 首次部署之後、`C7-4` 之前，列為第一階段完成條件，另須核對 `email` claim |
+
+## C7-1　部署前準備（2026-10-01）
+
+本節只記錄部署前的工具與帳號核對，**沒有對 `finpo` 做任何部署**，以下指令全為唯讀。
+
+### wrangler 版本
+
+| 項目 | 結果 |
+|---|---|
+| 核對前的狀態 | 這台機器沒有可執行的 wrangler：沒有全域安裝、全域 npm 套件為空、repo 內沒有 `package.json`，`npx --no-install wrangler` 因快取中沒有套件而取消 |
+| 選定版本 | **`wrangler@4.145.0`**（使用者決定固定一個最新穩定版） |
+| 選定依據 | `npm view wrangler dist-tags` 的 `latest` 為 `4.145.0`（`legacy` 為 `3.114.17`）；發布時間 2026-09-30T14:20Z，即核對前一天 |
+| 執行方式 | `npx --yes wrangler@4.145.0 …`，以 `WRANGLER_SEND_METRICS=false` 關閉遙測；`--version` 回 `4.145.0` |
+| Node | `v24.21.0` |
+
+「穩定」的依據只有 npm 的 `latest` tag，此外沒有核對。版本只固定在指令裡，repo 沒有 `package.json` 或 lockfile 記錄它，之後的部署指令要沿用同一版，否則 `wrangler.jsonc` 的 `compatibility_date` 核對無法重現。`compatibility_date` 尚未以此版核對，排在首次部署時做。
+
+### 登入與帳號
+
+`npx --yes wrangler@4.145.0 whoami`：
+
+| 項目 | 結果 |
+|---|---|
+| 登入方式 | OAuth token，存於 `%APPDATA%\xdg.config\.wrangler\config\default.toml`。檔案修改時間為 09-22 16:36，與本檔 `C7-2` 逾時量測同日，推定是當時 `wrangler login` 留下的；檔案內容未開啟 |
+| 帳號 | 帳號擁有者的個人 Gmail，Account ID `d6c5b629…c694`。repo 為 public，email 與完整 Account ID 不寫入本檔 |
+| `CLOUDFLARE_API_TOKEN` | 未設定，所以用的確實是上述 OAuth token |
+| 部署所需 scope | 有 `workers_scripts (write)`、`workers (write)` |
+| 警告 | wrangler 提示缺 `k2.read`／`k2.write` 兩個 scope，建議重跑 `wrangler login`。推定與部署 Worker、設定 secret 無關，**未實測**；首次部署若出現權限錯誤，先重跑 `wrangler login` |
+
+### `finpo` 所在帳號與現況
+
+`npx --yes wrangler@4.145.0 deployments list --name finpo`（在 repo 外的目錄執行，不讀 `wrangler.jsonc`）：
+
+| 項目 | 結果 |
+|---|---|
+| 部署筆數 | **1** |
+| 建立時間 | 2026-09-17T03:50:23Z，來源 `Upload` |
+| 版本 | `570ea2b7-ae77-44c6-930d-63ba6ab42f04`，流量 100% |
+
+兩點佐證這就是 `finpo` 所在的帳號：`C1-6` 記錄的受保護主機 `finpo.drhiromu.workers.dev`，其 workers.dev subdomain 與此帳號相符；而且以 `--name finpo` 查得到部署。唯一一筆部署的日期與 `C1-6` canary 相符，表示 `finpo` 自那之後沒有再部署過。這筆部署承載的是不是 canary 內容，本次**沒有核對**。下方「`finpo` Worker 上的 `C1-6` canary」節的未登入複驗只證明 Access 生效，看不到內容。
 
 ## C7-2　代理逾時量測
 
