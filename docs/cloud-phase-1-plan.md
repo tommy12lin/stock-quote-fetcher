@@ -4,6 +4,7 @@
 > - **使用者決定**：白名單放 Worker secret `ACCESS_ALLOWED_EMAILS`；以 jose 驗 JWT（不先自己寫、之後再換）；雲端反面測試用只上傳、不部署的版本打 preview URL。
 > - **第 0 步**：已登入的請求 3/3 帶有 `cf-access-jwt-assertion`，Worker 收得到。tail 把值遮掉了，`aud` 讀不到，改由第 5 步的正向核對證明。
 > - **第 3 步**：jose `6.2.12` 釘在 `worker/package.json`（放在 `worker/` 下以免觸發映像建置）。JS 測試 25 passed，新測試 8 個中 7 個在修正前失敗，錯誤注入 16/16 抓到。**`wrangler.jsonc` 還沒有 `ACCESS_AUD`**，在補上之前部署，所有 `/api` 都會回 500。
+> - **已推送**（`7fda352`），**沒有觸發映像建置**，`paths-ignore` 對 Worker 檔案的效果首次確認；registry 仍只有 `ab1667ccf7f7`、`a1fb03ff680d`。見 C7 證據「建置觸發」節的 10-01 補記。
 > - **未核對**：`versions upload`／`versions secret put` 是否不部署、是否產生 preview URL（第 6 步每次上傳後先以 `deployments status` 確認）。~~jose 取 JWKS 是否走 `fetch`~~ 已讀原始碼確認。
 >
 > 詳見計畫書 `C7-8` 項下「設計」補記。

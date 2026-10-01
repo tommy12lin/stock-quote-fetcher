@@ -344,6 +344,10 @@ export default {
 
 **2026-10-01 更正**：上表「建立時間」一欄標為 UTC，實際是**台北時間**。`gcloud artifacts docker images list` 的 `CREATE_TIME` 以本機時區顯示：`90edd37e91fb` 列為 `10:07:58`，而它的建置 run `36804313065` 在 02:08:01Z 完成；`c88b258728f4` 列為 `17:12`，它的 run 在 09:11:58Z 觸發。各映像的先後順序不受影響。
 
+**2026-10-01 補記：`paths-ignore` 已確認生效**。`b6d0e59`（文件）與 `7fda352`（`C7-8` 第 3 步：`worker/index.js`、`worker/package.json`、`worker/package-lock.json`、`worker/.gitignore`、`wrangler.jsonc`、`tests/worker.test.mjs` 與文件）一次推送（`e261fbd..7fda352`），這是第一次只改 Worker 相關檔案的推送。推送前 `gh run list --workflow build-image.yml` 最新一筆是 `36804313065`；推送後等了 45 秒以上，`gh run list` 仍沒有新的 run，該提交的 check-runs 為 0。registry 以 `gcloud artifacts docker images list` 唯讀核對，仍只有 `ab1667ccf7f7` 與 `a1fb03ff680d` 兩個，沒有新映像。
+
+界線：只觀察到「沒有建置」，沒有讀 GitHub 判斷時的紀錄。`worker/` 下新增的檔案（`package.json` 等）也被 `worker/**` 排除，與預期相符。
+
 ## C7-1／C7-2　首次分段部署（2026-10-01）
 
 依計畫書 `C7-1` 項下 10-01 補記的分段程序執行：先部署不帶 secret 的 Worker，以未登入與已登入的請求重新證明 Access 生效，然後才放 secret。**`C1-6` 的 canary 自此退場**。時間皆為 UTC。
