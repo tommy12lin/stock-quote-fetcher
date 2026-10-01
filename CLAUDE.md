@@ -36,6 +36,6 @@
 
 ## 不要做的事
 
-- **部署 `finpo` Cloudflare Worker 時不要省略 Access 的核對。** 一律用 `npx --yes wrangler@4.145.0`；每次部署後都要不登入打 `/`，確認回 302 導向 Access。`C7-8` 完成前，Worker 會替所有通過 Access 的請求簽章，所以 Access 是唯一的入口防線；要改 Access 的設定前，先讀計畫書的 `C7-8`。程序與回滾目標見 `docs/cloud-C7-evidence.md`「`C7-1`／`C7-2` 首次分段部署」節。
+- **部署 `finpo` Cloudflare Worker 時不要省略 Access 的核對。** 一律用 `npx --yes wrangler@4.145.0`；每次部署後都要不登入打 `/`，確認回 302 導向 Access。`C7-8` 之後，Worker 只替 JWT 驗證通過、`email` 在 secret `ACCESS_ALLOWED_EMAILS` 內的請求簽章；部署前先 `npm ci --prefix worker`。**要放行新的人，Access policy、`ACCESS_ALLOWED_EMAILS`、Google 的 Test users 三處都要加**，少一處就進不來。要改 Access 的設定前，先讀計畫書的 `C7-8`。程序見 `docs/cloud-C7-evidence.md`「`C7-1`／`C7-2` 首次分段部署」節，現行的回滾目標見同檔「`C7-8` 第 0 步」節的第 4 步。
 - **不要在 `deploy/cloud.toml` 調高 `refresh_deadline_seconds`**，除非重新量過 Cloudflare 的邊緣上限。該檔內有完整算式。
 - **不要把常駐 monitor 的概念帶回雲端設計。** 第一階段明文不納入常駐 monitor、七天觀測與固定排程抓價；抓價改為在使用者請求內完成（`D3`）。

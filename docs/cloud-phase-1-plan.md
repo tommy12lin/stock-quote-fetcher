@@ -1,6 +1,21 @@
 # 雲端部署第一階段執行計畫
 
-> **最新進度（2026-10-01 下午）。`C7-8` 第 1、3 步完成，未部署；下一步為第 4 步（先放白名單 secret，再部署）**：
+> **最新進度（2026-10-01 下午，部署之後）。`C7-8` ✅ 完成（使用者決定勾選），正式版本為 `474e5c4f`。依順序，下一步為 `C7-4` 功能驗收**：
+> - **勾選的依據**：計畫要求的反面案例都有證據。`aud` 不符與 `email` 不在白名單在雲端以 preview URL 測得；沒有 JWT、簽章錯、過期在 Access 正常時到不了 Worker，依設計以 Node 測試為證據。真實 Access token 的正向測試在雲端通過。界線：雲端 403 的原因由對照組推得，Worker 的 `console.log` 在雲端能否看到仍未確認。
+> - **入口防線改為兩層**：Access 之後，Worker 另驗 JWT 與 `email` 白名單。**白名單要在三處維護**：Access policy、Worker secret `ACCESS_ALLOWED_EMAILS`、Google 的 Test users。
+> - `C7-1`、`C7-2` 仍為 🟡（125 秒確認、524 轉換、三層逾時對齊、5 MiB 上傳的 CPU 耗時）。清單 10-07 13:51（台北）到期，到期前要執行 `finpo-catalog-refresh`。
+>
+> 以下為勾選前的記錄：
+> - **部署**：先放 `ACCESS_ALLOWED_EMAILS`（`6b39cc89`，舊程式），再部署 `f78cd9b`（`474e5c4f`）。不登入的 `/`、`/api/*`、POST、preview URL 都回 302。
+> - **正向（雲端）**：真實 Access token 驗證通過，Cloud Run 收到 200；CPU 時間 2–3 ms（Free 上限 10 ms）。AUD 在雲端得到證明。
+> - **反面（雲端，preview URL）**：AUD 改錯、白名單改錯的兩個版本都回 403、Cloud Run 沒有紀錄；設定全對的對照版本 `f6b74704` 回 200。原因由對照組推得：**preview 的請求不進 `wrangler tail`**，log 讀不到。沒有 JWT、簽章錯、過期只有 Node 的證據（設計時已決定）。
+> - **`versions upload`／`versions secret put` 都不部署**，已核對。`f6b74704` 是最新版本，帶正確的白名單，避免下次部署繼承假名單。
+> - **新發現**：這台筆電上的公司代理程式（`prisma-advantech.com`）會解密 `*.workers.dev`，tail 與 curl 因此失敗；換手機熱點無效，過一陣子才自行恢復。`api.cloudflare.com` 與 Google API 不受影響。不得以關閉憑證驗證繞過。
+> - **回滾目標**：`6b39cc89`（舊程式，兩個 secret 都在）。
+>
+> 詳見 [C7 證據](cloud-C7-evidence.md)「`C7-8` 第 0 步」節的第 4–6 步。
+>
+> **更早的進度（2026-10-01 下午）。`C7-8` 第 1、3 步完成，未部署；下一步為第 4 步（先放白名單 secret，再部署）**：
 > - **第 1 步**：AUD 由不登入請求的 Access 登入網址的 `kid` 取得，使用者在儀表板核對一致，已寫入 `wrangler.jsonc`。
 > - **使用者決定**：白名單放 Worker secret `ACCESS_ALLOWED_EMAILS`；以 jose 驗 JWT（不先自己寫、之後再換）；雲端反面測試用只上傳、不部署的版本打 preview URL。
 > - **第 0 步**：已登入的請求 3/3 帶有 `cf-access-jwt-assertion`，Worker 收得到。tail 把值遮掉了，`aud` 讀不到，改由第 5 步的正向核對證明。
@@ -111,7 +126,7 @@
 > | `C6-2`–`C6-4` 部署 | ⬜ ~~**被 `refresh_max_tickers` 擋住**，見下~~ 值已定為 27（09-30），~~待 `cloud.toml` 推送、新映像建置並把 `finpo-catalog-refresh` 改指向新映像後開始~~ **前提已全部滿足，可以開始**（09-30）。**同日 `C6-2` 已部署**（🟡，連資料庫與正向驗簽待 `C7-2`，另有~~日誌與 `D6` 兩項~~~~日誌一項未處理~~；日誌已於同日處理；`D6` 已於同日改寫為接受手動 `gcloud`，不再是未處理項）；~~`C6-3`、`C6-4` ⬜~~ `C6-3` ~~⬜~~ ✅（同日完成）；`C6-4` ~~🟡（與 C6 證據對齊：digest 產出機制已建立，首次部署的指令、digest 與 `describe` 已記在 C6 證據 `C6-2` 節；回滾未實測）~~ ✅（同日回滾已實測，見 C6 證據 `C6-4` 節）。**10-01 補記：`C6-2` ✅**，連資料庫與正向驗簽已由 `C7-2` 的首次部署實測，`C6` 全部完成 |
 > | `C7-1` 前端部署 | 🟡 10-01 已部署（`ca71f76e`），canary 退場，安全標頭生效；Access 下的 125 秒確認未做 |
 > | `C7-2` 逾時量測 | ✅ 完成；`C7-2` 其餘要求待 `C6` 部署後。**09-30 補記**：代理程式已在本機完成並通過 Node 測試，未部署；雲端的正向驗簽等項目隨 `C7-1` 部署時做。**10-01 補記**：已部署，正向驗簽、`Origin`／上傳標頭轉發、`run_worker_first` 已實測；524 轉換與三層逾時對齊未做，維持 🟡 |
-> | `C7-8` Worker 驗 Access JWT | ⬜ 09-30 新立，~~未排入順序~~ 10-01 排定在 `C7-1`／`C7-2` 首次部署之後、`C7-4` 之前；列為第一階段完成條件，含 `email` 核對。**10-01 下午補記**：已設計（Worker secret 白名單、jose、preview URL 反面測試），~~未實作~~；第 0 步已確認 Worker 收得到 JWT 標頭；第 3 步實作與 Node 測試完成，未部署；~~待 AUD~~ 第 1 步 AUD 已補上 |
+> | `C7-8` Worker 驗 Access JWT | ~~⬜~~ **✅ 10-01 完成（使用者決定勾選）**。09-30 新立，~~未排入順序~~ 10-01 排定在 `C7-1`／`C7-2` 首次部署之後、`C7-4` 之前；列為第一階段完成條件，含 `email` 核對。**10-01 下午補記**：已設計（Worker secret 白名單、jose、preview URL 反面測試），~~未實作~~；第 0 步已確認 Worker 收得到 JWT 標頭；第 3 步實作與 Node 測試完成，~~未部署~~；~~待 AUD~~ 第 1 步 AUD 已補上。**同日部署（`474e5c4f`），雲端正向與 preview URL 反面測試通過**，勾選待使用者決定 |
 > | `C7-7` 冷啟動 | ✅ 提前完成（2.3–3.4 秒） |
 > | `C7-6` 外部來源驗收 | 🟡 **R1、R4 已完成；R2 已於 2026-09-29 執行**（11/11 抓價成功，台股 6 檔均為一般時段；MIS 逐秒對齊 0/6，價格正確性證據不足）。~~**R3、R5 未執行**~~ **R3、R5 已於 09-29 晚上執行**（R3 `dnxnv`：美股取得當日成交、價格證據不足，台股等於 09-29 官方收盤；R5 `h8cz4`：`partial` 收尾正確，`c` 3.967／2.947 秒／檔）。~~**`refresh_max_tickers` 待使用者決定；尚未收尾**。~~ **2026-09-30：取 27；清除已完成，Job 已刪除，~~`cloud.toml` 待推送~~ `cloud.toml` 已推送，`finpo-catalog-refresh` 已改指向新映像。量測與收尾完成。** ~~官方清單約於 09-30 17:10（台北）到期，到期前須請求外更新。~~ 清單已於 09-29 更新，09-30 以資料庫核對，到期時間為 10-06 22:35（台北）。詳見 [C7 證據](cloud-C7-evidence.md)。 |
 > | 其餘 `C7` | ⬜ 未開始（10-01 補記：`C7-1` 已另列於上） |
@@ -136,7 +151,7 @@
 > **2026-09-23 新發現、~~處理方式待決定~~ 已於同日決定並實測（見本段補記）**：`C7-6` R1 量得官方清單更新從 GCP 需 **135 秒**（抓取約 62 秒、逐筆寫入 13,427 筆約 73 秒），**超過 125 秒的邊緣上限**，且這段路徑不受 `refresh_deadline_seconds` 約束。正式部署後，頁面上的「更新股票清單」會收到 524。影響 `C6-2`、`C7-2`、`C7-4`，不影響 `C7-6` 的報價量測。見 [C7 證據](cloud-C7-evidence.md) 的 `C7-6` 節。**同日補記：已決定兩者都做，程式已完成**（清單批次寫入；`[instruments] refresh_in_request = false`，清單改由管理者以 `stock-web --refresh-catalog` 在請求外更新）。雲端耗時尚未實測，須等新映像建置；另須確認單一 INSERT 能否在 10 秒的 `statement_timeout` 內完成。**同日再補記：已實測**。新映像 `218b4b962c5a` 以 Cloud Run Job `finpo-catalog-refresh`（`--args=--refresh-catalog`）執行成功：觸發到完成約 82 秒（R1 同一區間約 159 秒），INSERT 未碰到 10 秒上限。寫入耗時沒有單獨量出，界線見 C7 證據。**清單每 168 小時到期，到期前須由管理者手動更新一次。**
 >
 > **接手前必讀的三條硬性限制**：
-> 1. ~~**`C7-1` 之前不得對 `finpo` Worker 做任何部署**——它承載 `C1-6` 的 canary，是目前唯一能驗證 Access 生效的東西。~~ **2026-10-01 補記：已解除**，`C7-1` 已部署，canary 退場。改為：**部署 `finpo` 一律用 `npx --yes wrangler@4.145.0`**，每次部署後都要不登入打 `/` 確認回 302 導向 Access；`C7-8` 完成前，Worker 會替所有通過 Access 的請求簽章。
+> 1. ~~**`C7-1` 之前不得對 `finpo` Worker 做任何部署**——它承載 `C1-6` 的 canary，是目前唯一能驗證 Access 生效的東西。~~ **2026-10-01 補記：已解除**，`C7-1` 已部署，canary 退場。改為：**部署 `finpo` 一律用 `npx --yes wrangler@4.145.0`**，每次部署後都要不登入打 `/` 確認回 302 導向 Access；~~`C7-8` 完成前，Worker 會替所有通過 Access 的請求簽章。~~ **10-01 `C7-8` 完成後**：Worker 只替 JWT 驗證通過且 `email` 在 `ACCESS_ALLOWED_EMAILS` 內的請求簽章。部署前 `worker/` 要先 `npm ci`；要放行新的人，Access policy、`ACCESS_ALLOWED_EMAILS`、Google 的 Test users 三處都要加。
 > 2. **`GET /healthz` 在 Cloud Run 公開網址上不可用**（被前端攔截、不抵達容器，回 404）。健康檢查探針改用 `/`。見 [C7 證據](cloud-C7-evidence.md)。
 > 3. **抓價的時間預算是巢狀的**：125 秒邊緣硬上限 ⊃ `refresh_deadline_seconds` 110 ⊃ 一批內所有市場共用的 `budget` ⊃ `cycle_budget_seconds` 50 ⊃ `operation_timeout_seconds` 10。調高任何一層前先讀 `C7` 證據的算式。
 >
@@ -940,7 +955,7 @@ Dockerfile 三處 `company_ca` 掛載本來就是條件式（`if [ -f /run/secre
           - **09-26 以這個做法實測通過**：`compare` 輸出了摘要行（18 筆快照，偏移都是 3600 秒），`record` 記錄 6 秒寫入 2 筆，檔案落在 `main` 的 `output/c76`。**實測時抓到一個坑**：worktree 裡沒有 `output/c76`（被 Git 忽略），而它的父目錄是唯讀掛載，Docker 無法建立掛載點，容器會停在 `Created`，錯誤訊息是 `mkdirat …/workspace/output: read-only file system`。已在 worktree 裡**預先建立空的 `output\c76` 目錄**，Git 不追蹤它，不影響分支內容。若 worktree 重建過，要記得再建一次。
           - **收尾後**：`c76-source-probe` 刪除、不再需要 `218b4b962c5a` 之後，把 `c76-mis-dt-align` 合併進 `main` 再推送，然後以 `git worktree remove` 移除 worktree。
   - [ ] `C7-7` 營運驗收：DB 匯出與還原演練、前版映像回滾、計費與 DB 容量檢查、冷啟動與抓價耗時量測。
-  - [ ] `C7-8`（**2026-09-30 新立，使用者決定**）Worker 驗證 Access JWT。`C7-2` 的代理替任何到得了它的請求簽章，所以 Worker 本身只靠 Access 保護；Access 被誤關或設定錯誤時，後端的 HMAC 驗證就等於被繞過。做法是 Worker 以 WebCrypto 驗 `Cf-Access-Jwt-Assertion` 的簽章與 `aud`，公鑰取自 team domain 的 JWKS，驗不過就不簽章。這不牴觸 `D1`：`D1` 否決的是在**後端**驗 JWT，理由是要增加 Python 依賴；Worker 端沒有這個限制。**尚未排入順序，也未決定是否列為第一階段的完成條件**；JWKS 快取與金鑰輪替怎麼處理也還沒設計。
+  - [x] `C7-8`（**2026-09-30 新立，使用者決定**；**2026-10-01 完成，使用者決定勾選**，證據見 [C7 證據](cloud-C7-evidence.md)「`C7-8` 第 0 步」節的第 0–6 步）Worker 驗證 Access JWT。`C7-2` 的代理替任何到得了它的請求簽章，所以 Worker 本身只靠 Access 保護；Access 被誤關或設定錯誤時，後端的 HMAC 驗證就等於被繞過。做法是 Worker 以 WebCrypto 驗 `Cf-Access-Jwt-Assertion` 的簽章與 `aud`，公鑰取自 team domain 的 JWKS，驗不過就不簽章。這不牴觸 `D1`：`D1` 否決的是在**後端**驗 JWT，理由是要增加 Python 依賴；Worker 端沒有這個限制。**尚未排入順序，也未決定是否列為第一階段的完成條件**；JWKS 快取與金鑰輪替怎麼處理也還沒設計。
 
     **2026-10-01 補記：使用者決定三件事**：
 
@@ -1015,7 +1030,7 @@ flowchart LR
 | Worker 不得 fetch 同 zone 的另一個 Worker | **新增（2026-09-22）**：`workers.dev` 全帳號同屬一個 zone，Worker 互打回 `error code: 1042`。本階段 `C7-2` 的代理打的是 `run.app`，不受影響；但封死「以第二個 Worker 分擔長工作」這個選項 | 若日後要拆 Worker，需改用 service binding 或自有網域 |
 | ~~自動產生的 `_routes.json` 是否只涵蓋 `/api/*`~~ | **已解除**：`D2` 改採 Workers static assets 後，改以 wrangler 的 `run_worker_first` 明文宣告，無自動產生的失敗模式 | — |
 | ~~Access 能否保護免費子網域（含 preview URL）~~ | **已解決**：`C1-6` 實測 `workers.dev` 可受 Worker-level Access 保護，未登入時靜態檔不送出、`/api/*` 亦在保護傘內，`D5` 的「不買網域」成立 | — |
-| Worker 替任何到得了它的請求簽章 | **新增（2026-09-30）**：Worker 不驗 Access JWT，Access 被誤關或設定錯誤時，後端的 HMAC 驗證等於被繞過。**2026-10-01 補記**：只驗簽章與 `aud` 擋不住 policy 設得太寬，使用者決定 `C7-8` 另核對 `email` claim | `C7-8`；~~尚未排入順序~~ 10-01 排定在 `C7-1`／`C7-2` 首次部署之後、`C7-4` 之前，列為第一階段完成條件；空窗期以 `C7-1` 的分段部署收窄 |
+| Worker 替任何到得了它的請求簽章 | **新增（2026-09-30）**：Worker 不驗 Access JWT，Access 被誤關或設定錯誤時，後端的 HMAC 驗證等於被繞過。**2026-10-01 補記**：只驗簽章與 `aud` 擋不住 policy 設得太寬，使用者決定 `C7-8` 另核對 `email` claim | `C7-8`；~~尚未排入順序~~ 10-01 排定在 `C7-1`／`C7-2` 首次部署之後、`C7-4` 之前，列為第一階段完成條件；空窗期以 `C7-1` 的分段部署收窄。**10-01 已處理**：`C7-8` 完成，`474e5c4f` 起 Worker 驗 JWT 與 `email` 白名單；殘留風險是白名單要在三處維護 |
 | Worker-level Access 不支援 WebSocket | 已知行為；本階段以 `fetch` 輪詢，不受影響，但封死日後改用 WebSocket 推播的選項 | 若日後要改推播，需改用 hostname-based Access |
 | Supabase Free 專案閒置 7 天被暫停 | 已知行為；每日更新不會觸發，驗收若中斷一週以上會誤判為程式故障 | `C7` 期間留意 |
 | ~~pooler 是否接受 startup options~~ | **已解決（2026-09-22）**：連線後 SET＋SHOW 已實作，Supabase 上已驗證設定值與實際兩種逾時 | C5-4 完成，證據見 cloud-C5-evidence.md |

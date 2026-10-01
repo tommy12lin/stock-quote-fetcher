@@ -15,7 +15,7 @@
 | `C7-5` 持久性驗收 | ⬜ 未開始 | 承接 `C4` 的雲端完成條件 |
 | `C7-6` 外部來源驗收 | 🟡 進行中 | **R1、R4 已完成**，見下文。**2026-09-29 R2 已執行**：GCP 11/11 抓價成功，台股 6 檔為當日一般時段，但 MIS 嚴格逐秒對齊為 0/6，價格正確性證據不足；~~R3、R5 未執行~~。**同日晚上 R3、R5 已執行**：R3 美股 5 檔取得當日一般時段成交（價格正確性證據不足），台股 6 檔等於 09-29 官方收盤；R5 截斷收尾正確，`c` 為 3.967（含暖機）／2.947（不含第 1 批）秒／檔，**`refresh_max_tickers` 待使用者決定**。五場都沒有 429。尚待收尾（清單更新、`reset`、`purge`、刪除 Job）。 |
 | `C7-7` 營運驗收 | 🟡 部分 | **冷啟動已提前量測**（本檔），其餘（匯出還原、回滾、計費、抓價耗時）未開始；含 `C1-8` 的預算通知送達 |
-| `C7-8` Worker 驗 Access JWT | ⬜ 未開始 | 2026-09-30 新立，見計畫書。**2026-10-01 補記**：排在 `C7-1`／`C7-2` 首次部署之後、`C7-4` 之前，列為第一階段完成條件，另須核對 `email` claim。**同日下午補記**：已設計（見計畫書）；第 0 步確認 Worker 收得到 `Cf-Access-Jwt-Assertion`，但 tail 遮蔽了值，見「`C7-8` 第 0 步」節；第 3 步（jose 實作與 Node 測試）已完成，未部署，見同節 |
+| `C7-8` Worker 驗 Access JWT | ~~⬜ 未開始~~ ✅ 10-01 完成（使用者決定勾選） | 2026-09-30 新立，見計畫書。**2026-10-01 補記**：排在 `C7-1`／`C7-2` 首次部署之後、`C7-4` 之前，列為第一階段完成條件，另須核對 `email` claim。**同日下午補記**：已設計（見計畫書）；第 0 步確認 Worker 收得到 `Cf-Access-Jwt-Assertion`，但 tail 遮蔽了值，見「`C7-8` 第 0 步」節；第 3 步（jose 實作與 Node 測試）已完成，~~未部署~~，見同節。**同日部署 `474e5c4f`，第 5 步正向、第 6 步 preview URL 反面測試通過**，見同節 |
 
 ## C7-1　部署前準備（2026-10-01）
 
@@ -592,6 +592,114 @@ tail 記到 3 筆，都是 `finpo.drhiromu.workers.dev`、版本 `ca71f76e` 的�
 - 驗簽的 CPU 時間。
 
 以上都由第 5 步確認。
+
+### 第 4 步：放白名單，再部署
+
+部署前基準（Claude 唯讀核對）：`secret list` 只有 `PROXY_HMAC_SECRET`；`deployments status` 為 `ca71f76e` 100%。
+
+**4a 放白名單**：使用者以 `npx --yes wrangler@4.145.0 secret put ACCESS_ALLOWED_EMAILS --name finpo` 的互動提示輸入，沒有用管線。值只有使用者知道，本檔不記錄。之後 Claude 唯讀核對：
+
+| 項目 | 結果 |
+|---|---|
+| `secret list` | `ACCESS_ALLOWED_EMAILS`、`PROXY_HMAC_SECRET`，都是 `secret_text` |
+| `deployments status` | `6b39cc89-862f-4e89-b0ad-eea23b398347` 100%，來源 `Secret Change`，03:47:42Z |
+| `versions view 6b39cc89` | binding 只有 `UPSTREAM_ORIGIN`，沒有 `ACCESS_*` 變數，兩個 secret 都在。由 binding 推定它跑的仍是 `ca71f76e` 的舊程式（新設定會多出 `ACCESS_TEAM_DOMAIN`、`ACCESS_AUD`），舊程式不讀這個 secret |
+| 未登入 `GET /`、`/api/session` | 都是 302 導向 Access 登入 |
+
+`6b39cc89` 取代 `ca71f76e` 成為回滾目標：舊程式，但兩個 secret 都在。
+
+**4b 部署**：使用者在 repo 根目錄執行 `npx --yes wrangler@4.145.0 deploy`（`f78cd9b`，`worker/node_modules` 由 `npm ci --prefix worker` 安裝）。Claude 唯讀核對：
+
+| 項目 | 結果 |
+|---|---|
+| `deployments status` | `474e5c4f-4bfd-4c4e-a36f-c1d38c164b63` 100%，04:17:09Z |
+| `versions view 474e5c4f` | binding 有 `ACCESS_AUD`、`ACCESS_TEAM_DOMAIN`、`UPSTREAM_ORIGIN`；secret 有 `ACCESS_ALLOWED_EMAILS`、`PROXY_HMAC_SECRET`；`compatibility_date` 2026-09-01 |
+| 未登入 GET `/`、`/index.html`、`/app.js`、`/api/session`、`/api/portfolio`，POST `/api/portfolio` | 全部 302 導向 Access 登入，143 bytes，頁面標記「持股總覽」0 次 |
+| preview URL `474e5c4f-finpo.drhiromu.workers.dev` 的 `/`、`/api/session` | 302 導向 Access |
+| 登入網址的 `kid` | 正式主機與 preview URL 都是 `fa06f035…c065`，與 `ACCESS_AUD` 相同。推定 preview URL 由同一個 Access application 保護，第 6 步的反面測試因此可以在 preview URL 上做 |
+
+### 發現：公司網路開始解密 `*.workers.dev` 的 TLS
+
+第 4b 步之後，curl 打 `finpo.drhiromu.workers.dev` 失敗：`CRYPT_E_NO_REVOCATION_CHECK`。同一台機器約 30 分鐘前（第 0、1 步）還正常。`wrangler tail` 也失敗：`CERT_SIGNATURE_FAILURE`。
+
+以 Node 的 `tls.connect` 唯讀讀取對方出示的憑證鏈，不送任何資料：
+
+| 主機 | 簽發者 | Node 驗證 |
+|---|---|---|
+| `finpo.drhiromu.workers.dev`、`tail.developers.workers.dev` | `prisma-advantech.com`（O=Advantech）← `ACLCA` | 失敗，`CERT_SIGNATURE_FAILURE`；加 `--use-system-ca` 改用 Windows 憑證庫仍失敗 |
+| `api.cloudflare.com`、`dash.cloudflare.com`、`logging.googleapis.com`、`oauth2.googleapis.com` | Google Trust Services | 通過 |
+
+判讀：公司的 TLS 檢查代理只解密 `*.workers.dev`，所以 wrangler 的部署與查詢指令（走 `api.cloudflare.com`）不受影響，tail 與 curl 受影響。開始攔截的時間介於 03:23Z（第 0 步的 tail 還能連）與 04:2xZ 之間，確切時間不知道。**沒有以關閉憑證驗證的方式繞過**。
+
+影響：
+
+- 上表的未登入檢查以 `curl --ssl-no-revoke` 執行：只略過撤銷清單查詢，憑證鏈與主機名稱照常驗證。這些回應經過公司代理。內容（302、143 bytes、導向 `khlin.cloudflareaccess.com`）與直連時相同，但嚴格說不是直連取得的。
+- 使用者瀏覽器連 `finpo` 的流量同樣會被公司代理解密，代理看得到 Access 的 cookie 與頁面上的持股。第一階段是假持股（`D5`），這是公司網路政策而非本專案的缺陷，但放真實持股前要考慮。
+- 第 5 步改以 Cloud Run 請求日誌取代 tail，CPU 時間與 Worker 的 log 改由儀表板取得。
+
+### 第 5 步：正向核對
+
+使用者在瀏覽器重新整理頁面，頁面正常顯示持股總覽。Claude 以 `gcloud logging read` 查 Cloud Run 請求日誌：
+
+| 時間（UTC） | 請求 | Cloud Run 狀態 | 後端延遲（s） | revision |
+|---|---|---|---|---|
+| 04:25:27 | GET `/api/session` | 200 | 3.343 | `stock-quote-00004-4v6` |
+| 04:25:31 | GET `/api/portfolio` | 200 | 0.185 | 同上 |
+| 04:25:32 | GET `/api/portfolio/valuation?market=ALL` | 200 | 0.096 | 同上 |
+
+- **新程式在雲端以真實 Access token 驗證通過並簽章**。04:17:09Z 之後 100% 的流量都在 `474e5c4f`，所以這 3 筆是新程式處理的；它們抵達 Cloud Run 並得到 200，代表 Worker 驗過簽章、`iss`、`aud`、`exp`，`email` 也在白名單內，然後簽了 HMAC。**第 1 步的 AUD 至此在雲端得到證明**；jose 在 workerd 上取 JWKS 也成立。
+- 04:17Z 到 04:25Z 之間沒有其他紀錄：上面的未登入請求都停在 Access。
+- 第一筆 3.34 秒推定是冷啟動（`C7-7` 量得 2.3–3.4 秒），沒有另外核對。
+- **查詢本身的正向對照**：同一條查詢查得到第 0 步 03:23Z 的 3 筆。查詢條件第一次寫成 batch 檔時，`call` 把 `%%2F` 展開了兩次，`%2` 被當成第二個參數吃掉，條件被靜默改壞，回 0 筆。改用 `log_id(run.googleapis.com/requests)` 避開 `%` 之後才查到。這是 R4 節「引號陷阱」之外，`cmd` 的另一個靜默回 0 筆的坑。
+
+~~**本步還沒做的**：~~
+
+- ~~驗簽的 CPU 時間：tail 不能用，改由使用者看儀表板的 Metrics。~~ 同日已由 tail 量得，見下。
+- Worker 的 `console.log` 能不能看到：正向請求不會寫 log，留到第 6 步。
+
+**CPU 時間（同日補記）**。使用者先切到手機熱點，結果 `*.workers.dev` 仍由 `prisma-advantech.com` 簽發。推定解密的是筆電上的代理程式，而不是公司網路，所以換網路無效；這是推論，沒有查代理程式本身。之後再檢查一次，`tail.developers.workers.dev` 與 `finpo.drhiromu.workers.dev` 改由 Google Trust Services、Let's Encrypt 簽發，Node 驗證通過，才開 tail。使用者重新整理頁面：
+
+| 時間（UTC） | 請求 | 狀態 | CPU（ms） | wall（ms） | 版本 |
+|---|---|---|---|---|---|
+| 04:37:15 | GET `/api/session` | 200 | 3 | 822 | `474e5c4f` |
+| 04:37:15 | GET `/api/portfolio` | 200 | 3 | 161 | 同上 |
+| 04:37:16 | GET `/api/portfolio/valuation` | 200 | 2 | 138 | 同上 |
+
+- 3 筆都帶 `cf-access-jwt-assertion`，沒有 log、沒有例外。
+- **驗 JWT 之後的 CPU 時間是 2–3 ms，Free 方案的上限是 10 ms**。第 0 步的舊程式是 2 ms，首次分段部署第 4 步是 1 ms 以內。
+- 界線：tail 只給整數 ms，只有 3 筆，而且看不出這個 isolate 有沒有在這次請求裡抓 JWKS、匯入公鑰，所以**單獨的驗簽成本沒有量出來**，只能說增加量在個位數 ms 以內。5 MiB 上傳時的 CPU 時間仍未量（`C7-2` 承接）。
+
+### 第 6 步：雲端反面測試（preview URL）
+
+做法：上傳不部署的版本，每個版本只改一個設定，由使用者在瀏覽器（已登入）打開該版本的 preview URL。每次上傳後，Claude 先以 `deployments status` 確認正式流量沒有移動，才請使用者打開。
+
+| 子步 | 版本 | 怎麼產生 | 改了什麼（`versions view` 核對） | 頁面 | Cloud Run |
+|---|---|---|---|---|---|
+| 6a | `294d9efc-4efd-46f4-9392-5831115a71da`，04:39:18Z | `versions upload --var ACCESS_AUD:c7-8-wrong-audience` | `ACCESS_AUD` 為 `c7-8-wrong-audience`，兩個 secret 都在 | 「登入身分未通過驗證」 | **沒有紀錄** |
+| 6b | `6fa94819-1ebd-499e-82c7-3a34568977f8`，04:47:04Z | `versions upload --secrets-file`，檔案只有 `ACCESS_ALLOWED_EMAILS: nobody@example.test` | `ACCESS_AUD` 正確，兩個 secret 都在（值讀不回來） | 「登入身分未通過驗證」 | **沒有紀錄** |
+| 6c | `f6b74704-797e-4d3d-bf75-d2c1feedde13`，04:51:36Z | `versions secret put ACCESS_ALLOWED_EMAILS`，使用者以互動提示放回正確的值 | `ACCESS_AUD` 正確，兩個 secret 都在 | **正常顯示持股總覽** | 05:02:08–14Z 3 筆 200（`/api/session` 3.749 s，推定冷啟動；`/api/portfolio`；`/api/portfolio/valuation`） |
+
+- 「登入身分未通過驗證」是 Worker 的 403 `access_denied` 訊息（500、503 的訊息不同），所以 6a、6b 都是 Worker 拒絕，不是 Access 或後端。
+- **6a、6b 都沒有轉發**：Cloud Run 從 04:42:19Z 到 05:02:08Z 之間沒有任何紀錄。
+- 6c 的 3 筆 200 來自 preview URL：開著的正式主機 tail 在 05:02 沒有記到請求。
+- **tail 在這段期間是否連著**：兩個 tail（未指定版本的、`--version-id 294d9efc` 的）都不是跑到 30 分鐘時限才結束，而是在 **05:04:56Z** 以 `CERT_SIGNATURE_FAILURE` 退出（輸出檔的最後寫入時間），也就是公司代理又接回 `*.workers.dev` 的時候。使用者在 05:02 打開 6c 之後才問能否切回公司網路，時間上一致。斷線時間晚於 05:02:14Z 的 6c 請求，也晚於使用者重新整理 6a preview URL 的時間（04:47 上傳 6b 之前），所以上面「05:02 正式主機沒有請求」與下面「preview 的請求不進 tail」兩個判讀都成立。界線：wrangler 只在重新連線時報錯，若連線在 05:04:56Z 之前已經靜默停住，這裡看不出來。
+
+**403 的原因是以對照組推得的，不是從 log 讀到的**。原本打算從 tail 讀 `console.log` 的失敗類別，但 preview URL 的請求**沒有進入 `wrangler tail`**：沒指定版本的 tail 只記到正式主機，加了 `--version-id 294d9efc…` 的 tail 在使用者重新整理 preview URL 時一筆都沒記到。這是觀察，沒有找到文件說明原因。改為：6c 與 6a、6b 在同一種主機（preview URL）、同一個登入下，只有設定全部正確，結果回 200。這證明 preview 主機也會帶 `Cf-Access-Jwt-Assertion`，`aud`、`email` 也對得上。因此 6a 的 403 歸因於 AUD 不符，6b 的 403 歸因於 `email` 不在白名單。第 0 步擔心的「preview 上因沒有 JWT 而被擋、測試白做」由此排除。**Worker 的 `console.log` 在雲端能不能看到，仍未確認**：正向請求不寫 log，preview 的請求又不進 tail。
+
+**第 2 步的未核對項目至此補齊**：
+
+- `versions upload` 不部署，並產生 preview URL（輸出有 `Version Preview URL`）。`--var` 的值在上傳輸出中顯示為 `(hidden)`，`versions view` 看得到。
+- `versions secret put` 同樣只建立版本、不部署，來源為 `create_version_api`。
+- 6a、6b、6c 期間正式流量都是 `474e5c4f` 100%。
+
+**收尾**：6c 讓最新的版本帶回正確的白名單。版本的 secret 推定繼承自最新的版本，沒有核對；6c 就是為了避免下次 `wrangler deploy` 把假名單帶進正式環境。`f6b74704` 與正式的 `474e5c4f` 程式相同，設定也相同。6a、6b 的版本仍留在版本清單中，preview URL 受 Access 保護，而且它們對 `/api` 一律回 403，沒有刪除。
+
+**雲端沒有做的反面案例**：沒有 JWT、簽章錯誤、已過期。Access 正常運作時，這些請求到不了 Worker，設計時已決定只以 Node 測試（`tests/worker.test.mjs`）為證據。
+
+**其他觀察**：
+
+- `/favicon.ico` 在 preview URL 回 404：沒有對應的靜態檔，回落到 Worker，Worker 對 `/api` 以外的路徑一律回 404，與首次部署的記錄相同。
+- 04:42:19Z 正式主機有 3 筆 200（`474e5c4f`），時間在使用者打開 6a 的 preview URL 前後，來源（重新整理正式網址，或另一個分頁）沒有確認。
 
 ## C7-6　外部來源驗收（進行中）
 
