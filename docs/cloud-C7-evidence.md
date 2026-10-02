@@ -701,7 +701,7 @@ tail 記到 3 筆，都是 `finpo.drhiromu.workers.dev`、版本 `ca71f76e` 的�
 - `/favicon.ico` 在 preview URL 回 404：沒有對應的靜態檔，回落到 Worker，Worker 對 `/api` 以外的路徑一律回 404，與首次部署的記錄相同。
 - 04:42:19Z 正式主機有 3 筆 200（`474e5c4f`），時間在使用者打開 6a 的 preview URL 前後，來源（重新整理正式網址，或另一個分頁）沒有確認。
 
-## C7-4　功能驗收（進行中）
+## C7-4　功能驗收（~~進行中~~ 10-02 完成，使用者決定勾選）
 
 清單、測試資料與執行順序見計畫書 `C7-4` 項下 10-01 補記。瀏覽器操作由使用者執行；Cloud Run 請求日誌由 Claude 以 `log_id(run.googleapis.com/requests)` 唯讀查詢。查詢腳本用 Windows PowerShell 5.1，過濾條件內的雙引號寫成 `\"`（裸雙引號會被吃掉，第一次查詢就因此回 `Unparseable filter`）。Worker 版本 `474e5c4f`，Cloud Run revision `stock-quote-00004-4v6`。
 
@@ -1124,7 +1124,7 @@ job（使用者在 SQL Editor 以唯讀 `SELECT` 讀出最新 3 筆）：
 - **超過 Free 方案文件寫的 10 ms，但這次沒有被終止**：`outcome` 是 `ok`，預覽也回 200。Cloudflare 怎麼執行這個上限（每次都擋，或是允許偶爾超過），**本項沒有查證，也只有 1 個樣本**，所以不能推論「5 MiB 的上傳在 Free 方案上安全」。
 - **成本來自 Worker 對 body 的雜湊**：讀 `worker/index.js`，Worker 會把整個 body 讀成一個 `ArrayBuffer`，再以 `crypto.subtle.digest('SHA-256', …)` 算出 HMAC 簽章要用的 body 雜湊。所以 CPU 時間會隨上傳大小增加。這是讀程式推得的；不同大小的檔案沒有逐一量測。
 - **實際使用時的影響推定很小**：真實的持股 Excel 是 KB 等級。但小檔案預覽的 CPU 時間本次沒有量，F1、F2 的預覽在 tail 斷線期間發生。
-- **處置待使用者決定**。選項有三：接受（單一使用者、5 MiB 是上限而不是常態，被終止時前端會收到錯誤）；調低 `MAX_UPLOAD`（Worker 與 `web_input` 要一起改）；改用付費方案。本項不改程式。
+- **處置待使用者決定**。選項有三：接受（單一使用者、5 MiB 是上限而不是常態，被終止時前端會收到錯誤）；調低 `MAX_UPLOAD`（Worker 與 `web_input` 要一起改）；改用付費方案。本項不改程式。**同日補記：使用者決定接受**，並勾選 `C7-4`。
 - 不帶 body 的請求是 1–7 ms，`C7-8` 第 5 步記錄的是 2–3 ms。02:38:24 那次 `session` 的 7 ms 比較高，原因沒有查。
 
 ## C7-6　外部來源驗收（進行中）
