@@ -803,6 +803,19 @@ tail 記到 3 筆，都是 `finpo.drhiromu.workers.dev`、版本 `ca71f76e` 的�
 - **B3**：偽造的 Access cookie 過不了 Access，所以 Worker 的 JWT 驗證（`C7-8`）這次沒有被碰到。Worker 那一層的反面測試在 `C7-8` 第 6 步做過。
 - **界線**：沒有做「拿到真的簽章後重放」的測試。簽章綁定方法、路徑、body 雜湊與時間戳，時間窗 ±60 秒，這是讀程式與 `C3` 的單元測試得出的，沒有在雲端實測重放。
 
+### `C7-3-2`、`C7-3-3`：無痕視窗與未授權帳號（使用者操作，2026-10-02 約 14:50–15:05 台北）
+
+| 項 | 使用者回報 | 判定 |
+|---|---|---|
+| `C7-3-2` 無痕視窗開 `finpo` | 先導向 Access 登入頁，再到 Google 登入頁；**整個過程沒有看到任何持股頁面的內容** | ✅ |
+| `C7-3-3` 以第二個 Google 帳號完成 Google 登入 | 回到 Access 頁面，顯示「That account does not have access」 | ✅ |
+
+**更正（同日）**：使用者回報時另附了 `2026-10-03T02:37:24.679Z`，本節原本把它記成「頁面上的時間」、把日期記成 10-03。這個時間比當下（10-02 約 07:05Z）晚了 19.5 小時，不可能是被拒絕的時刻；它與隨後讀到的 `CF_Authorization` 到期時間 `02:37:27.405Z` 只差 3 秒，推定是誤貼了 cookie 的到期時間。已把日期改回 10-02，並刪去該時間。
+
+- **`C7-3-3` 是 Access 擋的，與計畫書的推定不同**。計畫書推定 OAuth 應用程式在 Testing 模式、這個帳號不在 Test users 內，所以 Google 會在第一關擋下，Access policy 測不到。實際上這個帳號通過了 Google，由 Access policy 拒絕，所以**入口的 Access 那一層有實測到**。Google 為什麼放行，**沒有查證**：可能這個帳號本來就在 Test users 內，或是 OAuth 應用程式的發佈狀態不是 Testing。這不影響本項判定，但關係到 `CLAUDE.md` 寫的「Access policy、`ACCESS_ALLOWED_EMAILS`、Google 的 Test users 三處都要加」是否三處都真的在把關。
+- 帳號沒有寫進本檔，repo 為 public。
+- 判定依據只有使用者的回報。Access 的拒絕沒有從 Zero Trust 的 Access 日誌核對；請求沒有到達 Worker，所以 tail 也看不到。
+
 ## C7-4　功能驗收（~~進行中~~ 10-02 完成，使用者決定勾選）
 
 清單、測試資料與執行順序見計畫書 `C7-4` 項下 10-01 補記。瀏覽器操作由使用者執行；Cloud Run 請求日誌由 Claude 以 `log_id(run.googleapis.com/requests)` 唯讀查詢。查詢腳本用 Windows PowerShell 5.1，過濾條件內的雙引號寫成 `\"`（裸雙引號會被吃掉，第一次查詢就因此回 `Unparseable filter`）。Worker 版本 `474e5c4f`，Cloud Run revision `stock-quote-00004-4v6`。
