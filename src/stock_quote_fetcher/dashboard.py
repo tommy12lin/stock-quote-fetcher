@@ -355,6 +355,7 @@ class Dashboard:
                 resolved, _ = self.resolve(holdings)
             limit = self.refresh_config.max_tickers
             count, attempted, cut = 0, 0, False
+            fresh, short = set(), set()
             with Storage(self.db) as s:
                 s.acquire_lock()
                 s.recover_incomplete()
@@ -391,15 +392,41 @@ class Dashboard:
                                             budget=max(0.0, deadline - monotonic()))
                     count += sum(row.market_value is not None for _, report in reports for row in report.rows)
                     attempted += len(batch)
+                    for event in runner.events:
+                        if event['status'] == 'success':
+                            fresh.add(event['ticker'])
+                        elif event['status'] == 'timeout' and (event['reason'] == 'cycle_budget_exhausted' or event.get('budget_limited')):
+                            short.add(event['ticker'])
                     self.progress(job, f'已處理 {attempted}/{len(planned)} 檔，正在更新')
+                # What the cap or the deadline left out is reported against its earlier
+                # quotes. One query, not valuation()'s per-holding reads: there can be
+                # hundreds of these, and the deadline has already been spent (C7-4 C3).
+                untouched = planned[attempted:] + ordered[len(planned):]
+                kept = s.latest_quote_times({resolved[h.ticker].instrument_id for h in untouched},
+                                            self.quote_config.valuation) if untouched else {}
             notes = []
+            # A timeout the deadline cut short reads like any failure unless it is named;
+            # the next refresh puts these first, as it does the ones below (C7-4 C2).
+            if short - fresh:
+                notes.append(f'{len(short - fresh)} 檔在時限截止前未取得新報價')
             if cut:
                 notes.append(f'{len(planned) - attempted} 檔未在時限內處理')
             if deferred:
                 notes.append(f'{deferred} 檔超出本次上限')
-            message = f'已完成：{count}/{len(holdings)} 檔有可用報價'
+            if attempted == len(holdings):
+                message = f'已完成：{count}/{len(holdings)} 檔有可用報價'
+            else:
+                # count covers only the batches that ran. Set against every holding it read
+                # as 27/32 even when the other 5 still had their earlier prices (C7-4 C3).
+                message = f'已完成：本次處理 {attempted}/{len(holdings)} 檔，其中 {count} 檔有可用報價'
             if notes:
                 message += '；' + '、'.join(notes) + '，再次更新會優先處理這些標的'
+            if untouched:
+                older = sum(resolved[h.ticker].instrument_id in kept for h in untouched)
+                if older == len(untouched):
+                    message += f'。未處理的 {len(untouched)} 檔都保留先前的報價'
+                elif older:
+                    message += f'。未處理的 {len(untouched)} 檔中，{older} 檔保留先前的報價'
             job.update(status='succeeded' if count == len(holdings) else 'partial' if count else 'failed', message=message)
         except StorageError:
             job.update(status='failed', message='報價程序忙碌或資料庫暫不可用；保留既有價格，請稍後重試。')

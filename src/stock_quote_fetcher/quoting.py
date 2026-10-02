@@ -47,6 +47,9 @@ class QuoteRunner:
             remaining = deadline - start
             until = self.cooldown.get(provider,0)
             executed = False
+            # Set when the deadline, not the provider limit, bounded the call, so a caller
+            # can say a timeout was the deadline's doing (C7-4 C2: 2.37 s of a 10 s limit).
+            budget_limited = False
             if self.stop_requested():
                 op = failure(instrument,provider,'interrupted','shutdown_requested')
             elif remaining <= 0:
@@ -62,6 +65,7 @@ class QuoteRunner:
                     op = failure(instrument,provider,'timeout','cycle_budget_exhausted')
                 else:
                     executed = True
+                    budget_limited = remaining < self.config.operation_timeout_seconds
                     self.next_operation[provider] = self.monotonic()+1
                     op = self.fetch(instrument,provider,self.config,min(remaining,self.config.operation_timeout_seconds))
             elapsed = max(0,int((self.monotonic()-start)*1000))
@@ -75,7 +79,8 @@ class QuoteRunner:
                                                 quote_id=quote_id,provider_evidence=evidence)
             self.events.append({'attempt_id':str(attempt),'provider':provider,'ticker':instrument.ticker,
                                 'attempt_number':number,'status':result.status.value,'reason':result.error,
-                                'executed':executed,'elapsed_ms':elapsed,'retry_after_seconds':op.retry_after})
+                                'executed':executed,'budget_limited':budget_limited,'elapsed_ms':elapsed,
+                                'retry_after_seconds':op.retry_after})
             if result.quote is not None:
                 return saved,result.quote
             if not executed:

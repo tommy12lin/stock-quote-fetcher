@@ -232,7 +232,70 @@ def test_tickers_beyond_the_cap_are_reported_not_dropped(service, monkeypatch):
     cut_the_clock(monkeypatch)
     service.refresh_config = RefreshConfig(deadline_seconds=1, max_tickers=1)
     message = service.refresh()['message']
-    assert '0/2 檔有可用報價' in message and '1 檔超出本次上限' in message
+    assert '本次處理 0/2 檔' in message and '1 檔超出本次上限' in message
+
+
+class Clock:
+    """One fake clock for run_job's deadline and the runner it builds, so a provider
+    call can use up time without the test sleeping through it."""
+    def __init__(self):
+        self.t = 0.0
+    def now(self):
+        return self.t
+    def sleep(self, seconds):
+        self.t += seconds
+
+
+def slow_provider(service, monkeypatch, *, deadline):
+    """Every call times out after spending its whole allowance."""
+    from stock_quote_fetcher import dashboard, quoting
+    from stock_quote_fetcher.providers import failure
+    clock = Clock()
+    def fetch(instrument, provider, config, timeout):
+        clock.sleep(timeout)
+        return failure(instrument, provider, 'timeout', 'operation_timeout')
+    monkeypatch.setattr(dashboard, 'monotonic', clock.now)
+    monkeypatch.setattr(dashboard, 'QuoteRunner', lambda storage, config: quoting.QuoteRunner(
+        storage, config, fetch=fetch, monotonic=clock.now, sleep=clock.sleep))
+    service.refresh_config = RefreshConfig(deadline_seconds=deadline)
+
+
+def test_attempts_the_deadline_cut_short_are_named(service, monkeypatch):
+    """C7-4 C2: the last call got 2.37 s of a 10 s limit and the message never said why."""
+    two_holdings(service, monkeypatch)
+    # 5 s against a 10 s operation timeout: AAPL's call is cut to 5 s, and MSFT, in the
+    # same batch, finds nothing left before it starts.
+    slow_provider(service, monkeypatch, deadline=5)
+    message = service.refresh()['message']
+    assert '2 檔在時限截止前未取得新報價' in message and '再次更新會優先處理' in message
+
+
+def test_a_timeout_with_time_to_spare_is_not_blamed_on_the_deadline(service, monkeypatch):
+    service.save(body())
+    # The default 300 s leaves the batch its full 50 s: three 10 s calls and two backoffs.
+    slow_provider(service, monkeypatch, deadline=300)
+    job = service.refresh()
+    assert job['message'] == '已完成：0/1 檔有可用報價' and job['status'] == 'failed'
+
+
+def test_capped_holdings_are_reported_with_their_earlier_quotes(service, monkeypatch):
+    """C7-4 C3: 32 holdings, all quoted, and every refresh still said 27/32."""
+    two_holdings(service, monkeypatch)
+    seed_quote(service, 'us:NASDAQ:MSFT', 'MSFT', datetime.now(UTC))
+    fetched_quote(monkeypatch)
+    service.refresh_config = RefreshConfig(max_tickers=1)
+    message = service.refresh()['message']
+    # AAPL, never quoted, is the stalest and takes the one slot; MSFT keeps its quote.
+    assert '本次處理 1/2 檔，其中 1 檔有可用報價' in message and '1 檔超出本次上限' in message
+    assert '未處理的 1 檔都保留先前的報價' in message
+
+
+def test_capped_holdings_without_a_quote_are_not_said_to_keep_one(service, monkeypatch):
+    two_holdings(service, monkeypatch)
+    fetched_quote(monkeypatch)
+    service.refresh_config = RefreshConfig(max_tickers=1)
+    message = service.refresh()['message']
+    assert '1 檔超出本次上限' in message and '保留先前的報價' not in message
 
 
 def test_never_quoted_holdings_are_the_stalest(service, monkeypatch):
