@@ -2,7 +2,8 @@
 
 > **最新進度（2026-10-02 14:15 台北，交接用）。`C7-1`、`C7-2` ✅ 完成（使用者決定勾選）。`C7-3` 進行中**：
 > - `C7-3` 拆成五項，見計畫書 `C7-3` 項下 10-02 補記。**`C7-3-1` 繞過代理 ✅**：直接打 `run.app` 的 8 個請求（含偽造簽章、過期時間戳、偽造 Access 標頭、寫入）都是 401／403；打 Worker 的 3 個都被 Access 擋在 302，沒有到達 Cloud Run。
-> - 其餘四項要使用者操作：無痕視窗、第二個 Google 帳號、閒置超過 60 分鐘後不重新整理直接操作、Access session 自然過期（時間由 `CF_Authorization` 的 Expires 決定）。
+> - 其餘四項要使用者操作：無痕視窗、第二個 Google 帳號、閒置超過 60 分鐘後不重新整理直接操作、Access session 自然過期（時間由 `CF_Authorization` 的 Expires 決定）。**同日補記**：`C7-3-2` ✅、`C7-3-3` ✅（由 Access 擋下）、`C7-3-4` ✅（閒置 76 分鐘，冷啟動加 token 過期，不重新整理即可繼續）。**只剩 `C7-3-5`**，排在 10-03 10:37（台北）Access session 到期之後，已列入 `CLAUDE.md` 的到期提醒。
+> - **發現：Google 的 Test users 不能依賴**。名單外的帳號在 Testing 模式下通過了 Google，由 Access 擋下；09-17 卻有名單外的帳號被 Google 擋下，差異原因未查。入口真正把關的是 Access policy 與 `ACCESS_ALLOWED_EMAILS` 兩層，`CLAUDE.md` 已改寫。
 >
 > **更早的進度（2026-10-02 13:50 台北）。`C7-1`／`C7-2` 量測完成，要求的都有證據了，~~是否勾選待使用者決定~~ 同日勾選；訊息修正已部署（`stock-quote-00005-pzn`）**：
 > - **`C7-1`／`C7-2`**：在 preview URL 上，Access 下的上限仍是 125 秒（120 秒通過、130 秒於 125.4 秒被切）；524 被轉成 504 `upstream_timeout`，前端顯示 Worker 的訊息、不重新整理；三層逾時的對齊已逐層寫出。**新發現**：邊緣切斷後，上游的請求仍做完（慢 origin 跑滿 130 秒、回 200），真正的後端會不會這樣未測。臨時資源已清除。見 C7 證據「`C7-1`／`C7-2` 收尾」節。
@@ -185,7 +186,7 @@
 > **2026-09-23 新發現、~~處理方式待決定~~ 已於同日決定並實測（見本段補記）**：`C7-6` R1 量得官方清單更新從 GCP 需 **135 秒**（抓取約 62 秒、逐筆寫入 13,427 筆約 73 秒），**超過 125 秒的邊緣上限**，且這段路徑不受 `refresh_deadline_seconds` 約束。正式部署後，頁面上的「更新股票清單」會收到 524。影響 `C6-2`、`C7-2`、`C7-4`，不影響 `C7-6` 的報價量測。見 [C7 證據](cloud-C7-evidence.md) 的 `C7-6` 節。**同日補記：已決定兩者都做，程式已完成**（清單批次寫入；`[instruments] refresh_in_request = false`，清單改由管理者以 `stock-web --refresh-catalog` 在請求外更新）。雲端耗時尚未實測，須等新映像建置；另須確認單一 INSERT 能否在 10 秒的 `statement_timeout` 內完成。**同日再補記：已實測**。新映像 `218b4b962c5a` 以 Cloud Run Job `finpo-catalog-refresh`（`--args=--refresh-catalog`）執行成功：觸發到完成約 82 秒（R1 同一區間約 159 秒），INSERT 未碰到 10 秒上限。寫入耗時沒有單獨量出，界線見 C7 證據。**清單每 168 小時到期，到期前須由管理者手動更新一次。**
 >
 > **接手前必讀的三條硬性限制**：
-> 1. ~~**`C7-1` 之前不得對 `finpo` Worker 做任何部署**——它承載 `C1-6` 的 canary，是目前唯一能驗證 Access 生效的東西。~~ **2026-10-01 補記：已解除**，`C7-1` 已部署，canary 退場。改為：**部署 `finpo` 一律用 `npx --yes wrangler@4.145.0`**，每次部署後都要不登入打 `/` 確認回 302 導向 Access；~~`C7-8` 完成前，Worker 會替所有通過 Access 的請求簽章。~~ **10-01 `C7-8` 完成後**：Worker 只替 JWT 驗證通過且 `email` 在 `ACCESS_ALLOWED_EMAILS` 內的請求簽章。部署前 `worker/` 要先 `npm ci`；要放行新的人，Access policy、`ACCESS_ALLOWED_EMAILS`、Google 的 Test users 三處都要加。
+> 1. ~~**`C7-1` 之前不得對 `finpo` Worker 做任何部署**——它承載 `C1-6` 的 canary，是目前唯一能驗證 Access 生效的東西。~~ **2026-10-01 補記：已解除**，`C7-1` 已部署，canary 退場。改為：**部署 `finpo` 一律用 `npx --yes wrangler@4.145.0`**，每次部署後都要不登入打 `/` 確認回 302 導向 Access；~~`C7-8` 完成前，Worker 會替所有通過 Access 的請求簽章。~~ **10-01 `C7-8` 完成後**：Worker 只替 JWT 驗證通過且 `email` 在 `ACCESS_ALLOWED_EMAILS` 內的請求簽章。部署前 `worker/` 要先 `npm ci`；要放行新的人，Access policy、`ACCESS_ALLOWED_EMAILS`、Google 的 Test users 三處都要加。**10-02 補記**：`C7-3-3` 中，名單外的帳號通過了 Google，所以真正把關的只有前兩處，Test users 不能依賴，見 C7 證據「`C7-3-2`、`C7-3-3`」節與 `CLAUDE.md`。
 > 2. **`GET /healthz` 在 Cloud Run 公開網址上不可用**（被前端攔截、不抵達容器，回 404）。健康檢查探針改用 `/`。見 [C7 證據](cloud-C7-evidence.md)。
 > 3. **抓價的時間預算是巢狀的**：125 秒邊緣硬上限 ⊃ `refresh_deadline_seconds` 110 ⊃ 一批內所有市場共用的 `budget` ⊃ `cycle_budget_seconds` 50 ⊃ `operation_timeout_seconds` 10。調高任何一層前先讀 `C7` 證據的算式。
 >
@@ -768,7 +769,7 @@ Dockerfile 三處 `company_ca` 掛載本來就是條件式（`if [ -f /run/secre
     | `C7-3-1` | 繞過代理：直接打 `run.app`，不帶簽章、偽造簽章、過期時間戳、偽造 Access 與轉送標頭、舊式網址；另以未登入的請求與偽造的 Access 標頭打 Worker | Claude | ✅ 10-02 |
     | `C7-3-2` | 無痕視窗開啟 `finpo`，會導向 Access 登入，再導向 Google 登入，且看不到頁面內容 | 使用者 | ✅ 10-02 |
     | `C7-3-3` | 未授權的 Google 帳號被拒。**使用者決定**：直接用第二個帳號登入，不改任何設定。OAuth 應用程式在 Testing 模式，這個帳號不在 Test users 內，所以推定由 Google 在第一關擋下，**Access policy 那一層不會被測到**。記錄實際是哪一層擋的。**10-02 補記：推定錯了**，這個帳號通過 Google，由 Access 拒絕（「That account does not have access」），所以 Access policy 有測到；Google 為何放行未查證 | 使用者 | ✅ 10-02 |
-    | `C7-3-4` | `C3` 雲端面的前半：頁面開著、閒置到服務縮容且後端 token 過期（超過 60 分鐘），不重新整理直接操作，要能成功。Claude 以日誌確認冷啟動、`session_expired`、重取 session 與重試 | 使用者操作，Claude 核對 | ⬜ |
+    | `C7-3-4` | `C3` 雲端面的前半：頁面開著、閒置到服務縮容且後端 token 過期（超過 60 分鐘），不重新整理直接操作，要能成功。Claude 以日誌確認冷啟動、`session_expired`、重取 session 與重試 | 使用者操作，Claude 核對 | ✅ 10-02（閒置 76 分鐘，403 → 冷啟動 → 重取 session → 重試 200，沒有重新整理） |
     | `C7-3-5` | `C3` 雲端面的後半：Access session 過期後，前端整頁重新載入、重新登入，未儲存的草稿要恢復。**使用者決定**：等它自然過期，不撤銷、不刪 cookie。過期時間由使用者在 DevTools 讀 `CF_Authorization` 的 Expires 得知（只讀時間，不讀值）。**10-02 補記**：讀到 `2026-10-03T02:37:27.405Z`（台北 10-03 10:37），正好在使用者 10-02 約 02:37Z 重新登入（A4b 的 F5 前，Cloud Run 在 02:38:24Z 有 `session`）的 24 小時後，推定 session 長度是 24 小時，重新整理不會延長；儀表板上的設定沒有核對 | 使用者操作，Claude 核對 | ⬜ 排在 10-03 10:37 台北之後 |
 
     `C7-3-4` 與 `C7-3-5` 要分開做：Access 過期後一定會整頁重新載入並取得新的後端 token，所以後端 token 的續期在 `C7-3-5` 裡碰不到。

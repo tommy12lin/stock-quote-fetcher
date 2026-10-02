@@ -812,9 +812,32 @@ tail 記到 3 筆，都是 `finpo.drhiromu.workers.dev`、版本 `ca71f76e` 的�
 
 **更正（同日）**：使用者回報時另附了 `2026-10-03T02:37:24.679Z`，本節原本把它記成「頁面上的時間」、把日期記成 10-03。這個時間比當下（10-02 約 07:05Z）晚了 19.5 小時，不可能是被拒絕的時刻；它與隨後讀到的 `CF_Authorization` 到期時間 `02:37:27.405Z` 只差 3 秒，推定是誤貼了 cookie 的到期時間。已把日期改回 10-02，並刪去該時間。
 
-- **`C7-3-3` 是 Access 擋的，與計畫書的推定不同**。計畫書推定 OAuth 應用程式在 Testing 模式、這個帳號不在 Test users 內，所以 Google 會在第一關擋下，Access policy 測不到。實際上這個帳號通過了 Google，由 Access policy 拒絕，所以**入口的 Access 那一層有實測到**。Google 為什麼放行，**沒有查證**：可能這個帳號本來就在 Test users 內，或是 OAuth 應用程式的發佈狀態不是 Testing。這不影響本項判定，但關係到 `CLAUDE.md` 寫的「Access policy、`ACCESS_ALLOWED_EMAILS`、Google 的 Test users 三處都要加」是否三處都真的在把關。
+- **`C7-3-3` 是 Access 擋的，與計畫書的推定不同**。計畫書推定 OAuth 應用程式在 Testing 模式、這個帳號不在 Test users 內，所以 Google 會在第一關擋下，Access policy 測不到。實際上這個帳號通過了 Google，由 Access policy 拒絕，所以**入口的 Access 那一層有實測到**。Google 為什麼放行，**沒有查證**：可能這個帳號本來就在 Test users 內，或是 OAuth 應用程式的發佈狀態不是 Testing。這不影響本項判定，但關係到 `CLAUDE.md` 寫的「Access policy、`ACCESS_ALLOWED_EMAILS`、Google 的 Test users 三處都要加」是否三處都真的在把關。**同日補記**：使用者確認 OAuth 應用程式的狀態是 Testing。先前曾想 publish，但需要可驗證的網域等條件，`workers.dev` 無法驗證，所以沒有 publish。這排除了「不是 Testing」的可能，剩下的解釋是這個帳號本來就在 Test users 內，**尚待使用者核對名單**。若不在名單內，就代表 Google 那一層實際上沒有把關，`CLAUDE.md` 的說明要修正。**同日再補記：使用者核對，這個帳號不在 Test users 名單內。** 所以 **Google 的 Test users 實際上沒有擋下名單外的帳號**，入口的關卡只有 Access policy 與 Worker 的 `ACCESS_ALLOWED_EMAILS`（`C7-8`）兩層。已修正 `CLAUDE.md`：放行新的人時，必加的是這兩處；Test users 照舊加上，但不再寫成「少了就進不來」。Google 為何放行，**原因未查**。候選有二：這個帳號在 GCP 專案上有角色，或是 Google 對只要求 openid／email 等基本範圍的應用程式不強制執行 Test users 限制。兩者都沒有查證。
+
+**與 `C1-6` 的紀錄衝突（同日發現）**：C1 證據記錄，09-17 有一個名單外的帳號被 Google 擋下（`Access blocked: ... has not completed the Google verification process`）。所以第二個候選與那筆紀錄不合，Google 那一層不是完全不擋，而是**有時擋、有時不擋**。因此多了第三個候選：同一份紀錄寫明 09-17 反面測試所用的帳號當時**在** Test users 內。若今天用的是同一個帳號、後來才被移出名單，Google 可能沿用了當時的授權，沒有重新檢查名單。三個候選都沒有查證。`CLAUDE.md` 據此改寫為「不能依賴它把關」，而不是「它不是關卡」。**同日再補記**：使用者確認今天的帳號與 09-17 的**不是同一個**，所以第三個候選若要成立，只能是這個帳號自己曾在名單內、後來被移出，沒有紀錄可以佐證。剩下的候選是：這個帳號在 GCP 專案上有角色；它曾在名單內；Google 的行為與 09-17 不同。都沒有查證。
 - 帳號沒有寫進本檔，repo 為 public。
 - 判定依據只有使用者的回報。Access 的拒絕沒有從 Zero Trust 的 Access 日誌核對；請求沒有到達 Worker，所以 tail 也看不到。
+
+### `C7-3-4`：閒置到縮容且後端 token 過期後，不重新整理直接操作（2026-10-02 15:09–16:26 台北）
+
+使用者在 15:09 重新整理 `finpo`，分頁開著不動，16:25 直接按「更新報價」。這次刻意在 Access session 到期（10-03 10:37 台北）之前做，所以只有後端 token 過期，Access 沒有過期。Cloud Run 的請求日誌與系統日誌（revision `00005-pzn`）：
+
+| 時間（UTC） | 事件 | 說明 |
+|---|---|---|
+| 07:09:49.83 | `GET /api/session` 200 | 重新整理，取得後端 token |
+| 07:09:50.50 → 08:25:46.49 | **沒有任何請求** | 閒置 76 分鐘 |
+| 08:25:46.49 | `POST /api/portfolio/refresh` **403**，358 bytes，3.947 s | token 已 75.9 分鐘，超過 `SESSION_TTL` 3600 秒 |
+| 08:25:46.51 | `Starting new instance. Reason: AUTOSCALING` | **冷啟動**。max 為 1，新實例啟動代表原本的實例已縮容 |
+| 08:25:50.67 | `STARTUP TCP probe succeeded` | 約 4.2 秒，與 403 的耗時相符 |
+| 08:25:51.01 | `GET /api/session` 200 | 前端自動重取 session |
+| 08:25:51.30 | `POST /api/portfolio/refresh` **200**，15.685 s | 重試成功 |
+| 08:26:07.27 | `GET /api/portfolio/valuation` 200 | 更新完成後重新讀取估值 |
+
+- **判定：✅**。這是 `C3` 雲端完成條件的前半「閒置至服務縮容後再操作，不需手動重新整理即可繼續使用」，三個條件同時成立：縮容、後端 token 過期、沒有重新整理。C7-4 期間的兩個附帶觀察各只碰到其中一部分。
+- **403 是 `session_expired`，是推得的**：回應內容沒有讀出。依據有二：`app.js` 只在 401／403 且 `code` 為 `unauthorized` 或 `session_expired` 時重取並重試，而 `Guard` 對 `unauthorized` 回的是 401；大小 358 bytes，與 C7-4 那次推定為 `session_expired` 的 403 相同。
+- **沒有重新整理，也是推得的**：重新整理時，頁面會依序打 `session`、`portfolio`、`valuation`，這次在 `session` 之後是重試的 `refresh`，沒有 `GET /api/portfolio`。
+- 403 本身就包含了冷啟動：第一個請求觸發新實例，3.9 秒後被驗證擋下。冷啟動與 token 過期在同一個請求裡被處理掉，使用者只多等了約 5 秒。
+- Access session 過期的那一半在 `C7-3-5`。
 
 ## C7-4　功能驗收（~~進行中~~ 10-02 完成，使用者決定勾選）
 
