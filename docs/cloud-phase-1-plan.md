@@ -1,6 +1,10 @@
 # 雲端部署第一階段執行計畫
 
-> **最新進度（2026-10-02 13:50 台北，交接用）。`C7-1`／`C7-2` 量測完成，要求的都有證據了，是否勾選待使用者決定；訊息修正已部署（`stock-quote-00005-pzn`）**：
+> **最新進度（2026-10-02 14:15 台北，交接用）。`C7-1`、`C7-2` ✅ 完成（使用者決定勾選）。`C7-3` 進行中**：
+> - `C7-3` 拆成五項，見計畫書 `C7-3` 項下 10-02 補記。**`C7-3-1` 繞過代理 ✅**：直接打 `run.app` 的 8 個請求（含偽造簽章、過期時間戳、偽造 Access 標頭、寫入）都是 401／403；打 Worker 的 3 個都被 Access 擋在 302，沒有到達 Cloud Run。
+> - 其餘四項要使用者操作：無痕視窗、第二個 Google 帳號、閒置超過 60 分鐘後不重新整理直接操作、Access session 自然過期（時間由 `CF_Authorization` 的 Expires 決定）。
+>
+> **更早的進度（2026-10-02 13:50 台北）。`C7-1`／`C7-2` 量測完成，要求的都有證據了，~~是否勾選待使用者決定~~ 同日勾選；訊息修正已部署（`stock-quote-00005-pzn`）**：
 > - **`C7-1`／`C7-2`**：在 preview URL 上，Access 下的上限仍是 125 秒（120 秒通過、130 秒於 125.4 秒被切）；524 被轉成 504 `upstream_timeout`，前端顯示 Worker 的訊息、不重新整理；三層逾時的對齊已逐層寫出。**新發現**：邊緣切斷後，上游的請求仍做完（慢 origin 跑滿 130 秒、回 200），真正的後端會不會這樣未測。臨時資源已清除。見 C7 證據「`C7-1`／`C7-2` 收尾」節。
 > - **訊息修正已部署**：使用者以只帶 `--image` 的 `gcloud run deploy` 換到 `35743d47289f`，`describe` 比對只有映像改變，未簽章請求仍回 401。回滾目標 `a1fb03ff680d`。修正後的訊息還沒在雲端出現過。見 C6 證據「部署：訊息修正」節。
 > - **映像窗口**：`finpo-catalog-refresh` 仍用 `a1fb03ff680d`。**再下一次推程式變更會擠掉它**，推送前先把 Job 改指向 `35743d47289f`。
@@ -715,7 +719,7 @@ Dockerfile 三處 `company_ca` 掛載本來就是條件式（`if [ -f /run/secre
 - **目的**：完成使用者實際會走的路徑，並用實測取代推論。本階段所有「可行」的說法都要在這步變成量測結果。
 - **前置**：`C6`、`D1`、`D2`。
 - **執行項目**：
-  - [ ] `C7-1` 依 `D2` 以 Workers static assets 部署既有三個靜態檔（`assets.directory` 指向 `static/`），於 Cloudflare 端配置安全標頭（CSP、`X-Content-Type-Options`、`Referrer-Policy` 等）。**在本項執行前不得對 `finpo` Worker 做任何部署**：它目前承載的是 `C1-6` 刻意留下的 canary（`C1-6-CANARY-OK`），而正式前端尚未上線，沒有它就沒有任何東西可用來驗證 Access 是否生效；本項部署真實前端後 canary 才功成身退。**本項另承接一件事**：`C7-2` 量出的 125 秒得自不受 Access 保護的探針，Access 不參與回應路徑故理論上不會縮短該上限，但未實測；在此處 canary 退場、真實前端上線時一併確認。
+  - [x] `C7-1`（**2026-10-02 完成，使用者決定勾選**，證據見 [C7 證據](cloud-C7-evidence.md)「`C7-1`／`C7-2` 首次分段部署」與「`C7-1`／`C7-2` 收尾」兩節）依 `D2` 以 Workers static assets 部署既有三個靜態檔（`assets.directory` 指向 `static/`），於 Cloudflare 端配置安全標頭（CSP、`X-Content-Type-Options`、`Referrer-Policy` 等）。**在本項執行前不得對 `finpo` Worker 做任何部署**：它目前承載的是 `C1-6` 刻意留下的 canary（`C1-6-CANARY-OK`），而正式前端尚未上線，沒有它就沒有任何東西可用來驗證 Access 是否生效；本項部署真實前端後 canary 才功成身退。**本項另承接一件事**：`C7-2` 量出的 125 秒得自不受 Access 保護的探針，Access 不參與回應路徑故理論上不會縮短該上限，但未實測；在此處 canary 退場、真實前端上線時一併確認。
 
     **2026-10-01 補記：分段部署（使用者決定，隨 `C7-8` 的排序一併定案）**。`C7-8` 排在首次部署之後，為了收窄「Worker 會替任何請求簽章、但 Access 尚未在新 Worker 上重新證明」的空窗，首次部署**不設 `PROXY_HMAC_SECRET`**：
 
@@ -726,7 +730,7 @@ Dockerfile 三處 `company_ca` 掛載本來就是條件式（`if [ -f /run/secre
     Worker 讀不到 secret 時回 500 `proxy_misconfigured`、不轉發上游（[index.js](../worker/index.js) 的 secret 檢查）。這只由 `tests/worker.test.mjs` 的 `a missing or short secret fails closed without forwarding` 在 Node 上證明，**在 Workers 執行環境未實測**，第 1 步之後要以已登入的 `/api/...` 請求確認回的是這個 500。
 
     **2026-10-01 補記：已依此程序部署**（`39bb1a9b` 不帶 secret，再以 `ca71f76e` 放入）。第 2 步的未登入檢查涵蓋 7 個路徑、POST 與 preview URL，全部 302、內容 0 次；登入後頁面正常，安全標頭生效、沒有 CSP 違規；`/api/session` 回 500 `proxy_misconfigured`，Cloud Run 日誌證實沒有轉發。部署前另發現 `_headers` 的 `Referrer-Policy: no-referrer` 推定會讓寫入請求帶 `Origin: null`，已改為 `same-origin`。**本項仍未勾選**：Access 下的 125 秒上限沒有確認。見 [C7 證據](cloud-C7-evidence.md)「`C7-1`／`C7-2` 首次分段部署」節。
-  - [ ] `C7-2`（**逾時量測已於 2026-09-22 完成，其餘待 `C6`**）依 `D2` 在同一 Worker 內實作 `/api/*` 代理，`assets.run_worker_first` 僅列 `/api/*`，並以實際請求核對靜態檔路徑不會啟動 Worker；驗證 Worker 端 WebCrypto 與後端 Python 對同一 canonical string 產生相同簽章；以故意延遲回應的測試端點量出代理的實際逾時上限，並對齊前端、代理與後端的逾時。**`C2-2` 追加的必辦事項：Worker 轉發時必須原樣帶上瀏覽器的 `Origin` 標頭**，否則後端會把所有寫入請求判 403；理由是 HMAC 簽章擋不住「惡意網站以 `credentials:'include'` 觸發、Access 放行、Worker 照簽」這條跨站路徑，Origin 白名單是該路徑唯一的防線（見 `docs/cloud-C2-evidence.md` 的 `C2-2`）。**`C6-2` 追加的必辦事項（2026-09-30）：Worker 必須原樣轉發 `X-Upload-Filename` 與 `X-Upload-Sheet`**，否則上傳一律回「只接受 .xlsx 檔案」。上傳的檔名原本放在查詢字串，會被 Cloud Run 請求日誌記下，已改由這兩個標頭傳遞；它們不在 HMAC 簽章範圍內（見 [C6 證據](cloud-C6-evidence.md)「`C6-2` 補記：日誌」節）。另須核對 Worker 上線後請求日誌的 `remoteIp`、`userAgent` 記到的是什麼。
+  - [x] `C7-2`（**逾時量測已於 2026-09-22 完成，其餘待 `C6`**；**2026-10-02 完成，使用者決定勾選**，證據同 `C7-1`）依 `D2` 在同一 Worker 內實作 `/api/*` 代理，`assets.run_worker_first` 僅列 `/api/*`，並以實際請求核對靜態檔路徑不會啟動 Worker；驗證 Worker 端 WebCrypto 與後端 Python 對同一 canonical string 產生相同簽章；以故意延遲回應的測試端點量出代理的實際逾時上限，並對齊前端、代理與後端的逾時。**`C2-2` 追加的必辦事項：Worker 轉發時必須原樣帶上瀏覽器的 `Origin` 標頭**，否則後端會把所有寫入請求判 403；理由是 HMAC 簽章擋不住「惡意網站以 `credentials:'include'` 觸發、Access 放行、Worker 照簽」這條跨站路徑，Origin 白名單是該路徑唯一的防線（見 `docs/cloud-C2-evidence.md` 的 `C2-2`）。**`C6-2` 追加的必辦事項（2026-09-30）：Worker 必須原樣轉發 `X-Upload-Filename` 與 `X-Upload-Sheet`**，否則上傳一律回「只接受 .xlsx 檔案」。上傳的檔名原本放在查詢字串，會被 Cloud Run 請求日誌記下，已改由這兩個標頭傳遞；它們不在 HMAC 簽章範圍內（見 [C6 證據](cloud-C6-evidence.md)「`C6-2` 補記：日誌」節）。另須核對 Worker 上線後請求日誌的 `remoteIp`、`userAgent` 記到的是什麼。
 
     **逾時量測結果（2026-09-22，見 [C7 證據](cloud-C7-evidence.md)）**：Worker→Cloud Run 的 subrequest 上限為 **125 秒**（最後成功點 124 秒；130／150／300／600 皆在 125.0–125.2 秒被 524 切斷），client-facing 則到 600 秒無上限。**524 是以 upstream response 的形式回到 Worker 手上，`fetch()` 不會 throw**——正式 Worker 必須檢查這個狀態碼並轉成給前端的明確錯誤，否則瀏覽器只會拿到一個看似成功的空回應。量測用的慢 origin 不能是另一個 Worker（`error code: 1042`），已改以拋棄式 Cloud Run 服務取得，該服務與映像已刪除。**本項其餘要求（代理實作、`run_worker_first` 核對、HMAC 互通、`Origin` 轉發、三層逾時對齊）仍待 `C6` 部署後執行。** 另：經 Access 保護路徑的逾時確認原訂在此處做，因會覆寫 `finpo` Worker 上的 `C1-6` canary 而改排到 `C7-1`。
 
@@ -756,6 +760,18 @@ Dockerfile 三處 `company_ca` 掛載本來就是條件式（`if [ -f /run/secre
 
     **執行結果（2026-10-02 13:20–13:45 台北）**：全部符合判定。5 秒與 120 秒回 200（5.48／120.49 秒）；130 秒在 125.40 秒回 504 `upstream_timeout`；經 `api()` 的那次在 125.38 秒丟出 Worker 的訊息，頁面沒有重新整理。三層逾時的順序是：後端收尾（≤ 118.5 秒）＜ 邊緣（125 秒）＜ Cloud Run（150 秒），前端不設上限。**新發現**：慢 origin 的日誌顯示，兩筆 130 秒的請求在邊緣切斷後**仍跑滿 130 秒、回 200**，上游沒有被中斷；這只是部分回答了上面那條界線，真正的後端會不會照樣做完仍未測。臨時資源都已清除，最新的 Worker 版本是設定正確的 `6ed463e5`，正式部署仍是 `474e5c4f`。**`C7-1`、`C7-2` 要求的都有證據了，是否勾選待使用者決定。**見 [C7 證據](cloud-C7-evidence.md)「`C7-1`／`C7-2` 收尾」節。
   - [ ] `C7-3` 啟用入口驗證，並驗證無法繞過代理直接呼叫 `run.app`。後端驗證需依賴可靠簽章或憑證，不得只檢查可偽造的標頭。另須實測：未授權的 Google 帳號被 Access 拒絕、無痕視窗開啟會導向 Google 登入、session 過期後前端可自行恢復。**本項承接 `C3-3` 的雲端驗收**：`C3-3` 的勾選只涵蓋程式與模擬測試，C3 完成條件中「閒置至服務縮容後再操作，不需手動重新整理即可繼續使用」要在此處取得實測證據。此處未過即視為 C3 尚未收尾，不得因 `C3-3` 已勾選而略過。
+
+    **2026-10-02 補記：拆成五項，使用者決定的做法已就地註明**。結果見 [C7 證據](cloud-C7-evidence.md)「`C7-3` 入口驗證」節。
+
+    | 項 | 內容 | 誰做 | 狀態 |
+    |---|---|---|---|
+    | `C7-3-1` | 繞過代理：直接打 `run.app`，不帶簽章、偽造簽章、過期時間戳、偽造 Access 與轉送標頭、舊式網址；另以未登入的請求與偽造的 Access 標頭打 Worker | Claude | ✅ 10-02 |
+    | `C7-3-2` | 無痕視窗開啟 `finpo`，會導向 Access 登入，再導向 Google 登入，且看不到頁面內容 | 使用者 | ⬜ |
+    | `C7-3-3` | 未授權的 Google 帳號被拒。**使用者決定**：直接用第二個帳號登入，不改任何設定。OAuth 應用程式在 Testing 模式，這個帳號不在 Test users 內，所以推定由 Google 在第一關擋下，**Access policy 那一層不會被測到**。記錄實際是哪一層擋的 | 使用者 | ⬜ |
+    | `C7-3-4` | `C3` 雲端面的前半：頁面開著、閒置到服務縮容且後端 token 過期（超過 60 分鐘），不重新整理直接操作，要能成功。Claude 以日誌確認冷啟動、`session_expired`、重取 session 與重試 | 使用者操作，Claude 核對 | ⬜ |
+    | `C7-3-5` | `C3` 雲端面的後半：Access session 過期後，前端整頁重新載入、重新登入，未儲存的草稿要恢復。**使用者決定**：等它自然過期，不撤銷、不刪 cookie。過期時間由使用者在 DevTools 讀 `CF_Authorization` 的 Expires 得知（只讀時間，不讀值） | 使用者操作，Claude 核對 | ⬜ |
+
+    `C7-3-4` 與 `C7-3-5` 要分開做：Access 過期後一定會整頁重新載入並取得新的後端 token，所以後端 token 的續期在 `C7-3-5` 裡碰不到。
   - [x] `C7-4` 功能驗收：上傳 Excel、預覽、儲存、版本衝突（409）、報價更新、缺價／失敗、查詢結果與前端提示。使用 `D5` 決定的資料。
 
     **2026-10-02 補記：完成（使用者決定勾選）**。下方清單的 0、A1–A5、A4b、B1–B5、C1–C7、D1、D2 都通過，D3 在 C2、C3 之後各記錄一次。證據見 [C7 證據](cloud-C7-evidence.md)「`C7-4` 功能驗收」節。勾選時的界線與遺留：
