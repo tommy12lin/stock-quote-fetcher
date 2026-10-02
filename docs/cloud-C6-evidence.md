@@ -449,3 +449,27 @@ userAgent: curl/8.21.0
 `90edd37`（`_headers`）會觸發建置，所以推送前把 `finpo-catalog-refresh` 改指向 `a1fb03ff680d`，以 execution `tsp9t` 的範本比對，只有映像改變。之後使用者刪除兩個沒有使用者、內容與 `a1fb03ff680d` 相同或只差 `_headers` 的映像（`c88b258728f4`、`90edd37e91fb`）。registry 現在只剩 `a1fb03ff680d`（服務與 Job）和 `ab1667ccf7f7`（回滾目標），**下一次程式推送不會擠掉任何映像**。比對依據與指令見 C7 證據同節「映像整理」。
 
 `C6-1` 節記載 cleanup policy 為 `keep-recent-3` ＋ `delete-older`。這次手動刪除不改變政策本身。
+
+## 部署：訊息修正（2026-10-02 13:15 台北）
+
+`842becc` 的訊息修正（見 C7 證據「訊息修正」節）隨推送 `35743d4` 建置，run `36962627908` 成功，映像 `35743d47289f`（`sha256:a216b906893bfee5445729fee384832754afda6813182eaa92fd67f62db7aa79`）。由使用者以可攜版 gcloud 執行：
+
+```
+gcloud run deploy stock-quote --region=asia-northeast1
+  --image=asia-northeast1-docker.pkg.dev/finpo-508709/finpo/stock-quote@sha256:a216b906893bfee5445729fee384832754afda6813182eaa92fd67f62db7aa79
+```
+
+只帶 `--image`，其餘設定沿用服務現有的範本，所以不需要 `DB_HOST`／`DB_USER`，也不需要 `--allow-unauthenticated`。這和 `C6-4` 回滾時重跑整條 `C6-2` 指令的做法不同，以 `describe` 的比對確認效果相同：
+
+| 檢查 | 結果 |
+|---|---|
+| 部署前後的 `describe`（YAML 全文比對） | 只有映像、generation、nonce、operation-id、client-version、revision 名稱與時間戳改變。env、secret、資源、timeout、service account 都相同 |
+| revision | `stock-quote-00005-pzn`，100% 流量 |
+| 不帶簽章的 `GET /api/session` | 401 `unauthorized`，驗簽仍有效 |
+| `GET /healthz` | 404，是 `run.app` 前端攔截的已知限制（C7 證據），不是新版的問題 |
+
+**回滾目標**：`a1fb03ff680d`（`sha256:df4a49e8…`），以同一條指令換回該 digest。`finpo-catalog-refresh` 仍指向 `a1fb03ff680d`，沒有改。
+
+**映像窗口**：registry 暫時有 4 個版本（`35743d47289f`、`723f6f2ef7f5`、`a1fb03ff680d`、`ab1667ccf7f7`）。清除政策不是即時生效的，`ab1667ccf7f7` 會被清掉。**再下一次推送程式變更會擠掉 `a1fb03ff680d`**，它是 Job 現在用的映像，也是服務的回滾目標。推送前要先把 Job 改指向 `35743d47289f`，並決定新的回滾目標。
+
+**未驗證**：修正後的訊息還沒在雲端出現過，要等下一次超出上限或被時限截短的更新。
