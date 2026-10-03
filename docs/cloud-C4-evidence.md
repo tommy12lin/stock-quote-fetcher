@@ -128,7 +128,7 @@ C4 的測試都只跑一次更新。「一次更新會不會漏」有測（`test
 
 - **`C4-1` 的兩個數值刻意維持未定**。`refresh_deadline_seconds` 預設 300 秒，是沿用原本「每批就已經花掉」的預算並改成整體上限，比原本「整份清單沒有總時間上限」嚴格；`refresh_max_tickers` 預設不設限。兩者都不是對邊緣逾時的推測。`D3` 明文禁止在 `C7-2`／`C7-6` 量測前寫入猜測數字，`deploy/cloud.toml` 亦已記明 `C6-2` 不得在回填前部署。
 - **`C6-2` 的 request timeout 必須大於 `refresh_deadline_seconds`**，否則平台會在程式自己收尾前切斷請求。預設 deadline 300 秒恰好等於 Cloud Run 的預設 request timeout，這個巧合必須在部署設定中拆開。已寫入 `C6-2`。
-- **真實的容器終止與 rollout 未驗**。租約回收在隔離資料庫上成立，但 Cloud Run 實際縮容、SIGTERM 與新舊 revision 並存的行為由 `C7-5` 實測。C4 的雲端完成條件在該項通過前不得宣稱達成。
+- **真實的容器終止與 rollout 未驗**。租約回收在隔離資料庫上成立，但 Cloud Run 實際縮容、SIGTERM 與新舊 revision 並存的行為由 `C7-5` 實測。C4 的雲端完成條件在該項通過前不得宣稱達成。**2026-10-03 補記：`C7-5` 已勾選（使用者決定）**。Cloud Run 在 rollout 與刪除 revision 時都讓進行中的請求做完，job 沒有卡住；租約到期回收的路徑以平台操作製造不出來，在雲端仍未實測。見 C7 證據「`C7-5`」節。
 - **長請求與平台探測的互動未驗**。長請求佔住 threadpool 其中一個額度（`CONCURRENCY=8`），`/healthz` 在本機可正常回應，但 Cloud Run 的 concurrency 設定與探測行為要到 `C6-2`／`C7-5` 才確定。
 - **`refresh_deadline_seconds` 與 `refresh_max_tickers` 不進入 run 的設定快照**，因此事後從快照看不出當次 run 是在什麼時限下跑的。這是為了不動 campaign 比對摘要所付的代價。
 - 官方清單更新仍在 deadline 之外先行（`run_job` 開頭），只有後續的批次受時限管轄。`deploy/cloud.toml` 的 `max_age_hours = 168` 是讓這段盡量不落在關鍵路徑上的既有處置。
