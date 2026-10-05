@@ -2598,6 +2598,30 @@ Usage 頁另註明「may take up to 1 hour to refresh」，而且目前不對超
 - **10 月至今毛額約 TWD 1.38，大於 0**，所以預算通知可以依 `C7-7` 程序的第 2 步測試。
 - 預算看到的是毛額 1.38 還是淨額 0.03，取決於 Other savings 屬於哪一類抵扣，這點還沒查證。下一步先讀 `finpo-monthly` 的 current spend，就能判斷。
 
+### 預算 `finpo-monthly` 的現況（2026-10-05，使用者截圖）
+
+Billing → Budgets & alerts 的列表：
+
+| 欄位 | 值 |
+|---|---|
+| Budget name | `finpo-monthly` |
+| Budget period | Monthly |
+| Budget type | Specified amount |
+| Applies to | **This billing account** |
+| Trigger alerts at | 50% and 100% |
+| Spend and budget amount | **$0.03 / $300.00**，Includes **−$1.34 savings** |
+| Spend cap status | Not applicable |
+
+**發現 1：預算追蹤的是扣除抵扣後的淨額，不是毛額**。
+- 0.03 等於上一節 10 月的淨額。−1.34 savings 和報表的 Other savings −1.35 只差 0.01，推定是四捨五入或報表延遲。
+- **`C1-8` 的推定因此不成立**。`C1-8` 取消勾選 `Promotions and others`，推定預算因此「追蹤的是未扣抵前的實際用量」，並據此寫下「免費額度內的用量因此會顯示為極小的非零數字」。實際上，這類 Other savings（推定是免費額度）仍然被扣掉了。
+- **影響**：預算只會看到超出免費額度的部分，所以免費額度內的異常用量（例如失控的迴圈）不會被預算發現，要等超出免費額度才會開始計入。對 TWD 300 的門檻來說，這只是讓警示晚一點，不會讓它失效。這是推論，Other savings 的抵扣類型仍然沒有查。
+
+**發現 2：「Applies to」和 `C1-8` 記錄的 Scope 對不上**。
+- `C1-8` 記錄的 Scope 是「僅 `finpo-508709`（非帳戶下全部專案）」，列表卻顯示 **This billing account**。
+- 有兩種可能：設定在 `C1-8` 之後被改過，或者這一欄顯示的是預算所屬的帳單帳戶，而不是 Scope。**沒有查證**，要點進預算看 Scope 才能確定。
+- 若 Scope 真的是整個帳單帳戶，帳戶下其他專案的費用也會算進這個預算。
+
 ### Cloudflare Workers（最近 30 天，使用者讀出）
 
 使用者在 `finpo` Worker 的 Metrics 頁截圖，範圍為「All deployed versions」、「Last 30 days」：
