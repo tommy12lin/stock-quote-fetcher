@@ -2531,3 +2531,63 @@ Usage 頁另註明「may take up to 1 hour to refresh」，而且目前不對超
   - `C6-4` 記錄過清除不是即時的，曾經短暫出現 4 個版本。依上面的增量推估，那時約 365 MB，仍在 0.5 GB 內。
 - **0.5 GB 免費額度引自計畫書第 5 節的估算，這次沒有對照 GCP 的價目表**；實際有沒有計費，要看 Billing 報表的 SKU（本節下一步）。
 - **和 `C7-7-6` 有相依**：下一次推送程式變更會擠掉最舊的 `a1fb03ff680d`，那正是 `C7-7-6` 的回滾目標，也是 `finpo-catalog-refresh` 用的映像。**`C7-7-6` 做完之前，不要推送程式變更**。純 `docs/` 的推送不會觸發建置，不受影響。
+
+### GCP Billing 報表（09-01 至 10-05，使用者讀出）
+
+**結論：兩個月合計，毛額約 3.71、淨額約 0.59，淨額全部是網路流量。**
+
+**來源**：使用者在 Billing → Reports 截圖，依 SKU 分列，區間為 09-01 至今（10-05），共 16 個 SKU。
+- 截圖沒有幣別標示，**推定為 TWD**：帳單帳戶幣別為 TWD（`C1-1`）；以 CPU 回推，2.34 ÷ 3,068.84 秒 ≈ 每秒 0.00076，約當 USD 0.000024，與 Cloud Run 的單價相符。**沒有核對報表上的幣別標示**。
+- 欄位：Usage cost（毛額）、Other savings（抵扣）、Subtotal（淨額）。Negotiated savings 全為 0，Savings programs 全為「—」。
+
+| SKU | 服務 | 用量 | 毛額 | Other savings | 淨額 |
+|---|---|---|---|---|---|
+| Services CPU (Request-based billing) | Cloud Run | 3,068.84 second | 2.34 | −2.34 | 0.00 |
+| Jobs CPU in asia-northeast1 | Cloud Run | 979.52 second | 0.56 | −0.56 | 0.00 |
+| Artifact Registry Network Internet Egress AsiaPacfic to AsiaPacfic | Artifact Registry | 0.07 GiB | 0.28 | 0.00 | **0.28** |
+| Artifact Registry Network Inter Region Egress AsiaPacfic to AsiaPacfic | Artifact Registry | 0.15 GiB | 0.23 | 0.00 | **0.23** |
+| Services Memory (Request-based billing) | Cloud Run | 1,997 GiB·second | 0.16 | −0.16 | 0.00 |
+| Cloud Run Network Internet Data Transfer Out AsiaPacific to AsiaPacific | Cloud Run | 0.02 GiB | 0.08 | 0.00 | **0.08** |
+| Jobs Memory in asia-northeast1 | Cloud Run | 979.52 GiB·second | 0.06 | −0.06 | 0.00 |
+| Requests | Cloud Run | 279 count | 0.00 | 0.00 | 0.00 |
+| Services Min Instance Memory／CPU (Request-based billing) | Cloud Run | 25.39 GiB·second／25.39 second | 0.00 | 0.00 | 0.00 |
+| Artifact Registry Storage | Artifact Registry | 0.11 GiB·month | 0.00 | 0.00 | 0.00 |
+| Secret version replica storage | Secret Manager | 1.86 month | 0.00 | 0.00 | 0.00 |
+| Secret access operations | Secret Manager | 152 count | 0.00 | 0.00 | 0.00 |
+| 其餘 3 項 Cloud Run 網路 SKU（Carrier Peering、Intercontinental、Inter Region） | Cloud Run | 0 GiB | 0.00 | 0.00 | 0.00 |
+| **合計** | | | **約 3.71** | **約 −3.12** | **約 0.59** |
+
+合計是 Claude 由各列相加，報表的合計列沒有讀出。
+
+**解讀**：
+- **CPU 與記憶體全被 Other savings 抵掉**，推定是 Cloud Run 的免費額度，**抵扣的類型沒有查**。
+- **有淨額的只有三項網路流量**：
+  - **Cloud Run 對外流量** 0.02 GiB，推定是 Cloud Run 連 Supabase（在 AWS 上），加上回應給 Cloudflare。計畫書第 5 節原本就預期「亞洲區出口流量」會有小額費用，這次有量測值了。
+  - **Artifact Registry 的兩項 egress 不在預期內**，共 0.22 GiB，約一又四分之三個映像的大小。Cloud Run 與 registry 同在 `asia-northeast1`，同區域拉映像照理不收費。**原因沒有查**；可能是本機 `docker pull`、跨區的拉取，或 SKU 的分類方式和預期不同，都還沒證實。
+- **Artifact Registry Storage 0.11 GiB·month、淨額 0**：與上一節 283 MB 的量級相符。0.11 是兩個月的累計用量。
+- **`Promotions and others` 被取消勾選之後，預算看到的是哪個數字**（毛額 3.71，還是扣掉免費額度後的 0.59），沒有查證。`C1-8` 推定預算看的是毛額。不論哪一個，相對於 TWD 300 都不到 2%。
+- **Requests 279 次**，比 `C7-7-1` 匯出的 225 筆多，因為區間包含 9 月的拋棄式服務（`c77-coldstart-probe` 與 `C7-2` 的量測）。**沒有逐筆對帳**。
+
+**界線**：
+- 9 月與 10 月沒有拆開。預算是按月計算的，所以預算通知能不能觸發，要看 **10 月至今**的毛額，這個數字還沒讀出。
+- Billing 報表有延遲，最近一兩天的用量可能還沒進來。
+- 幣別是推定的。
+
+### Cloudflare Workers（最近 30 天，使用者讀出）
+
+使用者在 `finpo` Worker 的 Metrics 頁截圖，範圍為「All deployed versions」、「Last 30 days」：
+
+| 項目 | 值 |
+|---|---|
+| Asset requests | 134 |
+| Asset cache hit rate | 88.81% |
+| Invocations | 237 |
+| Subrequests | 251 |
+| Errors | 0 |
+| CPU Time | 2 ms |
+| Wall Time | 617 ms |
+
+- **用量遠低於 Free 方案的每天 10 萬次請求**。
+- **CPU Time 2 ms、Wall Time 617 ms 是哪一種統計值（中位數、平均或百分位），畫面沒有標示**，照原樣記錄。2 ms 與 `C7-8` 第 5 步量得的 2–3 ms 一致，但它不能代表最大值：`C7-4` A4b 量過一筆 14 ms。
+- Subrequests 比 Invocations 多 14 次。推定包含 jose 取 JWKS 的請求，沒有核對。
+- Invocations 237 次和 Cloud Run 的 Requests 279 次口徑不同：後者包含直接打 `run.app` 的反面測試，前者包含被 Worker 擋下、沒有轉發的請求。**沒有逐筆對帳**。

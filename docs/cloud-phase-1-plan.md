@@ -1,6 +1,11 @@
 # 雲端部署第一階段執行計畫
 
-> **最新進度（2026-10-05）。`C7-7-4` 進行中：Artifact Registry 已查，Billing 報表與 Cloudflare 用量待使用者讀出**：
+> **最新進度（2026-10-05）。`C7-7-4` 進行中：Billing 報表（09-01 至今）與 Cloudflare 用量已讀出，10 月至今的毛額待讀**：
+> - **GCP（09-01 至 10-05）**：毛額約 3.71、淨額約 0.59。幣別推定為 TWD，沒有核對報表上的標示。CPU 與記憶體全被 Other savings 抵掉。**有淨額的只有網路流量**：Cloud Run 對外 0.02 GiB，以及 **Artifact Registry 的兩項 egress，共 0.22 GiB**。後者不在預期內，原因沒有查。
+> - **Cloudflare（最近 30 天）**：Invocations 237 次、Errors 0、CPU Time 2 ms。
+> - **預算通知**：預算按月計算，要看 10 月至今的毛額才能決定。見 C7 證據「GCP Billing 報表」節。
+>
+> **更早的進度（2026-10-05）。`C7-7-4` 進行中：Artifact Registry 已查，~~Billing 報表與 Cloudflare 用量待使用者讀出~~**：
 > - **Artifact Registry**：repository 為 283.075 MB，恰好 3 個版本，每個約 126 MB，彼此共用基礎層。在 0.5 GB 免費額度內，不過這個額度沒有對照價目表核對。清除政策為 `keep-recent-3`。
 > - **限制**：下一次推送程式變更會擠掉 `a1fb03ff680d`，那是 `C7-7-6` 的回滾目標，也是 `finpo-catalog-refresh` 用的映像。**`C7-7-6` 做完前不要推送程式變更**。
 > - 見 C7 證據「`C7-7-4`」節。
