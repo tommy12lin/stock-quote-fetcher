@@ -2668,3 +2668,31 @@ Billing → Budgets & alerts 的列表：
 - **CPU Time 2 ms、Wall Time 617 ms 是哪一種統計值（中位數、平均或百分位），畫面沒有標示**，照原樣記錄。2 ms 與 `C7-8` 第 5 步量得的 2–3 ms 一致，但它不能代表最大值：`C7-4` A4b 量過一筆 14 ms。
 - Subrequests 比 Invocations 多 14 次。推定包含 jose 取 JWKS 的請求，沒有核對。
 - Invocations 237 次和 Cloud Run 的 Requests 279 次口徑不同：後者包含直接打 `run.app` 的反面測試，前者包含被 Worker 擋下、沒有轉發的請求。**沒有逐筆對帳**。
+
+## C7-7-5　DB 匯出與還原演練（2026-10-05 起）
+
+程序見計畫書 `C7-7` 項下「`C7-7-5` 匯出與還原」。
+
+### 比對用的查詢：逐表列數與內容雜湊
+
+計畫只寫了「逐表列數」，但列數相同不代表內容相同。所以另寫了 [`c77-restore-check.sql`](c77-restore-check.sql)，每張表多輸出一個內容雜湊：每一列轉成文字取 md5，依位元組順序排序後串起來再取 md5。輸出只有雜湊值，不含代碼、股數與金額。
+
+列的文字表示會受 session 設定影響（時區、日期格式等），所以查詢開頭先把這些設定固定下來。排序不依賴實體順序，所以 `pg_restore` 改變了列的存放位置也不影響結果。
+
+### 本機預演（10-05，假資料）
+
+在拋棄式 `postgres:17-alpine`（17.10，tmpfs、internal network、預設時區 Asia/Taipei）上：
+1. 以 `cloud_db bootstrap-sql` 產生的 SQL 建出 14 張表，和正式環境的表名一致；
+2. 放入 `C7-7-3` 試跑用的假資料（2,000 筆清單、3 代清單、3 個 run 等），另建一個空的 `app` schema；
+3. 跑查詢，再用 `pg_dump -Fc -n dashboard -n app` 匯出、`pg_restore --exit-on-error` 還原到另一個 database，再跑一次。
+
+| 檢查 | 結果 |
+|---|---|
+| 還原前後 | 14 張表的列數與雜湊**完全相同**，`pg_restore` 結束碼 0 |
+| 拿掉開頭的 `SET`，在 Asia/Taipei 下重跑 | 含時間欄位的 5 張表雜湊改變，其餘 9 張不變。**`SET` 是必要的，而且有效** |
+| 反面：在還原後的庫改 3 處（portfolio 的 revision 改 1、清單刪 1 列、一個 run 的 `started_at` 加 1 微秒） | **恰好這 3 張表被標出**，其中 `runs` 的列數不變、只有雜湊變 |
+
+界線：
+- 預演是 superuser 匯出、superuser 還原，碰不到 Supabase 專屬角色的 ACL；正式匯出時會不會出錯，要實際跑才知道。
+- 雜湊相同只證明資料相同，**不證明權限、RLS、policy 相同**。後者由快照（[`c6-db-snapshot.sql`](c6-db-snapshot.sql)）與 `cloud_db check` 比對。
+- 測試容器與網路已刪除。
