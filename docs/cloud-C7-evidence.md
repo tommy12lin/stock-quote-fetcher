@@ -2502,3 +2502,32 @@ Usage 頁另註明「may take up to 1 hour to refresh」，而且目前不對超
 - **模板 database 約佔 15.3 MB**，這是固定的成本，不會隨使用成長。所以 Free 上限 500 MB 中，實際能給資料用的約 485 MB。
 - **WAL 約 67 MB**，算在 disk size（1 GB）裡，不算在 500 MB 的 database size 裡。一個 WAL 檔是 16 MiB，4 個剛好是 67,108,864 bytes；第 5 個只有約 367 bytes，那是什麼檔沒有查。
 - Supabase 文件另外寫到：組織層級的 Fair Use 限制，看的是**計費週期內每日 database size 的平均**，不是即時值。目前 11% 不受影響。
+
+## C7-7-4　計費與預算通知（2026-10-05 起）
+
+### Artifact Registry 的大小
+
+**結論：repository `finpo` 為 283.075 MB，在 0.5 GB 免費額度內，裡面恰好 3 個版本。**
+
+**方法**：以 `output/c77/tools/c77_registry.ps1` 唯讀查詢（Claude 執行，使用可攜版 gcloud）：
+- `gcloud artifacts repositories describe finpo --location=asia-northeast1`
+- `gcloud artifacts docker images list … --include-tags`
+
+`Repository Size` 一行是 `describe` 印在 stderr 的，JSON 輸出裡沒有 `sizeBytes`。單位 MB 指的是 10⁶ 還是 2²⁰ bytes，沒有查。
+
+| tag | digest | 建立（UTC） | `imageSizeBytes` | 使用者 |
+|---|---|---|---|---|
+| `35743d47289f` | `sha256:a216b906…` | 10-02 04:01:01 | 125,974,580 | 服務 `stock-quote`（`00007-66j`） |
+| `723f6f2ef7f5` | `sha256:40098bbc…` | 10-02 03:08:52 | 125,973,526 | 沒有 |
+| `a1fb03ff680d` | `sha256:df4a49e8…` | 09-30 07:40:08 | 125,973,288 | `finpo-catalog-refresh`；`C7-7-6` 的回滾目標 |
+
+**清除政策**為 `keep-recent-3`（KEEP，`mostRecentVersions.keepCount: 3`）加上 `delete-older`（DELETE，`tagState: ANY`），repository 的 `updateTime` 為 10-02 07:36:36Z。
+
+**解讀**：
+- **三個映像共用基礎層**，所以 repository 遠小於 3 × 126 MB。
+  - `C1-8` 在 09-18 實測：第一個 tag 約 125 MB，之後每個約 82 MB。據此 125 + 82 + 82 = 289 MB，和 283 MB 相近。
+  - 這是用 `C1-8` 的數字推得的，沒有逐層核對。
+- **穩定狀態約 283 MB**。清除政策只保留 3 個版本，每推一次程式變更，新增一版、刪掉最舊的一版。
+  - `C6-4` 記錄過清除不是即時的，曾經短暫出現 4 個版本。依上面的增量推估，那時約 365 MB，仍在 0.5 GB 內。
+- **0.5 GB 免費額度引自計畫書第 5 節的估算，這次沒有對照 GCP 的價目表**；實際有沒有計費，要看 Billing 報表的 SKU（本節下一步）。
+- **和 `C7-7-6` 有相依**：下一次推送程式變更會擠掉最舊的 `a1fb03ff680d`，那正是 `C7-7-6` 的回滾目標，也是 `finpo-catalog-refresh` 用的映像。**`C7-7-6` 做完之前，不要推送程式變更**。純 `docs/` 的推送不會觸發建置，不受影響。
