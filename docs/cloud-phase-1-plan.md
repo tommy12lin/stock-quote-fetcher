@@ -1,6 +1,10 @@
 # 雲端部署第一階段執行計畫
 
-> **最新進度（2026-10-05）。`C7-7-4` 進行中：Billing 報表（09-01 至今）與 Cloudflare 用量已讀出，10 月至今的毛額待讀**：
+> **最新進度（2026-10-05）。`C7-7-4` 進行中：10 月至今毛額約 TWD 1.38、淨額約 0.03，下一步讀 `finpo-monthly` 的 current spend，再建臨時預算**：
+> - 幣別已由使用者確認為 TWD。Artifact Registry 的兩項 egress 全部發生在 9 月，10 月為 0。
+> - 預算看到的是毛額還是淨額，要先從 `finpo-monthly` 的 current spend 判斷，臨時預算的金額依此訂。
+>
+> **更早的進度（2026-10-05）。`C7-7-4` 進行中：Billing 報表（09-01 至今）與 Cloudflare 用量已讀出，~~10 月至今的毛額待讀~~**：
 > - **GCP（09-01 至 10-05）**：毛額約 3.71、淨額約 0.59。幣別推定為 TWD，沒有核對報表上的標示。CPU 與記憶體全被 Other savings 抵掉。**有淨額的只有網路流量**：Cloud Run 對外 0.02 GiB，以及 **Artifact Registry 的兩項 egress，共 0.22 GiB**。後者不在預期內，原因沒有查。
 > - **Cloudflare（最近 30 天）**：Invocations 237 次、Errors 0、CPU Time 2 ms。
 > - **預算通知**：預算按月計算，要看 10 月至今的毛額才能決定。見 C7 證據「GCP Billing 報表」節。

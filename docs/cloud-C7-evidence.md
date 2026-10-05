@@ -2569,9 +2569,34 @@ Usage 頁另註明「may take up to 1 hour to refresh」，而且目前不對超
 - **Requests 279 次**，比 `C7-7-1` 匯出的 225 筆多，因為區間包含 9 月的拋棄式服務（`c77-coldstart-probe` 與 `C7-2` 的量測）。**沒有逐筆對帳**。
 
 **界線**：
-- 9 月與 10 月沒有拆開。預算是按月計算的，所以預算通知能不能觸發，要看 **10 月至今**的毛額，這個數字還沒讀出。
+- ~~9 月與 10 月沒有拆開。預算是按月計算的，所以預算通知能不能觸發，要看 **10 月至今**的毛額，這個數字還沒讀出。~~ 同日已讀出 10 月，見下表。
 - Billing 報表有延遲，最近一兩天的用量可能還沒進來。
-- 幣別是推定的。
+- ~~幣別是推定的。~~ 同日使用者確認幣別為 TWD。
+
+**10-01 至今（同日，使用者讀出）**：
+
+| SKU | 用量 | 毛額 | Other savings | 淨額 |
+|---|---|---|---|---|
+| Services CPU (Request-based billing) | 1,528.32 second | 1.17 | −1.17 | 0.00 |
+| Services Memory (Request-based billing) | 1,217.65 GiB·second | 0.10 | −0.10 | 0.00 |
+| Jobs CPU in asia-northeast1 | 117.26 second | 0.07 | −0.07 | 0.00 |
+| Cloud Run Network Internet Data Transfer Out AsiaPacific to AsiaPacific | 0.01 GiB | 0.03 | 0.00 | **0.03** |
+| Jobs Memory in asia-northeast1 | 117.26 GiB·second | 0.01 | −0.01 | 0.00 |
+| Requests | 169 count | 0.00 | 0.00 | 0.00 |
+| Services Min Instance Memory／CPU | 25.39 GiB·second／25.39 second | 0.00 | 0.00 | 0.00 |
+| Artifact Registry Storage | 0.03 GiB·month | 0.00 | 0.00 | 0.00 |
+| Secret version replica storage | 0.35 month | 0.00 | 0.00 | 0.00 |
+| Secret access operations | 59 count | 0.00 | 0.00 | 0.00 |
+| Artifact Registry Network Internet Egress | 0 GiB | 0.00 | 0.00 | 0.00 |
+| 其餘 2 項 Cloud Run 網路 SKU（Carrier Peering、Intercontinental） | 0 GiB | 0.00 | 0.00 | 0.00 |
+| **合計（Claude 加總）** | | **約 1.38** | **約 −1.35** | **約 0.03** |
+
+共 14 個 SKU。Artifact Registry 的 Inter Region Egress 沒有出現在 10 月。
+
+- **9 月 ＝ 兩個月合計 − 10 月**：毛額約 2.33，淨額約 0.56。
+- **Artifact Registry 的兩項 egress（0.22 GiB）全部發生在 9 月**，10 月是 0。原因仍沒有查，但可以確定不是 10 月的服務運作、回滾或部署持續產生的。
+- **10 月至今毛額約 TWD 1.38，大於 0**，所以預算通知可以依 `C7-7` 程序的第 2 步測試。
+- 預算看到的是毛額 1.38 還是淨額 0.03，取決於 Other savings 屬於哪一類抵扣，這點還沒查證。下一步先讀 `finpo-monthly` 的 current spend，就能判斷。
 
 ### Cloudflare Workers（最近 30 天，使用者讀出）
 
