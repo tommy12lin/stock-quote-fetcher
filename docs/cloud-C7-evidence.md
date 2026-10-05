@@ -2342,7 +2342,7 @@ job 1 的訊息沒有提到截短，因為當時的映像還沒有訊息修正�
 
 **結論：整個 database 為 38,505,619 bytes（約 38.5 MB），是 Free 500 MB 的 7.7%。`dashboard` 有 95% 是官方清單（5 代，每代約 5.15 MB）；報價相關的表合計約 1.1 MB，平均每檔次約 5 KB。閒置時共 12 條連線，`max_connections` 為 60，沒有任何 `finpo_app` 的連線。~~Supabase 儀表板的三項（Usage 頁、專案狀態、pooler 設定）還沒讀出，~~更新進行中的連線數排在 `C7-7-6`。**
 
-**同日補記**：Supabase 儀表板已讀出。Usage 頁的 Database Size 為 0.054 GB（11%），比 SQL 讀到的大約 15 MB，原因沒有查；Egress 0.097 GB（2%）。**Pool Size 為 15**，這才是連線的實際上限。先前推得的「最壞約 20 條」是高估，已更正為約 11–12 條，仍是推論。計費週期與專案狀態沒有讀出。
+**同日補記**：Supabase 儀表板已讀出。Usage 頁的 Database Size 為 0.054 GB（11%），比 SQL 讀到的大約 15 MB，~~原因沒有查~~（同日查明是 `template0`、`template1`，見「Database Size 差額的原因」節）；Egress 0.097 GB（2%）。**Pool Size 為 15**，這才是連線的實際上限。先前推得的「最壞約 20 條」是高估，已更正為約 11–12 條，仍是推論。計費週期與專案狀態沒有讀出。
 
 ### 方法
 
@@ -2461,7 +2461,44 @@ job 1 的訊息沒有提到截短，因為當時的映像還沒有訊息修正�
 
 Usage 頁另註明「may take up to 1 hour to refresh」，而且目前不對超額計費，超過上限可能被限制。
 
-- **Database Size 和 SQL 讀到的值對不上**：Usage 頁是 0.054 GB，`pg_database_size` 是 38,505,619 bytes（約 0.0385 GB），差了約 15 MB。原因沒有查。可能的因素有：Usage 頁算的範圍不同（例如含 WAL 或其他磁碟用量）、GB 和 GiB 的換算不同、或最多 1 小時的更新延遲。**判斷是否接近上限時，以兩者中較大的 Usage 頁為準**。11% 仍遠低於上限。
+- **Database Size 和 SQL 讀到的值對不上**：Usage 頁是 0.054 GB，`pg_database_size` 是 38,505,619 bytes（約 0.0385 GB），差了約 15 MB。~~原因沒有查。可能的因素有：Usage 頁算的範圍不同（例如含 WAL 或其他磁碟用量）、GB 和 GiB 的換算不同、或最多 1 小時的更新延遲。~~ **判斷是否接近上限時，以兩者中較大的 Usage 頁為準**。11% 仍遠低於上限。**同日已查明，見下一節**。
 - **Egress 0.097 GB**：Supabase 送出的資料，大部分推定是 Cloud Run 讀資料庫的流量，但沒有拆開。時間區間沒有讀出。
 - **Pool Size 15 是 `finpo_app` 連線的實際上限**，比 `max_connections` 60 小得多。推得的最多 11–12 條在這之內（見上方更正）。
 - **未讀**：計費週期、專案狀態（Active 與否）。
+
+### Database Size 差額的原因：Supabase 算的是整個叢集（2026-10-05）
+
+**結論：差額是 `template0` 與 `template1`**。Supabase 的 Database Size 是叢集內所有 database 的合計，而 `c77-capacity.sql` 查詢 2 只量了目前這個 database。三個加總為 53,779,253 bytes，四捨五入就是 Usage 頁的 0.054 GB。
+
+**依據是 Supabase 文件**（`docs/guides/platform/database-size`，以 app 內建瀏覽器讀取）：
+- Database size 的定義，就是對 `pg_database` 的每一列取 `pg_database_size` 再加總。
+- 這個指標每天更新一次。
+- Free 方案在 database size 超過 500 MB 時變成唯讀。那個 500 MB 指的就是這個 database size，不是 disk size；disk 另有 1 GB。
+
+**查詢**為 [`c77-dbsize.sql`](c77-dbsize.sql)，唯讀。
+
+**本機試跑**：在拋棄式 `postgres:17-alpine` 上，分別以超級使用者和無權限角色執行。
+- 無權限時，讀不到的那一列顯示 NULL，查詢不中斷。
+- WAL 的查詢在無權限時會報錯。
+
+本機的 `template0`、`template1` 各約 7.5 MB。**送出之前先寫下了預測**：若 Supabase 上也只有這三個 database，合計約 53.6 MB ≈ 0.054 GB。
+
+**Supabase 上的結果**（使用者在 SQL Editor 執行）：
+
+| database | 可連線 | bytes |
+|---|---|---|
+| `postgres`（目前這個） | 是 | 38,505,619 |
+| `template1` | 是 | 7,752,851 |
+| `template0` | 否 | 7,520,783 |
+| **合計** | | **53,779,253** |
+
+| WAL 檔數 | WAL bytes |
+|---|---|
+| 5 | 67,109,231 |
+
+- **預測成立**：只有三個 database，沒有 NULL 列，合計 53,779,253 bytes。
+  - 以 10⁹ 換算為 0.0538 GB，四捨五入是 0.054，和 Usage 頁一致；以 GiB 換算會是 0.050。所以 Usage 頁推定用的是十進位 GB，**沒有其他佐證**。
+- `postgres` 為 38,505,619 bytes，和稍早 `c77-capacity.sql` 的值一位不差，兩次查詢之間沒有寫入。
+- **模板 database 約佔 15.3 MB**，這是固定的成本，不會隨使用成長。所以 Free 上限 500 MB 中，實際能給資料用的約 485 MB。
+- **WAL 約 67 MB**，算在 disk size（1 GB）裡，不算在 500 MB 的 database size 裡。一個 WAL 檔是 16 MiB，4 個剛好是 67,108,864 bytes；第 5 個只有約 367 bytes，那是什麼檔沒有查。
+- Supabase 文件另外寫到：組織層級的 Fair Use 限制，看的是**計費週期內每日 database size 的平均**，不是即時值。目前 11% 不受影響。
