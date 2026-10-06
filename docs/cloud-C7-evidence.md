@@ -3188,3 +3188,37 @@ SHA-256 全文：`f995e2b7b8d23165d7582dbb10a9614dea1340208e46ca11d896a67ba84833
 
 - 第 5 列授權者的差異，推定是因為本機的 `sim_admin` 不是 database 擁有者；Supabase 上 `postgres` 是擁有者，授權者應為 `postgres`。這是推論，`RD-2` 執行後以同一份查詢核對。
 - **界線**：防誤貼的中止只在 `psql` 的 `ON_ERROR_STOP` 下驗證過。SQL Editor 遇到錯誤時，後面的語句是否也不執行，沒有在 Supabase 上驗證。所以仍要求只在演練專案執行，不能依賴這道檢查。
+
+### `RD-1` 建立演練專案（10-06 13:40 前，使用者執行）
+
+- 使用者建立 `finpo-restore-drill`。**建立表單沒有截圖**；使用者回報選項與 Claude 給的一致（名稱 `finpo-restore-drill`、區域 Northeast Asia (Tokyo)、密碼自行產生保管、其他維持預設）。**這是口頭回報，沒有截圖核對**；預設選項當時有哪些（例如 Data API 相關選項）沒有記錄，事後也無法從表單還原。
+- 演練專案 SQL Editor 的 `SELECT version();`：`PostgreSQL 17.11 on aarch64-unknown-linux-gnu, compiled by gcc (GCC) 15.2.0, 64-bit`。
+  - **和正式專案的 17.6 不同**，可作為這次查詢確實是在另一個專案執行的佐證。
+  - 主版本同為 17。`pg_restore` 用 `postgres:17-alpine`（17.10），還原同主版本、小版本較新的伺服器不受影響；`pg_dump` 才需要不低於伺服器版本，這次不在演練專案上匯出。
+  - **新專案的小版本比正式專案新**：真正出事時新開的專案也會是較新的版本，正式專案的 17.6 沒有自動升級。
+- 專案列表與區域：**待使用者截圖**，要核對名稱為 `finpo-restore-drill`、區域為 `ap-northeast-1`。
+
+### `RD-2` 建立 `finpo_app`（10-06 13:50 前後，使用者執行，Claude 比對）
+
+使用者在演練專案的 SQL Editor 執行 [`rd-create-role.sql`](rd-create-role.sql)（密碼由使用者填入），再跑 [`rd-role-attrs.sql`](rd-role-attrs.sql)，貼回 8 列。使用者沒有回報錯誤；建角色那一段的輸出沒有貼回，所以「沒有錯誤」是從角色與授權都存在推得的。
+
+| n | 項目 | 和正式專案比對 |
+|---|---|---|
+| 1 | `role` | **逐字相同** |
+| 2 | `member_of` | 相同（null） |
+| 3 | `members` | **逐字相同**：`postgres admin=true inherit=false set=false` |
+| 4 | CONNECT／CREATE／TEMP | 相同（`true,false,true`） |
+| 5 | `datacl` | **整串逐字相同**，包括 `finpo_app=c/postgres` 與三個 Supabase 角色 |
+| 6 | `role_settings` | 相同（null） |
+| 7 | `public` schema | 相同（`true,false`） |
+| 8 | `server_version` | 17.11（正式專案 17.6），確認是在演練專案執行 |
+
+- **`RD-2` 通過**：演練專案的 `finpo_app` 在這份查詢涵蓋的屬性上和正式專案一致。本機預演時推論「Supabase 上授權者會是 `postgres`」，這次得到證實。
+- 第 3 列在 Supabase 上重現，佐證正式專案的 `finpo_app` 也是由 `postgres` 以同樣方式建立的（仍是推論，沒有建立紀錄）。
+- **界線**：密碼本身無法比對；這份查詢沒有涵蓋的屬性（例如 `pg_authid` 的密碼雜湊演算法）沒有比。防誤貼的中止在 SQL Editor 上仍未驗證：這次角色不存在，不會觸發。
+
+### `RD-3` 還原：指令（10-06 14:00 前後，Claude 撰寫，交由使用者執行）
+
+- 連線參數用 libpq 的環境變數（`PGHOST` 等）傳入，不放進 `sh -c` 的字串：PowerShell 5.1 把含雙引號的參數交給外部程式時會剝掉引號，這樣寫可以避開。
+- `pg_restore` 的 `--verbose` 輸出與錯誤寫到 `output/rd/rd3-restore.log`（Git 忽略），結束碼與 UTC 起訖時間寫到 `output/rd/rd3-time.txt`。密碼提示走 `/dev/tty`，所以重導 stderr 不影響輸入密碼（推論，依 libpq 的行為）。
+- **本機預演沒有做**：Claude 原本要用同樣的指令形式還原到本機拋棄式 PostgreSQL，該次 Bash 呼叫被權限拒絕，沒有重試。所以這個指令形式在使用者執行前沒有跑過。
