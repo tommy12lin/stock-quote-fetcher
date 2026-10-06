@@ -10,7 +10,8 @@
 # 2026-10-06 加入：第一次 RD-3 的指令沒有這道檢查，<ref> 若誤填成正式專案，pg_restore 會寫進正式資料庫。
 set -u
 OUT=/out
-DUMP=/in/finpo-20261006-0940.dump
+# 演練用 10-06 那一份；真正出事時以 -e DUMP=/in/<最新一份> 指定。
+DUMP="${DUMP:-/in/finpo-20261006-0940.dump}"
 EXPECT_VERSION="${EXPECT_VERSION:-17.11}"
 
 date -u +%T > "$OUT/rd3-time.txt"

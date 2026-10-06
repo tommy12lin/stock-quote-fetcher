@@ -3331,3 +3331,68 @@ SHA-256 全文：`f995e2b7b8d23165d7582dbb10a9614dea1340208e46ca11d896a67ba84833
 | A：預設預期 17.11 | `server_version=17.10`，停止，結束碼 3，沒有跑 `cloud_db check` |
 | B：`EXPECT_VERSION=17.10` | 檢查通過，`cloud_db check` 為 `passed`，runtime 讀取成功 |
 | C：預期 17.10，密碼錯誤 | `server_version=` 為空，停止，結束碼 3 |
+
+### `RD-5` 診斷第 2 次：仍連到正式專案（10-06 15:30 前後，使用者執行）
+
+- Claude 請使用者從演練專案的 Connect 頁面取 ref、把 `postgres` 換成 `finpo_app` 後重跑同一條 `psql`，輸出仍是 **`17.6|2|1`**，仍是正式專案。只有 SELECT，沒有改動。
+- 成因待查。候選（都未確認）：重跑時用了終端機歷史裡的舊指令（`RD-3` 第 2 次發生過）；從正式專案的 Connect 頁面複製了 ref；演練專案的 `finpo_app` 密碼與正式專案相同，所以填錯 ref 也登入得了。
+- **同日補記：成因查明**。使用者確認 ref 是從**正式專案**的 Connect 頁面複製的。改用演練專案的 ref 重跑，輸出 **`17.11|2|1`**：連上演練專案，兩個 schema 已還原，`finpo_app` 存在。**這是 `finpo_app` 第一次經 session pooler、`verify-full` 登入演練專案成功**。
+- 兩個專案的 Connect 頁面外觀相同，只有左上角的專案名稱不同。這是本次演練第 2 次因為專案混淆而連到正式專案（第 1 次是上一段的第 1 次診斷）；兩次都是唯讀查詢，靠版本號才發現。
+- ~~未回答：演練專案的 `finpo_app` 密碼是否與正式環境相同。~~ 兩次以正式 ref 都登入成功，表示當時輸入的是正式環境的密碼，但無法由此判斷兩邊是否相同。**同日補記：使用者確認兩邊的密碼不同**。
+
+### `RD-5` 通過（10-06 07:31:51–07:32:42Z，使用者執行，Claude 讀檔）
+
+`output/rd/rd5-result.txt`：
+
+```
+== target check (expect 17.11)
+server_version=17.11
+== cloud_db check
+{"runtime_permissions": "passed"}
+== runtime read
+{"username": "finpo_app", "server_version": "17.11", "ssl_in_use": true, "revision": "17", "rows": 27}
+```
+
+- **`RD-5` 通過**：在還原後的演練專案上，`finpo_app` 經 session pooler、`verify-full` 以應用程式本身的 `Storage` 連線（session 設定核對與 TLS 檢查都通過），`cloud_db check` 的最小權限契約成立，以 runtime 身分讀出的持股為 revision 17、27 檔，與正式專案相同。
+- 版本檢查讀到 17.11，所以這次結果確實來自演練專案。
+- 整段 51 秒，大部分是 `uv sync`。
+- **界線**：只有讀取。寫入是否被 RLS 與權限放行，仍只由 `cloud_db check` 從權限表推論（`RD-6` 依使用者決定不做）。
+
+### 耗時
+
+| 項目 | 時間 |
+|---|---|
+| `RD-1` 建專案 → `RD-5` 通過（牆上時間） | 約 13:40 前 → 15:32（台北），**約 2 小時，不能當成復原時間**：大部分是 Claude 準備與預演腳本、等待使用者，以及兩類連線錯誤（`RD-3` 兩次、`RD-5` 一次失敗與兩次連到正式專案） |
+| 還原本身（`pg_restore`） | 約 11 秒 |
+| runtime 檢查（含 `uv sync`） | 51 秒 |
+
+腳本與 SQL 現在都已備妥並在 Supabase 上跑過，下次照「真正出事時的還原程序」走，機器時間是秒到分鐘級；人工步驟（建專案、取連線資訊、輸入密碼、改 Cloud Run 設定）的耗時**沒有量到**。
+
+### 演練的教訓
+
+- **ref 是唯一決定連到哪個專案的值**，host 同區共用，Connect 頁面外觀相同。這次演練中共有 2 次以正式專案的 ref 連上正式專案（都是唯讀，靠版本號發現）。所以凡是對新專案的操作，**腳本都要先核對伺服器版本或其他能分辨專案的值**；新專案的小版本較新，目前可以分辨，但正式專案日後若升級到同一版本，這個方法就失效，要改用別的識別值（例如 `pg_namespace` 裡兩個 schema 是否存在，只適用還原前）。
+- 終端機歷史會讓人重跑舊指令（`RD-3` 第 2 次），腳本化並在檔頭寫明用途可以降低這種錯誤，但不能消除。
+- 應用程式為了不洩漏伺服器原文，連線失敗時只顯示一般訊息；診斷要另用 `psql`。
+
+## 真正出事時的還原程序（2026-10-06 依演練寫成）
+
+**前提**：正式專案無法使用或資料毀損，要以最新一份備份在新的 Supabase 專案重建。資料會回到那份備份的時間點，之後的變更（更新報價、清單、持股異動）會遺失。
+
+**已在演練中實測的步驟**（`RD-1`–`RD-5`）：
+
+1. 在同一個 organization、`ap-northeast-1` 建新專案，記下 `SELECT version();` 的版本（以下稱 V）。Free 只能有 2 個 active 專案。
+2. 新專案 SQL Editor 跑 [`rd-create-role.sql`](rd-create-role.sql)，填**新的** `finpo_app` 密碼。可以用 [`rd-role-attrs.sql`](rd-role-attrs.sql) 核對屬性。
+3. 以 [`rd-restore.sh`](rd-restore.sh) 還原，指令同 `RD-3` 第 3 次，另加 `-e EXPECT_VERSION=<V> -e DUMP=/in/<最新一份備份>`。**`PGUSER` 的 ref 從新專案的網址或 Connect 頁面取，先確認左上角的專案名稱**。
+4. 新專案跑 [`c6-db-snapshot.sql`](c6-db-snapshot.sql)，確認 portfolio 的 revision 與檔數符合預期。（演練時另跑了雜湊比對，那是因為 10-06 這份有匯出當時的雜湊；每週的備份沒有，所以這一步只能做到合理性檢查。）
+5. 以 [`rd-runtime-check.sh`](rd-runtime-check.sh) 檢查，指令同 `RD-5` 通過那次，另加 `-e EXPECT_VERSION=<V>`。
+
+**未實測的步驟**（演練刻意不碰正式環境）：
+
+6. Secret Manager 的 `db-password` 新增版本，內容為新專案的 `finpo_app` 密碼。服務與 `finpo-catalog-refresh` 都用 `db-password:latest`，兩者會同時改用新密碼。
+7. 服務：照 `C6-2` 那條 `gcloud run deploy`，只把 `DB_HOST`、`DB_USER` 換成新專案的值（`DB_USER` 為 `finpo_app.<新 ref>`）。`describe` 核對只有這兩項改變，不帶簽章的請求回 401。
+8. Job：`gcloud run jobs update finpo-catalog-refresh`，同樣換 `DB_HOST`、`DB_USER`，`describe` 核對。
+9. 經 Worker 載入頁面、估值、按一次更新報價；Worker 與 Access 不需要改。
+10. 清單若已過期，執行一次清單更新。之後照「第一階段之後：資料庫備份」節從新專案匯出備份（`pg_dump` 版本不得低於 V）。
+11. 舊專案是否刪除，等新專案穩定後再決定。
+
+步驟 6–9 是由現有部署方式推得，**沒有演練過**；第一次真的執行時要逐步核對並補記。
