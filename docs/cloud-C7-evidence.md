@@ -3252,3 +3252,36 @@ SHA-256 全文：`f995e2b7b8d23165d7582dbb10a9614dea1340208e46ca11d896a67ba84833
 - 結果：`FATAL:  (EAUTHQUERY) auth_query secret check timed out`，`pg_restore` 沒有連上，**沒有寫入任何資料庫**。起訖 14 秒。
 - **錯誤和第 1 次不同**：第 1 次是「user not found in the database」，這次是「auth_query secret check timed out」。推論：使用者名稱這次被找到了（或至少沒有在同一步失敗），卡在 pooler 向資料庫查詢驗證資料時逾時。兩次的 pooler IP 也不同，是同一個 host 解析到不同位址。為什麼逾時，**未確認**。Claude 以網路搜尋查這句錯誤訊息，Supabase 的疑難排解文件中沒有找到逐字相同的條目；同類的 `EAUTHQUERY` 條目講的是角色的 `VALID UNTIL` 過期，和本次 `rolvaliduntil` 為 null 的情況不符。
 - 紀錄另存為 `output/rd/rd3-attempt2-*`。
+
+### `RD-3` 第 3 次：以 `rd-restore.sh` 還原成功（10-06 06:47:56–06:48:27Z，使用者執行）
+
+`rd3-time.txt`：
+
+| 時間（UTC） | 事件 |
+|---|---|
+| 06:47:56 | 腳本開始（之後等待輸入密碼） |
+| — | `preflight_rc=0 preflight=17.11\|0\|1`：版本 17.11、兩個 schema 不存在、`finpo_app` 存在，確認是演練專案 |
+| 06:48:16 | 檢查通過，開始 `pg_restore` |
+| 06:48:27 | `restore_exit=0` |
+
+- **`pg_restore` 結束碼 0，118 行的 `--verbose` 紀錄裡沒有任何 error 或 warning**。還原本身約 11 秒（06:48:16 → 06:48:27，`date` 只到秒）；前面 20 秒包含輸入密碼與檢查查詢。
+- **防呆在真實路徑上運作**：檢查查詢經 session pooler、`verify-full` 成功連上演練專案，讀到預期的 `17.11|0|1` 才還原。中止的路徑只在本機測過，這次沒有走到。
+- 第 2 次的 `auth_query secret check timed out` 這次沒有再出現；約 4.5 分鐘後重試即成功，成因仍未查。
+- 紀錄各類物件的數目，和 `C7-7-5` 的 `pg_restore --list`（`output/c77/c775-dump-list.txt`）中可還原的 117 項逐類相同：
+
+| 類別 | dump 目錄 | 本次還原的紀錄 |
+|---|---|---|
+| SCHEMA | 2 | 2 |
+| DOMAIN | 2 | 2 |
+| TABLE | 14 | 14 |
+| TABLE DATA | 14 | 14 |
+| ROW SECURITY | 14 | 14 |
+| POLICY | 14 | 14 |
+| ACL | 15 | 15 |
+| CONSTRAINT | 24 | 24 |
+| FK CONSTRAINT | 13 | 13 |
+| INDEX | 5 | 5 |
+
+- 檔頭的「TOC Entries: 124」和列出的 117 項相差 7，推定是不列在目錄清單裡的檔頭類項目（例如編碼、`search_path`），沒有逐一查證。
+- **計畫書與 `C7-7-5` 預想的「Supabase 的 `postgres` 不是 superuser 會造成錯誤」沒有發生**：建 schema、改擁有者、啟用 RLS、建 policy、授權給 `finpo_app` 都成功。
+- 內容是否一致要看 `RD-4`，這裡只證明每一項都執行了且沒有報錯。
