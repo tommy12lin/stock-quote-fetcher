@@ -2714,3 +2714,99 @@ Billing → Budgets & alerts 的列表：
 - 預演是 superuser 匯出、superuser 還原，碰不到 Supabase 專屬角色的 ACL；正式匯出時會不會出錯，要實際跑才知道。
 - 雜湊相同只證明資料相同，**不證明權限、RLS、policy 相同**。後者由快照（[`c6-db-snapshot.sql`](c6-db-snapshot.sql)）與 `cloud_db check` 比對。
 - 測試容器與網路已刪除。
+
+### 伺服器版本（10-06）
+
+使用者在 SQL Editor 執行 `SELECT version();`：**PostgreSQL 17.6**（x86_64-pc-linux-gnu）。匯出用 `postgres:17-alpine`，本機為 17.10，主版本相同且不低於伺服器。
+
+### 2a：匯出前的快照（10-06 01:22Z，使用者在 SQL Editor 執行）
+
+**結構快照**（`c6-db-snapshot.sql`）：
+
+| # | 項目 | 值 |
+|---|---|---|
+| 1 | `current_user` | `postgres` |
+| 2 | `db_now` | 2026-10-06 01:22:20.98Z |
+| 3 | `migrations` | `0001`:`44b28fa8b5a3`、`0002`:`73d426bf735c`、`0003`:`d80724dadb15`，皆為 `cloud-bootstrap` |
+| 4 | `portfolio` | revision=17 rows=27 |
+| 5 | `refresh_jobs` | 11 |
+| 6 | `catalog_generations` | 5，最新完成 10-02 02:55:29Z，到期 10-09 02:55:29Z |
+| 7–9 | 表／RLS／擁有者 | 14／14 of 14／`postgres` |
+| 10 | `policies` | 14 條，`runtime_access` ALL 與 SELECT，對象 `finpo_app` |
+| 11 | `grants_finpo_app` | 13 張表為 INSERT+SELECT+UPDATE，`schema_migrations` 只有 SELECT |
+| 12 | `schema_acl` | `{postgres=UC/postgres,finpo_app=U/postgres}` |
+| 13 | `app_schema_usage_finpo_app` | false |
+| 14 | `advisory_locks_held` | 0 |
+
+**逐表列數與雜湊**（`c77-restore-check.sql`）：
+
+| 表 | 列數 | content_md5 |
+|---|---|---|
+| `campaigns` | 0 | `d41d8cd98f00b204e9800998ecf8427e` |
+| `catalog_instruments` | 67,242 | `e84e9d8520b3660cffa6eab57c8977d7` |
+| `cycles` | 72 | `0e53c38c99980f4c7c5ffcff2059baab` |
+| `fetch_attempts` | 222 | `ac06dd60d7efd74b0d2aada0e63a3d95` |
+| `holdings` | 222 | `051443cc92409c8f32f40326ff38cde9` |
+| `instrument_catalog_generations` | 5 | `96cbf79f3a392d64748ba88657bee0c9` |
+| `portfolio` | 1 | `c6ee1b212e430c81575860ea1c38cdbb` |
+| `quotes` | 221 | `9c2e4bebec6c8faa63c20919bdb48a70` |
+| `refresh_jobs` | 11 | `21bab8f0b170d0ed56356e602b4263d8` |
+| `runs` | 51 | `9da47111bc50e0980d48b2f9de446321` |
+| `scheduled_cycles` | 0 | `d41d8cd98f00b204e9800998ecf8427e` |
+| `schema_migrations` | 3 | `5185b2013db1dd4e95db7eda089ab9ec` |
+| `valuation_totals` | 72 | `37a27d7169bc898e277e9824f7abbe57` |
+| `valuations` | 222 | `1c485741b535e825ae8049f147c0afb2` |
+
+- **14 張表的列數和 10-05 `C7-7-3` 查詢 1 完全相同**，這段期間沒有新的資料寫入。
+- 結構快照和 `C7-7-3` 的記錄一致；清單到期時間 10-09 02:55Z 和 `ljtrf` 的記錄一致。
+- SQL Editor 一次執行多段語句（5 行 `SET` 加 1 個 SELECT）沒有問題。
+- **`db_now` 顯示 `+00`，Supabase 的 session 預設就是 UTC**，所以 `SET TimeZone` 在雲端這一側沒有作用可觀察。還原時刻意把本機容器的時區設成 Asia/Taipei，雜湊若相同，才同時證明 `SET` 在本機那一側有作用。
+- 原始輸出另存在 `output/c77/c775-before-*.tsv`（Git 忽略）。
+
+### 2b：匯出（10-06，使用者在 PowerShell 執行）
+
+指令照計畫書程序第 2 步：`postgres:17-alpine` 容器執行 `pg_dump --verbose -Fc -n dashboard -n app`，經 session pooler 連線，`sslmode=verify-full`，`sslrootcert` 為 repo 的 `deploy/supabase-ca.crt`，以管理者 `postgres` 連線，密碼由互動提示輸入。host 與使用者名稱沒有寫進 repo。
+
+| 項目 | 值 |
+|---|---|
+| 結果 | `--verbose` 輸出 14 張表的 `dumping contents`，**沒有 error 或 warning** |
+| 檔案 | `output/c77/finpo-20261006.dump`，**1,772,671 bytes**，SHA-256 `f995e2b7…a848334e`（全文見下） |
+| 格式 | custom、gzip；伺服器 17.6、`pg_dump` 17.10 |
+| TOC | 124 項：schema 2、domain 2、表 14、表資料 14、RLS 14、policy 14、ACL 15（schema 1、表 14）、約束 24、外鍵 13、索引 5。`pg_restore --list` 讀取成功 |
+| 耗時 | 檔頭的 `Archive created at` 為 01:40:28Z，檔案最後寫入為 01:40:49.16Z，使用者貼回的結束時間戳記為 01:40:49.49Z。**約 21 秒，這是上界**：`pg_dump` 在連線前就記下建立時間，所以包含輸入密碼的時間 |
+
+SHA-256 全文：`f995e2b7b8d23165d7582dbb10a9614dea1340208e46ca11d896a67ba848334e`。
+
+資料庫有約 27 MB，dump 只有 1.7 MB。推定是因為索引只匯出定義、不匯出內容，加上 gzip 壓縮；沒有拆開驗證。
+
+### 2c：匯出後的快照（10-06 01:48Z）
+
+- 結構快照：**只有 `db_now` 不同**，其餘 13 項和 2a 逐字相同。
+- 逐表列數與雜湊：14 張表**全部和 2a 相同**。
+- **01:22Z 到 01:48Z 之間資料沒有變動**，這段區間涵蓋 01:40 的匯出，所以 dump 的內容就是 2a／2c 的這份資料。
+- **異常（未查原因）**：這次查詢 2 的結果**沒有照 `ORDER BY schema, table_name` 排序**，2a 那次有排。內容不受影響，比對時先排序。可能是貼進去的查詢少了最後一行，也可能是 SQL Editor 的行為，沒有查證。
+
+### 3–4：還原與比對（10-06，Claude 在本機執行）
+
+環境：拋棄式 `postgres:17-alpine`（17.10），tmpfs、internal network，**容器時區刻意設為 Asia/Taipei**。先建 `finpo_app` 角色（這次產生的隨機測試密碼，用完即刪），再以 `pg_restore --verbose` 還原到新的 database，沒有加 `--exit-on-error`，好讓所有錯誤都留下來。
+
+| 檢查 | 結果 |
+|---|---|
+| `pg_restore` | **結束碼 0，沒有任何 error 或 warning**，耗時不到 1 秒（容器的 `date` 只到秒） |
+| 逐表列數與雜湊 | **14 張表和 2a 完全相同** |
+| 結構快照 | 除 `db_now` 外，只有第 6 項的時間以 +08 顯示（同一時刻，例如 02:55:29Z = 10:55:29+08）。**RLS 14/14、policy、`finpo_app` 的表權限、schema ACL、migration checksum、portfolio 都和 2a 相同** |
+| `cloud_db check`（以 `finpo_app`，經 runner 容器、`deploy/cloud.toml` 加環境變數覆寫） | `{"runtime_permissions": "passed"}`，結束碼 0 |
+| 以 `finpo_app` 讀持股 | revision 17、27 檔，和雲端相同 |
+| 最新一代清單 | 13,477 列 |
+
+- **預期中的錯誤沒有出現**：計畫書預想 Supabase 專屬角色的 ACL 會讓還原出錯。實際上 dump 裡的擁有者與權限只牽涉 `postgres` 和 `finpo_app` 兩個角色，所以事先建好 `finpo_app` 就足夠。
+- **雜湊在 Asia/Taipei 下仍然相同**，證明 `c77-restore-check.sql` 開頭的 `SET` 在本機這一側有作用（對照：本機預演中拿掉 `SET`，含時間欄位的 5 張表雜湊就會改變）。
+- 測試容器、網路與測試密碼已刪除。dump 與各次輸出留在 `output/c77/`（Git 忽略），**不提交**。
+
+### 界線
+
+- **還原到 Supabase 本身沒有演練**。本機是 superuser 還原，Supabase 的 `postgres` 不是真正的 superuser，權限上的差異沒有被考驗到。
+- **角色本身不在 dump 裡**（只匯出了兩個 schema）。`finpo_app` 的密碼與屬性（例如沒有 `BYPASSRLS`）要在還原前另外建立；`cloud_db check` 檢查的是這次本機手建的角色，不能代表正式環境的角色。
+- **沒有讓服務接到還原後的資料庫實際運作**，只以 `cloud_db check` 和 runtime 身分的唯讀查詢驗證。
+- 這份 dump **只有這台筆電上一份**，沒有異地備份。往後的備份頻率依使用者 10-05 的決定，留到第一階段之後再定。
+- 匯出耗時是含輸入密碼的上界。
