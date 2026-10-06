@@ -3307,3 +3307,27 @@ SHA-256 全文：`f995e2b7b8d23165d7582dbb10a9614dea1340208e46ca11d896a67ba84833
   - **第一次失敗**：`cloud_db check` 通過，但讀持股報 `SQLSTATE 3F000`。成因：`deploy/cloud.toml` 沒有 schema，設定的預設值不是 `dashboard`；`cloud_db` 會以 `--schema` 換成 `dashboard`，腳本漏了這一步。已修正為同樣的 `replace(..., schema='dashboard')`。
   - **修正後**：`{"runtime_permissions": "passed"}`；讀出 `{"username": "finpo_app", "server_version": "17.10", "ssl_in_use": false, "revision": "5", "rows": 2}`，與假資料相符。`ssl_in_use` 為 false 是因為本機以 `DB_SSLMODE=disable` 覆寫。
 - **界線**：本機沒有 pooler 與 TLS；密碼由 stdin 管線送入。腳本裡的管線接 `tee`，Python 失敗時腳本的結束碼仍是 0，要看輸出判斷。
+
+### `RD-5` 第 1 次：`finpo_app` 連線失敗（10-06 07:15:33–07:16:17Z，使用者執行）
+
+- `cloud_db check` 與 runtime 讀取都在連線階段失敗，訊息為 `資料庫連線失敗；請核對網路、帳號與環境設定。`（`storage.py` 刻意不輸出伺服器原文，所以看不出成因）。**沒有讀到也沒有寫入任何資料**。
+- 輸出另存為 `output/rd/rd5-attempt1-result.txt`。
+- 待以 `psql` 用同一組參數直連，取得伺服器的錯誤原文再判讀。候選成因（都未確認）：密碼輸入有誤；pooler 對新建的自訂角色驗證失敗或逾時（`RD-3` 第 1、2 次以 `postgres` 也遇過 `EAUTHQUERY`）；`connect_timeout` 10 秒內 pooler 沒有完成驗證。
+
+### `RD-5` 診斷：`psql` 直連連到了正式專案（10-06 15:20 前後，使用者執行）
+
+- 使用者以 `psql` 跑 [`rd-restore-preflight.sql`](rd-restore-preflight.sql)，輸出 **`17.6|2|1`**。**17.6 是正式專案的版本**（演練專案為 17.11），所以這次以 `finpo_app` 連上的是**正式專案**。查詢只有 SELECT，正式專案沒有被改動。
+- 推論：session pooler 的 host 是同區域所有專案共用的，**決定連到哪個專案的只有使用者名稱裡的 ref**。這次 `finpo_app.` 後面填的是正式專案的 ref；能登入，表示輸入的是正式環境 `finpo_app` 的密碼。使用者沒有說明當時填了什麼，這是由結果推得。
+- `RD-5` 第 1 次失敗的成因因此仍不確定：可能是 ref 與密碼分屬不同專案。**未確認**。
+- **發現的缺陷：`rd-runtime-check.sh` 連錯專案時會照樣「通過」**。正式專案的持股同樣是 revision 17、27 檔，`cloud_db check` 在正式專案也會通過，能分辨的只有輸出裡的 `server_version`，而腳本沒有檢查它。`RD-3` 的還原腳本有這道檢查，撰寫 `RD-5` 時沒有比照，因為 `RD-5` 是唯讀的，只想到「不會寫壞」，沒想到「會讀錯而誤判通過」。
+
+### `RD-5` 腳本的修正：先確認是演練專案（10-06 15:25 前後，Claude）
+
+- `rd-runtime-check.sh` 改為先以 `Storage` 連線讀 `server_version`，**必須等於 `EXPECT_VERSION`（預設 17.11）才繼續**，否則印出「不是預期的演練專案（或連線失敗），停止」並以結束碼 3 結束。
+- **本機測試**（同上一節的拋棄式環境，伺服器 17.10）：
+
+| 情境 | 結果 |
+|---|---|
+| A：預設預期 17.11 | `server_version=17.10`，停止，結束碼 3，沒有跑 `cloud_db check` |
+| B：`EXPECT_VERSION=17.10` | 檢查通過，`cloud_db check` 為 `passed`，runtime 讀取成功 |
+| C：預期 17.10，密碼錯誤 | `server_version=` 為空，停止，結束碼 3 |
