@@ -3363,7 +3363,7 @@ server_version=17.11
 - 使用者回報已刪除 `finpo-restore-drill`。**尚未截圖核對**，待使用者提供專案列表截圖（應只剩 `finpo`）。
 - **沒有做 `rd-restore.sh` 在 Supabase 上的中止路徑反面測試**（使用者決定；Claude 提議為選做）。中止路徑只在本機以假資料測過。
 - 演練專案裡的 `finpo_app` 密碼、SQL Editor 保存的查詢與還原的資料，隨專案刪除一併移除（依刪除的語意推得，未另行核對）。
-- 本機留下的檔案：`output/rd/`（還原與檢查的紀錄，含失敗的各次）、`output/rd-test/`（Claude 本機測試用的假 dump 與 `bootstrap.sql`），都是 Git 忽略。
+- 本機留下的檔案：`output/rd/`（還原與檢查的紀錄，含失敗的各次）、`output/rd-test/`（Claude 本機測試用的假 dump 與 `bootstrap.sql`），都是 Git 忽略。**同日 15:42 補記**：`output/rd-test/` 依使用者要求刪除，刪除前核對過裡面的 dump 是 1,884 bytes 的假資料；`output/backups/` 的備份未受影響。
 
 ### 耗時
 
