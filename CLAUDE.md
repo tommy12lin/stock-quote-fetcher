@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-台美股報價與持股市值專案。目前的主線是**把既有本機系統部署到雲端**（Cloudflare Workers 前端 ＋ Cloud Run Python API ＋ Supabase PostgreSQL）。
+台美股報價與持股市值專案。**雲端部署第一階段已於 2026-10-06 完成**：既有本機系統已部署到雲端（Cloudflare Workers 前端 ＋ Cloud Run Python API ＋ Supabase PostgreSQL）並通過驗收。下一步待使用者決定；系統已在雲端運作，下面的營運限制照舊適用。
 
 ## 先讀進度，再動手
 
@@ -45,5 +45,6 @@ session 開始時先核對今天的日期，到了就**在第一則回覆的開�
 ## 不要做的事
 
 - **部署 `finpo` Cloudflare Worker 時不要省略 Access 的核對。** 一律用 `npx --yes wrangler@4.145.0`；每次部署後都要不登入打 `/`，確認回 302 導向 Access。`C7-8` 之後，Worker 只替 JWT 驗證通過、`email` 在 secret `ACCESS_ALLOWED_EMAILS` 內的請求簽章；部署前先 `npm ci --prefix worker`。**要放行新的人，Access policy 與 `ACCESS_ALLOWED_EMAILS` 兩處都要加**，少一處就進不來；這兩處是僅有的兩道關卡。Google 的 Test users 也照樣加上，但**不能依賴它把關**：09-17（`C1-6`）有名單外的帳號被 Google 擋下，10-02（`C7-3-3`）卻有名單外的帳號通過 Google、由 Access 擋下，差異的原因未查。要改 Access 的設定前，先讀計畫書的 `C7-8`。程序見 `docs/cloud-C7-evidence.md`「`C7-1`／`C7-2` 首次分段部署」節，現行的回滾目標見同檔「`C7-8` 第 0 步」節的第 4 步。
+- **推送程式變更前，先把 `finpo-catalog-refresh` 改指向服務現用的映像**，並以 `describe` 核對只有映像改變。Artifact Registry 只保留 3 版，每次建置擠掉最舊的一版；10-06 時 Job 仍用 `a1fb03ff680d`，是最舊的那一版。純 `docs/`、`**.md` 的推送不會觸發建置。
 - **不要在 `deploy/cloud.toml` 調高 `refresh_deadline_seconds`**，除非重新量過 Cloudflare 的邊緣上限。該檔內有完整算式。
 - **不要把常駐 monitor 的概念帶回雲端設計。** 第一階段明文不納入常駐 monitor、七天觀測與固定排程抓價；抓價改為在使用者請求內完成（`D3`）。
