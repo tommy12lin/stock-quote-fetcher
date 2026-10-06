@@ -3285,3 +3285,25 @@ SHA-256 全文：`f995e2b7b8d23165d7582dbb10a9614dea1340208e46ca11d896a67ba84833
 - 檔頭的「TOC Entries: 124」和列出的 117 項相差 7，推定是不列在目錄清單裡的檔頭類項目（例如編碼、`search_path`），沒有逐一查證。
 - **計畫書與 `C7-7-5` 預想的「Supabase 的 `postgres` 不是 superuser 會造成錯誤」沒有發生**：建 schema、改擁有者、啟用 RLS、建 policy、授權給 `finpo_app` 都成功。
 - 內容是否一致要看 `RD-4`，這裡只證明每一項都執行了且沒有報錯。
+
+### `RD-4` 內容比對（10-06 07:02–07:05Z，使用者在演練專案執行，Claude 比對）
+
+使用者在演練專案的 SQL Editor 跑 [`c77-restore-check.sql`](c77-restore-check.sql) 一次、[`c6-db-snapshot.sql`](c6-db-snapshot.sql) 兩次（07:02:14Z、07:05:04Z，內容相同），貼回 JSON。Claude 轉成 TSV，以 `diff` 和 `C7-7-5` 2a 存下的 `output/c77/c775-before-*.tsv` 比對，不靠目視。
+
+| 比對 | 結果 |
+|---|---|
+| 14 張表的列數與 `content_md5` | **14 列逐字相同** |
+| 結構快照（排除第 2 項 `db_now`） | **13 列逐字相同**：migration checksum、portfolio revision 17／27 檔、`refresh_jobs` 11、清單 5 代（最新 10-02 02:55:29Z）、14 張表、RLS 14/14、擁有者 `postgres`、policy、`finpo_app` 的表權限、schema ACL、`app` schema 無權限、advisory lock 0 |
+
+- **`RD-4` 通過：還原到 Supabase 後，資料內容與結構和正式資料庫在匯出當時完全相同**。
+- 第 6 項的時間兩邊都是 `+00`：Supabase 的 session 預設 UTC，所以不像 `C7-7-5` 本機那樣以 +08 顯示。
+- **兩次快照都是演練專案的結果**：正式專案 10-06 上午跑過清單更新 `dftcz`，現在是 6 代、最新 10-06 03:28Z；這兩次都是 5 代、最新 10-02，不可能來自正式專案。
+- **界線**：`c77-restore-check.sql` 的雜湊依賴查詢開頭的 `SET`；Supabase 本來就是 UTC，所以 `SET` 這次有沒有貼上，無法從結果判斷（同 `C7-7-5` 2c 的說明）。
+
+### `RD-5` 的腳本：本機預演（10-06 15:10 前後，Claude）
+
+- 新增 [`rd-runtime-check.sh`](rd-runtime-check.sh)，在 step-3 同款的 python runner 容器內執行（repo 唯讀掛載）。讀入一次 `finpo_app` 的密碼，`uv sync --frozen` 後：(1) `cloud_db check --config deploy/cloud.toml`；(2) 以應用程式本身的 `Storage`（session 設定核對、TLS 檢查、`check_permissions`）在 READ ONLY 交易讀出持股的 revision 與列數，並印出 `current_user`、伺服器版本、`ssl_in_use`。全部唯讀。
+- **本機預演**：拋棄式 `postgres:17-alpine`，以 `cloud_db bootstrap-sql` 建出 schema，`finpo_app` 用本機測試密碼，持股改成 revision 5、2 列的假資料。
+  - **第一次失敗**：`cloud_db check` 通過，但讀持股報 `SQLSTATE 3F000`。成因：`deploy/cloud.toml` 沒有 schema，設定的預設值不是 `dashboard`；`cloud_db` 會以 `--schema` 換成 `dashboard`，腳本漏了這一步。已修正為同樣的 `replace(..., schema='dashboard')`。
+  - **修正後**：`{"runtime_permissions": "passed"}`；讀出 `{"username": "finpo_app", "server_version": "17.10", "ssl_in_use": false, "revision": "5", "rows": 2}`，與假資料相符。`ssl_in_use` 為 false 是因為本機以 `DB_SSLMODE=disable` 覆寫。
+- **界線**：本機沒有 pooler 與 TLS；密碼由 stdin 管線送入。腳本裡的管線接 `tee`，Python 失敗時腳本的結束碼仍是 0，要看輸出判斷。
