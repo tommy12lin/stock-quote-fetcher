@@ -2833,3 +2833,80 @@ SHA-256 全文：`f995e2b7b8d23165d7582dbb10a9614dea1340208e46ca11d896a67ba84833
 - **沒有讓服務接到還原後的資料庫實際運作**，只以 `cloud_db check` 和 runtime 身分的唯讀查詢驗證。
 - 這份 dump **只有這台筆電上一份**，沒有異地備份。往後的備份頻率依使用者 10-05 的決定，留到第一階段之後再定。
 - 匯出耗時是含輸入密碼的上界。
+
+## C7-7-6　前版映像回滾（2026-10-06 起）
+
+程序見計畫書 `C7-7` 項下「`C7-7-6` 前版映像回滾」。
+
+### 切換前的唯讀核對（10-06 約 02:15Z，Claude 執行）
+
+| 項目 | 結果 |
+|---|---|
+| 服務 | `stock-quote-00007-66j`，`latestRevision: true`，100% 流量，映像 `sha256:a216b906…`（`35743d47289f`） |
+| registry | 3 個版本：`40098bbc…`、`a216b906…`、`df4a49e8…`。回滾目標 `df4a49e8…`（`a1fb03ff680d`）仍在 |
+| `finpo-catalog-refresh` | 指向 `df4a49e8…` |
+| `describe` | YAML 全文存檔，作為切換後的比對基準 |
+
+照計畫部署新的 revision，**不**以 `update-traffic` 把流量切回仍用 `df4a49e8…` 的 `00004-4v6`：那樣會把流量固定在指定的 revision，`latestRevision` 的設定就變了，換回時還要多一步。
+
+### 第 1–3 步：切到 `a1fb03ff680d`
+
+**輪詢**：使用者重新整理 finpo 頁面（02:32:16Z）後，在 Console 執行下面的腳本。腳本只記錄時間、狀態碼與耗時，回應內容讀完即丟。
+
+```js
+(() => {
+  const log = window.__c776 = [];
+  let stop = false;
+  window.__c776stop = () => { stop = true; };
+  window.__c776sum = () => { /* 依狀態碼計數、耗時中位數與最大值、超過 3 秒與非 200 的請求 */ };
+  (async () => {
+    while (!stop) {
+      const t = new Date().toISOString(), t0 = performance.now();
+      let s;
+      try {
+        const r = await fetch('/api/portfolio', {cache: 'no-store', redirect: 'manual'});
+        s = r.type === 'opaqueredirect' ? 'redirect' : r.status;
+        await r.arrayBuffer();
+      } catch (e) { s = 'neterr:' + e.name; }
+      const ms = Math.round(performance.now() - t0);
+      log.push({t, s, ms});
+      await new Promise(f => setTimeout(f, Math.max(0, 1000 - ms)));
+    }
+  })();
+})();
+```
+
+**部署**：使用者以可攜版 gcloud 執行 `gcloud run deploy stock-quote --region=asia-northeast1 --image=…@sha256:df4a49e8267d9861fcc646e9b2e4f1cf949b132b242cf2eaa09d6ae55ba327cd`，只帶 `--image`。gcloud 的輸出沒有貼回，以下時間取自 `describe` 與日誌。
+
+**瀏覽器端的結果**（使用者貼回的摘要）：
+
+| 項目 | 值 |
+|---|---|
+| 期間 | 02:33:43.893Z – 02:38:04.427Z（260.5 秒） |
+| 請求數 | 135，**全部 200**；沒有轉址、沒有網路錯誤 |
+| 耗時 | 中位數 195 ms，最大 1,684 ms；沒有超過 3 秒的 |
+
+**伺服器端**（Claude 以 `gcloud logging read` 唯讀查詢 `run.googleapis.com/requests`，02:30–02:45Z，原始輸出存為 `output/c77/c776-rollback-req.tsv`，Git 忽略，SHA-256 `899512f4…`）：
+
+- 共 138 筆：頁面載入時的 `/api/session`、`/api/portfolio`、`/api/portfolio/valuation` 各 1 筆，加上輪詢的 `/api/portfolio` **135 筆，和瀏覽器端的數目相同**。全部 200。
+- **切換點**：
+
+  | 時間（Z） | revision | 狀態 | 伺服器端耗時 |
+  |---|---|---|---|
+  | 02:36:47.437 | `00007-66j` | 200 | 0.103 s |
+  | 02:36:48.446 | `00007-66j`（最後一筆） | 200 | 0.101 s |
+  | 02:36:49.480 | `00008-5f6`（第一筆） | 200 | 0.134 s |
+  | 02:36:51.477 | `00008-5f6` | 200 | 0.099 s |
+
+  前後兩個請求相隔 1.03 秒，中間沒有失敗。輪詢的 135 筆中，舊 revision 96 筆、新 revision 39 筆；頁面載入的 3 筆都在舊 revision。
+- **平台事件**：revision `00008-5f6` 建立於 02:36:36.787Z；新實例 02:36:44.05Z 啟動（`Reason: DEPLOYMENT_ROLLOUT`），02:36:47.28Z 啟動探針通過，**之後**流量才在 02:36:49 前後切過去。所以新 revision 的第一個請求不是冷啟動（伺服器端 0.134 秒，和前後相同）。
+- 伺服器端耗時：舊 revision 中位數 0.110 s、最大 0.162 s；新 revision 中位數 0.086 s、最大 0.134 s。瀏覽器端最大的 1,684 ms 不在伺服器端，差在 Worker 與網路，是哪一筆沒有對出來。
+
+**取樣間隔不是設計的 1 秒**：伺服器端相鄰兩筆的中位數是 2.00 秒，切換前後那幾筆則是 1 秒。推定是瀏覽器對背景分頁的計時器節流（腳本每次等 `1000 − 耗時` 毫秒），沒有核對。**所以這次能排除的是長於約 2 秒的中斷**；更短的中斷可能落在兩次取樣之間。
+
+**`describe` 比對**（切換前後的 YAML 全文 diff）：只有 `image`、新增的 `client.knative.dev/nonce`、`generation`（7 → 8）、`operation-id`、`resourceVersion`、三個 condition 的 `lastTransitionTime`、revision 名稱改變。env、secret、資源、timeout、service account 都相同。
+
+**不帶簽章的請求**：
+- `GET https://stock-quote-896096883650.asia-northeast1.run.app/api/session` → **401**，驗簽仍有效。
+- 第一次誤用了 `status.url` 的舊式網址（`stock-quote-nfmyvudecq-an.a.run.app`），得到 403。這是 Host 白名單擋下的，和 A8 記錄的已知行為相同（啟動日誌的 `Allowed hosts` 只有 `896096883650` 那個網址），**不能當作驗簽的證據**。
+- 兩次都沒有讀出回應內容（PowerShell 5.1 下 body 為空），只有狀態碼。
