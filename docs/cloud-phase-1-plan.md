@@ -1,6 +1,12 @@
 # 雲端部署第一階段執行計畫
 
-> **最新進度（2026-10-06 上午）。`C7-7-5` 完成，下一步為 `C7-7-6` 前版映像回滾；`C7-7-4` 仍在等信（期限 10-08 09:15 台北）**：
+> **最新進度（2026-10-06 10:30 台北）。`C7-7-4` 完成：預算通知送達已實測。`C7-7` 只剩 `C7-7-6` 前版映像回滾**：
+> - **通知信**：10-06 09:26（台北）收到，主旨 `1% of budget reached`，信內 `Budget Name` 為 `c77-notify-test`、Budget Amount $1.00。收件人經使用者確認是帳單帳戶唯一的 `billing.admin`。從 09:15 建立算起，延遲約 11 分鐘。**這補上了 `C1-8` 因為零花費而拿不到的證據**。
+> - **界線**：`finpo-monthly` 本身的 50%／100% 門檻沒有觸發過。它的通知對象依 C1 證據相同，推定也會寄出，沒有實測。
+> - **`c77-notify-test` 已於 10:28 刪除**，由使用者確認列表只剩 `finpo-monthly`，沒有截圖核對。
+> - `C7-7-6` 已做完切換前的唯讀核對（服務在 `00007-66j`、`df4a49e8…` 仍在 registry、`describe` 已存），切換本身還沒做。見 C7 證據「預算通知送達測試」節。
+>
+> **更早的進度（2026-10-06 上午）。`C7-7-5` 完成，下一步為 `C7-7-6` 前版映像回滾；~~`C7-7-4` 仍在等信（期限 10-08 09:15 台北）~~ 同日收到，見上一段**：
 > - **匯出**（使用者，01:40Z）：1,772,671 bytes，約 21 秒（含輸入密碼的上界），沒有錯誤。匯出前後的快照與 14 張表的雜湊都相同，期間資料沒有變動。
 > - **還原**（Claude，本機拋棄式 PG 17、刻意設為台北時區）：`pg_restore` 結束碼 0、沒有錯誤；**14 張表的列數與內容雜湊和正式資料庫完全相同**；RLS、policy、權限一致；`cloud_db check` 通過；runtime 讀出 revision 17、27 檔。預期中的 Supabase 角色 ACL 錯誤沒有出現。
 > - **界線**：還原到 Supabase 本身沒有演練；角色不在 dump 裡，要另建；dump 只有這台筆電上一份。見 C7 證據「`C7-7-5`」節。
@@ -249,7 +255,7 @@
 >
 > | 步驟 | 狀態 |
 > |---|---|
-> | `C1` 資源準備 | ✅ 完成（預算警示通知送達併入 `C7-7`） |
+> | `C1` 資源準備 | ✅ 完成（預算警示通知送達併入 `C7-7`；**10-06 補記：已由 `C7-7-4` 實測送達**，用的是臨時預算 `c77-notify-test`，`finpo-monthly` 本身的門檻沒有觸發過） |
 > | `C2` HTTP 層 | ✅ 完成 |
 > | `C3` 認證 | ✅ 程式完成；~~**雲端驗收欠 `C7-3`**，在該項通過前不得宣稱 C3 已完成~~ **10-03 補記：`C7-3` 已勾選，C3 的雲端驗收隨之完成**（`C7-3-4`、`C7-3-5`） |
 > | `C4` 工作生命週期 | ✅ 程式完成；~~**雲端驗收欠 `C7-5`**~~ **10-03 補記：`C7-5` 已勾選，C4 的雲端驗收隨之完成**。界線：租約到期回收的路徑在雲端未實測 |
@@ -259,7 +265,7 @@
 > | `C7-1` 前端部署 | ~~🟡~~ 10-01 已部署（`ca71f76e`），canary 退場，安全標頭生效；~~Access 下的 125 秒確認未做~~ **10-02 補記：✅ 完成（使用者決定勾選）**，Access 下的上限在 preview URL 上量得仍為 125 秒 |
 > | `C7-2` 逾時量測 | ✅ 完成；`C7-2` 其餘要求待 `C6` 部署後。**09-30 補記**：代理程式已在本機完成並通過 Node 測試，未部署；雲端的正向驗簽等項目隨 `C7-1` 部署時做。**10-01 補記**：已部署，正向驗簽、`Origin`／上傳標頭轉發、`run_worker_first` 已實測；~~524 轉換與三層逾時對齊未做，維持 🟡~~ **10-02 補記：✅ 完成（使用者決定勾選）**，524 轉成 504 `upstream_timeout`、三層逾時對齊已實測 |
 > | `C7-8` Worker 驗 Access JWT | ~~⬜~~ **✅ 10-01 完成（使用者決定勾選）**。09-30 新立，~~未排入順序~~ 10-01 排定在 `C7-1`／`C7-2` 首次部署之後、`C7-4` 之前；列為第一階段完成條件，含 `email` 核對。**10-01 下午補記**：已設計（Worker secret 白名單、jose、preview URL 反面測試），~~未實作~~；第 0 步已確認 Worker 收得到 JWT 標頭；第 3 步實作與 Node 測試完成，~~未部署~~；~~待 AUD~~ 第 1 步 AUD 已補上。**同日部署（`474e5c4f`），雲端正向與 preview URL 反面測試通過**，勾選待使用者決定 |
-> | `C7-7` ~~冷啟動~~ 營運驗收 | ~~✅ 提前完成（2.3–3.4 秒）~~ **10-05 補記：🟡 進行中**。09-23 的 2.3–3.4 秒來自探針服務，不是真實路徑，所以不算完成。拆成六項：`C7-7-1`–`C7-7-3` ✅；`C7-7-4` 🟡 等通知信（最多到 ~~10-07 16:56~~ 10-08 09:15 台北，10-06 重建）；`C7-7-5` ~~⬜~~ ✅（10-06）；`C7-7-6` ⬜ |
+> | `C7-7` ~~冷啟動~~ 營運驗收 | ~~✅ 提前完成（2.3–3.4 秒）~~ **10-05 補記：🟡 進行中**。09-23 的 2.3–3.4 秒來自探針服務，不是真實路徑，所以不算完成。拆成六項：`C7-7-1`–`C7-7-3` ✅；`C7-7-4` ~~🟡 等通知信~~（~~最多到 10-07 16:56~~ ~~10-08 09:15 台北，10-06 重建~~）✅（10-06，通知信 09:26 收到，臨時預算已刪除）；`C7-7-5` ~~⬜~~ ✅（10-06）；`C7-7-6` ⬜ |
 > | `C7-6` 外部來源驗收 | 🟡 **R1、R4 已完成；R2 已於 2026-09-29 執行**（11/11 抓價成功，台股 6 檔均為一般時段；MIS 逐秒對齊 0/6，價格正確性證據不足）。~~**R3、R5 未執行**~~ **R3、R5 已於 09-29 晚上執行**（R3 `dnxnv`：美股取得當日成交、價格證據不足，台股等於 09-29 官方收盤；R5 `h8cz4`：`partial` 收尾正確，`c` 3.967／2.947 秒／檔）。~~**`refresh_max_tickers` 待使用者決定；尚未收尾**。~~ **2026-09-30：取 27；清除已完成，Job 已刪除，~~`cloud.toml` 待推送~~ `cloud.toml` 已推送，`finpo-catalog-refresh` 已改指向新映像。量測與收尾完成。** ~~官方清單約於 09-30 17:10（台北）到期，到期前須請求外更新。~~ 清單已於 09-29 更新，09-30 以資料庫核對，到期時間為 10-06 22:35（台北）。詳見 [C7 證據](cloud-C7-evidence.md)。**10-03 補記：✅ 完成（使用者決定勾選）**，盤中價格正確性台股、美股都是證據不足，界線見 `C7-6` 項 |
 > | `C7-4` 功能驗收 | ✅ **10-02 完成（使用者決定勾選）**。清單全部執行，功能面沒有缺陷。A4b 的 F5 為 14 ms，超過 Free 的 10 ms，使用者決定接受。~~`refresh_max_tickers` 與~~訊息的說明不足仍待決，不擋本項。`refresh_max_tickers` 同日由使用者決定維持 27 |
 > | `C7-3` 入口驗證 | ✅ **10-03 完成（使用者決定勾選）**，`C7-3-1`–`C7-3-5` 都有證據 |
@@ -715,7 +721,7 @@ Dockerfile 三處 `company_ca` 掛載本來就是條件式（`if [ -f /run/secre
   - [x] `C1-5` 建立應用專用非管理角色。**不可使用 Supabase 預設的管理帳號**：`check_permissions()` 明確禁止 `rolsuper`／`rolcreatedb`／`rolcreaterole`（storage.py:122）。pooler 的角色名格式為 `[ROLE].[PROJECT-REF]`。實際角色為 `finpo_app`，`app` 與 `dashboard` 兩 schema 皆通過 `db-check --connection-only`。
   - [x] `C1-6` 依 `D1` 準備入口認證：建立 Google OAuth 2.0 Client、在 Cloudflare Zero Trust 設定 Google identity provider，並確認 Access 可涵蓋預定的前端網址（`workers.dev` 子網域是否適用，含 preview URL）。**注意主控台導覽已改版**：Zero Trust 併入 `dash.cloudflare.com`，`Login methods` 更名為 `Integrations → Identity providers`，`Access` 更名為 `Access controls`。team name、OAuth consent screen 的 App name 皆為**帳號層**設定，全帳號共用，不得以單一專案命名；Worker 名稱與 Access application 名才是專案層。
   - [x] `C1-7` 產生代理與後端共用的簽章秘密，存入 Secret Manager 與 Cloudflare 環境變數，並記錄輪替方式。須建立 `proxy-hmac-secret`（current）與 `proxy-hmac-secret-prev`（previous）**兩組**，使輪替不必變更 Cloud Run 部署設定；理由與輪替程序見 `docs/cloud-C1-evidence.md`。
-  - [x] `C1-8` 依 `D5` 在 GCP Billing 建立預算：金額 $10，警示門檻 $5（50%）與 $10（100%）。Cloudflare 與 Supabase 的 Free plan 不會產生帳單，無需另設。**預算警示只會通知，不會停止計費**，因此仍須於 `C7-7` 實際核對帳單。實際建立為 `finpo-monthly`，Scope 僅 `finpo-508709`，金額 **TWD 300**（帳戶幣別為 TWD，約當 $9.4，偏保守方向），門檻以 50%／100% 百分比表示且皆為 `Actual`；另**取消 Credits 的 `Promotions and others`**，否則試用金會抵銷成本使警示永不觸發，與 `D5`「異常偵測門檻」的用途不符。理由與未實測項見 `docs/cloud-C1-evidence.md`。
+  - [x] `C1-8` 依 `D5` 在 GCP Billing 建立預算：金額 $10，警示門檻 $5（50%）與 $10（100%）。Cloudflare 與 Supabase 的 Free plan 不會產生帳單，無需另設。**預算警示只會通知，不會停止計費**，因此仍須於 `C7-7` 實際核對帳單。實際建立為 `finpo-monthly`，Scope 僅 `finpo-508709`，金額 **TWD 300**（帳戶幣別為 TWD，約當 $9.4，偏保守方向），門檻以 50%／100% 百分比表示且皆為 `Actual`；另**取消 Credits 的 `Promotions and others`**，否則試用金會抵銷成本使警示永不觸發，與 `D5`「異常偵測門檻」的用途不符。理由與未實測項見 `docs/cloud-C1-evidence.md`。**2026-10-05／06 補記**（`C7-7-4`）：Scope 實際是 All projects，不是只有 `finpo-508709`；預算追蹤的是扣抵後的淨額。完成條件中的「可收到通知」已以臨時預算 `c77-notify-test`（TWD 1、門檻 1%）實測送達：10-06 09:26（台北）收到，收件人為唯一的 billing admin。`finpo-monthly` 本身的門檻沒有觸發過。見 C7 證據「預算通知送達測試」節。
   - [x] `C1-9` 依 `D6` 建立 GitHub Actions 的建置／部署身分：新增 deploy service account（與 `C1-3` 的 runtime SA 分開，不共用），授予 Artifact Registry 寫入與 Cloud Run 部署所需角色；建立 Workload Identity Pool 與 GitHub OIDC provider，attribute condition **必須**限定 `assertion.repository`，SA binding 以 `principalSet` 綁定同一 repository。**不得產生 service account 金鑰**。實際的 deploy SA 名為 `finpo-deploy`（非 `stock-quote-deploy`，與 `finpo-runtime` 命名一致）；`Service Account User` 綁在 runtime SA 資源層而非專案層；以 run `35196067829` 實測推送成功，全程無金鑰。**三項留待條件見 `docs/cloud-C1-evidence.md` 的 `C1-9`**：attribute condition 未做反面測試、provider 未限定 ref、action 釘在可變 tag。
 - **完成條件**：以該專用角色從本機連上 Supabase，`check_permissions()` 通過；以 Google 帳號可通過 Access 登入測試頁；預算警示已建立且可收到通知；GitHub Actions 能以 WIF 取得 GCP 憑證並成功推送一個測試映像到 Artifact Registry，全程無 service account 金鑰。
 - **證據**：連線與權限查詢輸出（不含密碼與完整 DSN）。
