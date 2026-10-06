@@ -2643,6 +2643,10 @@ Billing → Budgets & alerts 的列表：
 - **設定是否和建議一致，還沒有截圖核對**。
 - `finpo-monthly` 沒有動。
 
+**10-06 補記：收件人與第一次查看**
+- 以 `gcloud billing accounts get-iam-policy` 唯讀查得，帳單帳戶的 IAM 只有一條 binding：`roles/billing.admin` 一位成員，是使用者本人的個人 Gmail（repo 為 public，不寫出地址）；沒有 `billing.user`。所以「billing admins and users」實際只寄給這一個信箱。`C1-8` 寫的「唯一 Billing Administrator 為專案擁有者本人」得到佐證。只查了帳單帳戶這一層，沒有查上層的機構或資料夾。
+- 使用者 10-06 回報**沒有收到**（回報的確切時間沒有記錄）。仍在 48 小時的等待期內，尚不能下結論。
+
 **待記錄**：
 - 通知信的寄件時間與主旨；
 - 從建立到送達的延遲；
