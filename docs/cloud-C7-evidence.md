@@ -2910,3 +2910,66 @@ SHA-256 全文：`f995e2b7b8d23165d7582dbb10a9614dea1340208e46ca11d896a67ba84833
 - `GET https://stock-quote-896096883650.asia-northeast1.run.app/api/session` → **401**，驗簽仍有效。
 - 第一次誤用了 `status.url` 的舊式網址（`stock-quote-nfmyvudecq-an.a.run.app`），得到 403。這是 Host 白名單擋下的，和 A8 記錄的已知行為相同（啟動日誌的 `Allowed hosts` 只有 `896096883650` 那個網址），**不能當作驗簽的證據**。
 - 兩次都沒有讀出回應內容（PowerShell 5.1 下 body 為空），只有狀態碼。
+
+**同日補記：瀏覽器端的兩筆慢請求**。使用者貼回 `__c776` 中超過 800 ms 的兩筆，對照伺服器端日誌：
+
+| 瀏覽器端開始（Z） | 瀏覽器端耗時 | 伺服器端（`00007-66j`） | 推得到達 Cloud Run 之前的時間 |
+|---|---|---|---|
+| 02:33:43.893（第一筆） | 1,684 ms | 02:33:45.425，0.121 s | 約 1.5 s |
+| 02:34:39.416 | 1,022 ms | 02:34:40.330，0.085 s | 約 0.9 s |
+
+- **兩筆都在切換之前**（切換在 02:36:49），和回滾無關。
+- 伺服器端都在 0.13 秒以內，多出來的時間花在到達 Cloud Run 之前（Worker、Access 或網路）。哪一段沒有拆開，原因沒有查。第一筆可能和 Worker 的冷啟動或取 JWKS 有關，這只是推測。
+- 對照時假設瀏覽器與伺服器的時鐘一致，沒有核對時差；兩邊的對應是靠時間相近和前後順序。
+
+### 第 4 步：在舊版上操作頁面（10-06，使用者操作）
+
+**請求日誌**（`00008-5f6`，Claude 唯讀查詢）：
+
+| 時間（Z） | 請求 | 狀態 | 伺服器端耗時 |
+|---|---|---|---|
+| 02:43:09.216 | `GET /api/session` | 200 | 0.005 s |
+| 02:43:09.320 | `GET /api/portfolio` | 200 | 0.091 s |
+| 02:43:09.508 | `GET /api/portfolio/valuation` | 200 | **3.388 s** |
+| 02:43:21.912 | `POST /api/portfolio/refresh` | 200 | **108.231 s** |
+| 02:45:10.279 | `GET /api/portfolio/valuation` | 200 | 0.665 s |
+
+- 02:38:10Z 之後沒有任何平台日誌（沒有 `Starting new instance`），所以這段期間沒有啟動新實例；02:43:09 的估值 3.4 秒不是冷啟動。為什麼比 02:32 那次（1.16 秒）慢，沒有查。
+- **更新 108.2 秒**，在 110 秒的 deadline 之內，落在 `C7-7-2` 的 90.5–110.3 秒範圍內，同樣超過 105 秒，餘裕不到 2 秒。
+- **頁面訊息**（使用者貼回）：「降級估值 · 請參閱逐股品質」「已完成：27/27 檔有可用報價」。沒有被截短，所以走的是一般路徑；舊版與新版的訊息只在截短時不同，**舊版行為只觀察到一般路徑**（依計畫，不刻意製造截短）。「降級估值」推定是美股休市、報價不是當日的緣故，沒有核對逐股品質。
+
+**更新途中的連線數**（使用者在 SQL Editor 執行 [`c77-capacity.sql`](c77-capacity.sql) 查詢 4；程序要求在更新開始後約 20–60 秒內執行，使用者沒有回報確切的執行時間）：
+
+| 角色 | 應用程式 | 類型 | 狀態 | 數量 |
+|---|---|---|---|---|
+| — | — | archiver、autovacuum launcher、background writer、checkpointer、walwriter | — | 各 1，共 5 |
+| `authenticator` | PostgREST 14.5 | client backend | idle | 1 |
+| **`finpo_app`** | **Supavisor** | client backend | **idle** | **1** |
+| **`pgbouncer`** | **Supavisor (auth_query)** | client backend | idle | **1** |
+| `postgres` | pg_net 0.20.4 | pg_net worker | idle | 1 |
+| `postgres` | supabase/dashboard-query-editor | client backend | active | 1（這次查詢本身） |
+| `supabase_admin` | — | client backend | idle | 1 |
+| `supabase_admin` | — | logical replication launcher | — | 1 |
+| `supabase_admin` | pg_cron scheduler | pg_cron launcher | — | 1 |
+| `supabase_admin` | postgres_exporter | client backend | idle | 1 |
+| **上限** | `max_connections` = 60，`superuser_reserved_connections` = 3 | | | 目前共 **14** |
+
+- **和閒置時（12 條）相比，多了 `finpo_app` 1 條與 `pgbouncer` 1 條**，其餘完全相同。
+- `finpo_app` 1 條、`idle`：和讀程式的推論一致，`run_job` 在整個批次迴圈期間握著一條連線，大部分時間在等外部行情來源，所以是 idle。每批結束時 `put_job()` 另開的第二條很短，這次沒有碰到，**「最多同時 2 條」仍未實測**。
+- `pgbouncer`（`Supavisor (auth_query)`）是 Supavisor 用來查用戶端密碼的連線，閒置時不存在；推定是因為有用戶端連進來才出現，沒有查證。
+- 因為執行時間沒有記錄，判定這筆讀數是在「更新途中」取得的，依據只有兩點：程序的順序，以及閒置時沒有 `finpo_app` 連線（`C7-7-3`），而這段期間其他請求都在 02:43:13 前結束。這是推論。
+- 這次只有一個使用者、一個更新，遠低於 Pool Size 15。並行的上限（約 11–12 條）**仍是推論，未實測**。
+
+**Supabase `Observability → Connections` 頁面**（使用者截圖，第一次看這個頁面，截圖時間沒有記錄）：
+
+| 項目 | 值 |
+|---|---|
+| Connections | 8 / 60 |
+| Active queries | 0 |
+| Idle in transaction | 0 |
+| Blocked queries | 0 |
+| Sessions | 「No active sessions」，篩選為 anon、authenticated、postgres 三個角色 |
+
+- Active queries 為 0，推定是在更新結束後截的。
+- **8 和查詢 4 的 14 條對不上**，這個頁面的計算口徑（例如是否排除背景程序）沒有查，兩個讀數的時間也不同，不拿來互相比對。
+- 頁面沒有顯示連線數隨時間的變化（截圖範圍內），所以無法從這裡補上更新途中的時間序列。
