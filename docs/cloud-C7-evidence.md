@@ -3139,3 +3139,52 @@ SHA-256 全文：`f995e2b7b8d23165d7582dbb10a9614dea1340208e46ca11d896a67ba84833
 - **完整還原演練多久做一次，沒有決定**。只有 10-06 那一次，而且是還原到本機，不是還原到 Supabase（見「`C7-7-5`」節的界線）。
 - 持股異動後的補匯出靠使用者記得做，沒有任何機制提醒。
 - 異地的位置與保管方式由使用者自理，repo 裡沒有紀錄，Claude 也核對不到。
+
+## 第一階段之後：還原到 Supabase 演練（2026-10-06 起）
+
+程序見計畫書第 8 節。使用者 10-06 13:00 決定三個待決事項都照預設：不做 `RD-6`，演練專案用完刪除，演練頻率之後再定。
+
+### `RD-0` 前置核對（10-06 13:05 前後，使用者執行，Claude 判讀）
+
+**(a) 正式專案的 Database → Backups 頁面**（使用者截圖）：
+- Scheduled backups 分頁寫明「Free Plan does not include project backups」，並建議升級 Pro 取得最多 7 天的排程備份。
+- **這是主控台上的直接證據，和官方文件查證的結論一致：正式專案沒有任何 Supabase 端的備份**。
+- 同頁另有 Point in time、Restore to new project（BETA）兩個分頁，沒有點開。
+
+**(b) Projects 列表**（使用者截圖）：
+- 只有一個專案 `finpo`，`ap-northeast-1`，標示 `NANO`。
+- 所以 Free 的 2 個 active 專案上限還有 1 個空位，可以開演練專案。
+- **界線**：截圖只涵蓋這個 organization 的列表頁，Status 篩選看起來沒有套用，但沒有點開核對；這個上限是不是跨 organization 計算，沒有查證。
+
+**(c) `finpo_app` 的屬性**（使用者在正式專案 SQL Editor 跑 [`rd-role-attrs.sql`](rd-role-attrs.sql)，貼回 JSON，8 列都有）：
+
+| n | 項目 | 正式專案的值 |
+|---|---|---|
+| 1 | `role` | `LOGIN`、`INHERIT`，superuser／createrole／createdb／replication／bypassrls 皆 false，`rolconnlimit` -1，`rolvaliduntil` null，`rolconfig` null |
+| 2 | `member_of` | null（不是任何角色的成員） |
+| 3 | `members` | `postgres admin=true inherit=false set=false` |
+| 4 | CONNECT／CREATE／TEMP | `true,false,true` |
+| 5 | `datacl` | `{=Tc/postgres,postgres=CTc/postgres,supabase_etl_admin=C/postgres,supabase_storage_admin=C/postgres,dashboard_user=CTc/postgres,finpo_app=c/postgres}` |
+| 6 | `role_settings` | null |
+| 7 | `public` schema 的 USAGE／CREATE | `true,false` |
+| 8 | `server_version` | 17.6 |
+
+判讀：
+- **C1 證據記的屬性都成立**，而且原本沒有紀錄的部分現在有了：`INHERIT`（預設值）、沒有連線上限、沒有角色層級的參數、沒有加入任何角色。
+- **第 3 列顯示 `finpo_app` 是由 `postgres` 建立的**：PostgreSQL 16 起，沒有 superuser 的 CREATEROLE 角色建立新角色時，會自動取得對它的 ADMIN（`inherit=false set=false`）。本機預演時用假角色 `admin_like` 重現過同樣的形態。這是由行為推得，不是查到建立紀錄。
+- 第 4 列的 TEMP 來自 PUBLIC（`=Tc`）；CONNECT 有 PUBLIC 和明確授權（`finpo_app=c/postgres`）兩個來源。
+- 第 5 列裡的 `supabase_etl_admin`、`supabase_storage_admin`、`dashboard_user` 是 Supabase 自己的角色，演練專案未必相同，比對時只看 PUBLIC、`postgres` 與 `finpo_app` 三筆。
+- 據此寫出 `RD-2` 用的 [`rd-create-role.sql`](rd-create-role.sql)：先檢查 `finpo_app` 不存在（誤貼到正式專案會直接中止），再以上述屬性建立角色，並明確授權 CONNECT。**尚未執行**。
+
+### `RD-2` 的 SQL：本機預演（10-06 13:15 前後，Claude）
+
+拋棄式 `postgres:17-alpine`（17.10）。為了模擬 Supabase 的 `postgres`（有 CREATEROLE、不是 superuser），另建 `sim_admin`（`CREATEROLE LOGIN`，對 database 有 `CREATE, CONNECT WITH GRANT OPTION`），以它用 `psql -v ON_ERROR_STOP=1` 執行 `rd-create-role.sql`，密碼換成本機測試值。
+
+| 檢查 | 結果 |
+|---|---|
+| 第一次執行（`finpo_app` 不存在） | `DO`、`CREATE ROLE`、`GRANT`，結束碼 0 |
+| 之後跑 `rd-role-attrs.sql` | 第 1、2、4、6、7 列**和正式專案逐字相同**。第 3 列為 `sim_admin admin=true inherit=false set=false`，形態和正式專案的 `postgres` 相同。第 5 列的 `finpo_app` 為 `c/sim_admin`，正式專案是 `c/postgres` |
+| 第二次執行（`finpo_app` 已存在） | 第一段 `RAISE` 中止，`CREATE ROLE` 與 `GRANT` 都沒有執行，結束碼 3 |
+
+- 第 5 列授權者的差異，推定是因為本機的 `sim_admin` 不是 database 擁有者；Supabase 上 `postgres` 是擁有者，授權者應為 `postgres`。這是推論，`RD-2` 執行後以同一份查詢核對。
+- **界線**：防誤貼的中止只在 `psql` 的 `ON_ERROR_STOP` 下驗證過。SQL Editor 遇到錯誤時，後面的語句是否也不執行，沒有在 Supabase 上驗證。所以仍要求只在演練專案執行，不能依賴這道檢查。

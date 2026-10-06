@@ -1,7 +1,13 @@
 # 雲端部署第一階段執行計畫
 
-> **最新進度（2026-10-06 11:55 台北）。Supabase Free 不含自動備份已由官方文件查證；還原到 Supabase 的演練計畫已起草（第 8 節），尚未執行**：
-> - **官方文件**（Backups、Pricing、Restore to a new project）都寫明 Free 沒有自動備份，也不能用「還原到新專案」；官方建議 Free 自己定期匯出並保留異地備份。所以我們手上那兩份 dump 就是全部的備份。**主控台的 Backups 頁面還沒截圖核對**，排在演練的 `RD-0`。見 C7 證據「Supabase Free 的備份：官方文件查證」小節。
+> **最新進度（2026-10-06 13:20 台北）。還原演練 `RD-0` 完成，下一步 `RD-1` 建立演練專案（使用者）**：
+> - **主控台截圖證實正式專案沒有任何 Supabase 端的備份**：Backups 頁面寫著「Free Plan does not include project backups」。官方文件與主控台兩方面的證據都有了。
+> - **專案列表只有 `finpo` 一個**，Free 的 2 個 active 專案上限還有 1 個空位。
+> - **`finpo_app` 的完整屬性已從正式專案讀出**：C1 記的屬性都成立；另外確認了 `INHERIT`、沒有連線上限、沒有角色參數、不屬於任何角色，而且是由 `postgres` 建立的（PostgreSQL 16 起建立者自動取得 ADMIN）。據此寫出 `RD-2` 的 [`rd-create-role.sql`](rd-create-role.sql)，本機預演時除了授權者名稱外，屬性和正式專案相同；角色已存在時會中止。
+> - 見 C7 證據「第一階段之後：還原到 Supabase 演練」節。
+>
+> **更早的進度（2026-10-06 11:55 台北）。Supabase Free 不含自動備份已由官方文件查證；還原到 Supabase 的演練計畫已起草（第 8 節），尚未執行**：
+> - **官方文件**（Backups、Pricing、Restore to a new project）都寫明 Free 沒有自動備份，也不能用「還原到新專案」；官方建議 Free 自己定期匯出並保留異地備份。所以我們手上那兩份 dump 就是全部的備份。**主控台的 Backups 頁面還沒截圖核對**，排在演練的 `RD-0`（同日 13:05 已截圖核對，見最上面一段）。見 C7 證據「Supabase Free 的備份：官方文件查證」小節。
 > - **演練計畫**：另開一個 Supabase Free 專案，用 10-06 的 dump 還原，比對 14 張表的雜湊，再以 `finpo_app` 經 pooler 跑 `cloud_db check`。不碰正式環境。順便補上 repo 裡缺的 `finpo_app` 建角色 SQL。
 > - **下一步**：~~使用者決定第 8 節的三個待決事項，然後從 `RD-0` 開始。~~ 13:00 使用者決定三項都照預設（`RD-6` 不做、演練專案用完刪除、頻率之後再定）。**`RD-0` 待使用者執行**：(a) Backups 頁面截圖、(b) 專案列表截圖、(c) 在正式專案跑 [`rd-role-attrs.sql`](rd-role-attrs.sql)（已在本機預演）。
 >
