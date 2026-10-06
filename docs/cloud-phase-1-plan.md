@@ -1,9 +1,14 @@
 # 雲端部署第一階段執行計畫
 
-> **最新進度（2026-10-06 11:44 台北）。備份頻率已決定（使用者）**：
+> **最新進度（2026-10-06 11:55 台北）。Supabase Free 不含自動備份已由官方文件查證；還原到 Supabase 的演練計畫已起草（第 8 節），尚未執行**：
+> - **官方文件**（Backups、Pricing、Restore to a new project）都寫明 Free 沒有自動備份，也不能用「還原到新專案」；官方建議 Free 自己定期匯出並保留異地備份。所以我們手上那兩份 dump 就是全部的備份。**主控台的 Backups 頁面還沒截圖核對**，排在演練的 `RD-0`。見 C7 證據「Supabase Free 的備份：官方文件查證」小節。
+> - **演練計畫**：另開一個 Supabase Free 專案，用 10-06 的 dump 還原，比對 14 張表的雜湊，再以 `finpo_app` 經 pooler 跑 `cloud_db check`。不碰正式環境。順便補上 repo 裡缺的 `finpo_app` 建角色 SQL。
+> - **下一步**：使用者決定第 8 節的三個待決事項，然後從 `RD-0` 開始。
+>
+> **更早的進度（2026-10-06 11:44 台北）。備份頻率已決定（使用者）**：
 > - **每週一次，在清單更新跑完後接著匯出；持股有異動時另外補一次。筆電之外再放一份到使用者自己的位置，兩邊各留最近 4 份。** 匯出由使用者執行，Claude 以 `pg_restore --list` 與 SHA-256 核對，這只證明檔案讀得出來，不是還原演練。
 > - `C7-7-5` 的 dump 已複製到 `output/backups/`，作為輪替的第一份，雜湊與原檔相同；~~**還沒有複製到異地**~~ 同日 11:48 前使用者回報已複製到異地（Claude 核對不到）。
-> - **界線**：完整還原演練多久做一次沒有決定；持股異動後的補匯出沒有任何提醒機制；Supabase Free「不含自動備份」是評估時期查到的資料，沒有在主控台核對過。
+> - **界線**：完整還原演練多久做一次沒有決定；持股異動後的補匯出沒有任何提醒機制；Supabase Free「不含自動備份」是評估時期查到的資料，沒有在主控台核對過（同日 11:50 已由官方文件查證，主控台仍未核對，見最上面一段）。
 > - 下一次清單更新（10-13 11:28 台北前）跑完之後接著匯出，`CLAUDE.md` 的提醒已一併補上。程序、範本指令與紀錄表見 C7 證據「第一階段之後：資料庫備份」節。
 >
 > **更早的進度（2026-10-06 11:32 台北）。第一階段完成後的營運：Job 已改指向現用映像，清單已更新，下一次期限 10-13 11:28（台北）**：
@@ -1431,7 +1436,7 @@ flowchart LR
 | 亞洲區出口流量與映像儲存費用 | ~~未量測，可能產生小額費用；Supabase 在 AWS 上，Cloud Run 連線屬對外出口~~ **2026-10-06 補記：已量測**（`C7-7-4`，Billing 報表 09-01 至 10-05）。Cloud Run 對外 0.02 GiB，淨額 TWD 0.08；映像儲存 283 MB，在 0.5 GB 內，淨額 0。**另有不在預期內的 Artifact Registry egress 0.22 GiB（TWD 0.51），全部發生在 9 月，原因未查**。兩個月合計淨額約 TWD 0.59，見 `D5` 的 10-06 補記 | ~~`C7-7` 後檢視首月帳單~~ Artifact Registry egress 的原因：若 10 月之後再出現才需要查 |
 | 預算只看扣抵後的淨額 | **新增（2026-10-06，`C7-7-4` 發現）**：`finpo-monthly` 顯示的是淨額，免費額度內的異常用量不會計入，要等超出免費額度才開始累計。`C1-8` 推定看的是毛額，不成立。通知送達已用臨時預算實測 | 不需解決；警示只是延後，不會失效（推論） |
 | 官方清單每週一代，`prune` 從未執行 | **新增（2026-10-06，`C7-7-3` 發現）**：每代約 5.15 MB。照 `C5-6` 每週 `prune` 會穩定在約 25–30 MB；完全不清，一年約 270 MB，超過 Free 上限的一半。最早的資料要到 10-23 之後才符合清理條件 | 第一階段之後的營運事項；最晚在容量接近上限前開始定期 `prune` |
-| 資料庫備份 | **新增（2026-10-06，`C7-7-5`）**：匯出與還原到本機已演練，14 張表內容雜湊相同；但 dump 只有筆電上一份，還原到 Supabase 本身沒有演練，角色要另建 | ~~備份頻率由使用者 10-05 決定留到第一階段之後~~ **10-06 補記**：已決定，每週隨清單更新匯出、持股異動後補一次，筆電與異地各留 4 份（C7 證據「第一階段之後：資料庫備份」節）。完整還原演練的頻率仍未定 |
+| 資料庫備份 | **新增（2026-10-06，`C7-7-5`）**：匯出與還原到本機已演練，14 張表內容雜湊相同；但 dump 只有筆電上一份，還原到 Supabase 本身沒有演練，角色要另建。**10-06 補記**：還原到 Supabase 的演練已起草為第 8 節，尚未執行 | ~~備份頻率由使用者 10-05 決定留到第一階段之後~~ **10-06 補記**：已決定，每週隨清單更新匯出、持股異動後補一次，筆電與異地各留 4 份（C7 證據「第一階段之後：資料庫備份」節）。完整還原演練的頻率仍未定 |
 
 ## 7. 與評估文件的對照
 
@@ -1444,3 +1449,55 @@ flowchart LR
 | C6、C7 | 第 6 節 B、C |
 | D4、D5、C7-7 | 第 5 節成本評估、第 8 節「單人使用是否能完全免費」 |
 | D6 | 本文件新增；評估文件假設本機建置，未涵蓋 CI/CD 管道 |
+
+## 8. 第一階段之後：還原到 Supabase 演練（計畫，2026-10-06 起草）
+
+**本節是計畫，尚未執行任何一項**。編號用 `RD-1` 起，避免和 `C7-6` 的 R1–R5 混淆。結果將記在 C7 證據「第一階段之後：資料庫備份」節之後新開的一節。
+
+### 為什麼要做
+
+`C7-7-5` 只證明了 dump 能還原到**本機**的 superuser PostgreSQL。真正出事時，還原目標會是一個新的 Supabase 專案，兩者有三個差異沒有被考驗過：
+
+1. **Supabase 的 `postgres` 不是真正的 superuser**。建 schema、改擁有者、啟用 RLS、建 policy、授權給 `finpo_app`，在 Supabase 上是否都成功，沒有實測。
+2. **`finpo_app` 怎麼建的，repo 裡沒有原文**。C1 證據只記了屬性（`LOGIN`、`NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS`，database 層 `CONNECT`），`NOINHERIT`、連線上限、角色層級的參數有沒有設都不知道。`bootstrap-sql` 不建角色，dump 裡也沒有角色。
+3. **經 session pooler 以 `finpo_app.<project-ref>` 登入新專案**，以及 `verify-full` 加 `deploy/supabase-ca.crt` 對新專案是否同樣成立，沒有實測。
+
+另外，Supabase 官方的還原程序是用 Supabase CLI 匯出整個資料庫再以 `psql` 還原（見 C7 證據「Supabase Free 的備份：官方文件查證」小節），本專案的 `pg_dump -Fc -n dashboard -n app` 不是官方程序，要靠演練確認它行得通。Free 也不能用「Restore to a new project」，出事時只能靠自己的 dump。
+
+### 範圍
+
+- **不碰正式環境**：不改 Cloud Run 服務與 `finpo-catalog-refresh` 的設定，不改 Secret Manager 的 `db-password`，不部署 Worker，不在正式資料庫上執行任何寫入。正式資料庫最多只跑唯讀 `SELECT`（`RD-0` 讀角色屬性）。
+- **還原目標**：另開一個 Supabase Free 專案（暫名 `finpo-restore-drill`），區域 `ap-northeast-1`，與正式專案相同（`D4`）。演練完刪除。
+- **還原來源**：`output/backups/finpo-20261006-0940.dump`。用這一份是因為正式資料庫在匯出當時的逐表列數與雜湊已有紀錄（C7 證據 `C7-7-5` 的 2a），可以直接比對；也順便證明輪替中的備份檔本身能用。
+- **秘密**：凡是要輸入密碼的指令都由使用者執行，Claude 只寫指令、讀結果。演練專案的 `postgres` 密碼與 `finpo_app` 密碼由使用者產生並自行保管，不寫進 repo、不貼進對話。演練專案的 project ref 與 pooler host 也不寫進 repo。
+
+### 程序
+
+| 項目 | 內容 | 執行者 | 改動正式環境 |
+|---|---|---|---|
+| `RD-0` 前置核對 | (a) 正式專案主控台的 Database → Backups 頁面截圖，核對 Free 確實沒有備份（補上官方文件之外的主控台證據）。(b) Organization 的專案列表截圖：Free 最多 2 個 active 專案，確認還有空位。(c) 在**正式**專案 SQL Editor 跑 Claude 寫的唯讀查詢，讀出 `finpo_app` 的完整屬性（`pg_roles` 中密碼以外的欄位、`rolconfig`、角色成員關係、database 層權限），作為 `RD-2` 的對照 | 使用者 | 不會（只讀） |
+| `RD-1` 建立演練專案 | 在同一個 organization 建 `finpo-restore-drill`，區域 `ap-northeast-1`，截圖核對。SQL Editor 跑 `SELECT version();`，記下主版本。`pg_restore` 用 `postgres:17-alpine`（17.10）；新專案若是更新的主版本，理論上也能還原舊版 dump，但要照實記錄 | 使用者 | 不會 |
+| `RD-2` 建立 `finpo_app` | 在演練專案的 SQL Editor 執行 Claude 寫的建角色 SQL（屬性照 C1 證據，並以 `RD-0`(c) 的結果補齊），密碼由使用者填入。之後再跑一次 `RD-0`(c) 的查詢，**逐欄比對兩邊的角色屬性**。建角色的 SQL（不含密碼）提交進 repo，補上 repo 裡缺的那份原文 | 使用者執行，Claude 寫 SQL 與比對 | 不會 |
+| `RD-3` 還原 | 使用者在 PowerShell 以 `postgres:17-alpine` 容器執行 `pg_restore --verbose`，經演練專案的 session pooler、以 `postgres` 連線，`sslmode=verify-full`，`sslrootcert` 用 `deploy/supabase-ca.crt`。**不加 `--exit-on-error`**，讓所有錯誤都留下來，錯誤全部照實記錄。記錄耗時。若要重來，先在演練專案 `DROP SCHEMA dashboard, app CASCADE`，**只在演練專案執行** | 使用者 | 不會 |
+| `RD-4` 內容比對 | 在演練專案 SQL Editor 跑 [`c77-restore-check.sql`](c77-restore-check.sql) 與 [`c6-db-snapshot.sql`](c6-db-snapshot.sql)，Claude 逐項比對 `C7-7-5` 2a 的結果：14 張表列數與雜湊、RLS、policy、`finpo_app` 的表權限、schema ACL、migration checksum | 使用者執行，Claude 比對 | 不會 |
+| `RD-5` runtime 驗證 | 使用者以 runner 容器（同 `C7-7-5` 第 4 步，`deploy/cloud.toml` 加環境變數覆寫，改連演練專案的 session pooler、`DB_USER=finpo_app.<project-ref>`）執行 `cloud_db check`，並以 runtime 身分讀出持股的 revision 與檔數（預期 revision 17、27 檔）。指令由 Claude 在執行前寫好 | 使用者 | 不會 |
+| `RD-6` 寫入路徑（**待使用者決定是否做**） | 見下方待決事項 1 | — | 不會 |
+| `RD-7` 收尾 | 使用者刪除演練專案，截圖核對專案列表只剩正式專案。記錄從 `RD-1` 建專案到 `RD-5` 通過的總耗時，作為「出事時多久能回到可用狀態」的第一個實測值（不含讓 Cloud Run 改連新專案的時間） | 使用者 | 不會 |
+
+### 完成條件
+
+- `RD-3` 的錯誤全部記錄並逐一解釋；`RD-4` 的 14 張表列數與雜湊和 2a 完全相同；`RD-5` 的 `cloud_db check` 通過、讀出的持股和正式相同。
+- 任何一項不成立，都照實記錄成因與影響，不視為演練通過。
+- 建角色的 SQL 進 repo，並寫一段「真正出事時的還原程序」，包含本次演練沒有做到的那一步：讓 Cloud Run 服務與 Job 改連新專案（`DB_HOST`、`DB_USER` 改值、`db-password` 新增版本）。**那一步這次不實測**，要明寫為未實測。
+
+### 已知界線（演練前就知道的）
+
+- **不會讓 Cloud Run 實際接到演練專案**，所以「從 GCP 出口連新專案」與「改設定後服務正常」都不會被證明。
+- 兩個專案在同一個 organization、同一個區域。換區域或換帳號的還原不在範圍內。
+- 只會用 10-06 這一份 dump；之後的 dump 能不能還原，仍只靠每週的 `pg_restore --list` 核對（只證明讀得出來）。
+
+### 待使用者決定（預設寫在括號內）
+
+1. **要不要做 `RD-6` 寫入路徑**（預設：不做）。`RD-5` 只讀不寫；寫入是否被 RLS 與權限放行，`cloud_db check` 只從權限表推論，沒有實際寫一筆。可以選的做法：(a) 不做；(b) 本機以 runner 容器啟動 `stock-web` 接演練專案，按一次「更新報價」，寫入 cycle、報價、估值（從公司網路抓價）；(c) 用正式映像建一個臨時 Cloud Run Job，連演練專案跑 `cloud_db check` 或清單更新，順便證明 GCP 出口連得到新專案，但要新增一個 secret 與臨時 Job，演練後刪除。
+2. **演練完怎麼處理演練專案**（預設：刪除）。保留會佔掉 Free 的第 2 個 active 專案名額，閒置一週也會被暫停。
+3. **完整還原演練之後多久做一次**（預設：本次做完再決定）。

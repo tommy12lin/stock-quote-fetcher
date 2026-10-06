@@ -3092,7 +3092,7 @@ SHA-256 全文：`f995e2b7b8d23165d7582dbb10a9614dea1340208e46ca11d896a67ba84833
 | 保留 | **筆電與異地各留最近 4 份** | 最近 8 份；全部保留 |
 
 做決定時依據的事實：
-- Supabase Free plan「不含自動備份」，出自評估文件第 163 列。**這是評估時期查到的資料，沒有在主控台核對過**。
+- Supabase Free plan「不含自動備份」，出自評估文件第 163 列。**這是評估時期查到的資料，沒有在主控台核對過**。**同日 11:50 補記：官方文件已查證**，見下方「Supabase Free 的備份：官方文件查證」小節；主控台仍未核對。
 - 真正補不回來的是持股：清單每週重抓，報價可以重新抓價，只有過去某一刻的價格紀錄補不回來。
 - 10-05 `C7-7-3` 到 10-06 `C7-7-5` 之間，14 張表的列數完全沒變，寫入量很低。
 - 使用者本來每週就要手動執行一次清單更新，匯出只多一行指令，約 21 秒（含輸入密碼的上界，`C7-7-5` 實測）。
@@ -3118,6 +3118,21 @@ SHA-256 全文：`f995e2b7b8d23165d7582dbb10a9614dea1340208e46ca11d896a67ba84833
 | 檔名 | 時機 | 大小（bytes） | SHA-256 | TOC／`TABLE DATA` | 異地 |
 |---|---|---|---|---|---|
 | `finpo-20261006-0940.dump` | `C7-7-5` 的匯出（10-06 01:40Z），10-06 03:44Z 由 Claude 從 `output/c77/` 複製過來，雜湊與原檔相同 | 1,772,671 | `f995e2b7…a848334e` | 124／14（`C7-7-5` 讀出） | ~~未複製~~ 已複製（使用者 10-06 11:48 台北前回報；Claude 核對不到） |
+
+### Supabase Free 的備份：官方文件查證（2026-10-06 11:50 台北，Claude）
+
+以 WebFetch 讀官方頁面，頁面上沒有最後更新日期：
+
+| 來源 | 內容 |
+|---|---|
+| [Database Backups](https://supabase.com/docs/guides/platform/backups) | 每日自動備份只涵蓋 Pro、Team、Enterprise（保留 7／14／30 天）；**Free 建議用 CLI 的 `db dump` 定期自行匯出，並保留異地備份**。另記載備份不含 Storage API 存的物件，也不含自訂角色的密碼 |
+| [Pricing](https://supabase.com/pricing) | Automatic backups：Free 為「Not included」，Pro 為 7 days；PITR：Free 不提供；Free 閒置 1 週會暫停；**Free 最多 2 個 active 專案** |
+| [Restore to a new project](https://supabase.com/docs/guides/platform/clone-project) | 只開放給付費方案、而且要開啟 physical backups；**Free 不能用** |
+| [Backup and restore using the CLI](https://supabase.com/docs/guides/platform/migrating-within-supabase/backup-restore) | 官方程序是 `supabase db dump` 分別匯出角色、結構、資料，再用 `psql` 還原；有 LOGIN 的自訂角色要在新專案重設密碼，遇到 `OWNER TO "supabase_admin"` 的權限錯誤要把那幾行註解掉 |
+
+- **結論：官方文件與評估文件一致，Free 不含自動備份**。所以 `output/backups/` 與異地這兩份就是全部的備份，Supabase 那一側沒有任何一份可以回復。
+- **我們的做法和官方程序不同**：本專案用 `pg_dump -Fc` 只匯出 `dashboard`、`app` 兩個 schema，不含角色；官方用 Supabase CLI 匯出整個資料庫。這個差異會在還原到 Supabase 的演練中考驗（計畫書第 8 節）。
+- **界線**：WebFetch 經過一個小模型摘要，表內的引文以摘要為準，沒有逐字核對原頁。專案主控台的 Database → Backups 頁面還沒有截圖核對。
 
 ### 界線
 
