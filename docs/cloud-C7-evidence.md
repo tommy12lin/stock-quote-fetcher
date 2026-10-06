@@ -3245,3 +3245,10 @@ SHA-256 全文：`f995e2b7b8d23165d7582dbb10a9614dea1340208e46ca11d896a67ba84833
 | C：B 之後再跑一次 | 中止：`實際 17.10\|1\|1`，結束碼 3 |
 
 - **界線**：本機測試沒有 TLS、沒有 pooler，密碼由 stdin 管線送入而非 tty，所以 `stty` 隱藏輸入的效果沒有測到。真正的 dump 沒有在這個腳本下還原過。假資料的測試檔留在 `output/rd-test/`（Git 忽略）。
+
+### `RD-3` 第 2 次：仍是舊指令，連線失敗，沒有還原（10-06 06:43:21–06:43:35Z，使用者執行）
+
+- **這次執行的是第 1 次的舊指令，不是 `rd-restore.sh`**。依據：`rd3-time.txt` 是舊格式（只有 `exit=1` 與起訖時間，沒有 `preflight_rc`），`rd3-restore.log` 第一行是 `pg_restore: connecting`；新腳本會先跑檢查，檢查不過就不會呼叫 `pg_restore`。所以這次**沒有防呆**。
+- 結果：`FATAL:  (EAUTHQUERY) auth_query secret check timed out`，`pg_restore` 沒有連上，**沒有寫入任何資料庫**。起訖 14 秒。
+- **錯誤和第 1 次不同**：第 1 次是「user not found in the database」，這次是「auth_query secret check timed out」。推論：使用者名稱這次被找到了（或至少沒有在同一步失敗），卡在 pooler 向資料庫查詢驗證資料時逾時。兩次的 pooler IP 也不同，是同一個 host 解析到不同位址。為什麼逾時，**未確認**。Claude 以網路搜尋查這句錯誤訊息，Supabase 的疑難排解文件中沒有找到逐字相同的條目；同類的 `EAUTHQUERY` 條目講的是角色的 `VALID UNTIL` 過期，和本次 `rolvaliduntil` 為 null 的情況不符。
+- 紀錄另存為 `output/rd/rd3-attempt2-*`。
