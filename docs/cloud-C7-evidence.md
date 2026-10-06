@@ -2645,14 +2645,28 @@ Billing → Budgets & alerts 的列表：
 
 **10-06 補記：收件人與第一次查看**
 - 以 `gcloud billing accounts get-iam-policy` 唯讀查得，帳單帳戶的 IAM 只有一條 binding：`roles/billing.admin` 一位成員，是使用者本人的個人 Gmail（repo 為 public，不寫出地址）；沒有 `billing.user`。所以「billing admins and users」實際只寄給這一個信箱。`C1-8` 寫的「唯一 Billing Administrator 為專案擁有者本人」得到佐證。只查了帳單帳戶這一層，沒有查上層的機構或資料夾。
-- 使用者 10-06 回報**沒有收到**（回報的確切時間沒有記錄）。仍在 48 小時的等待期內，尚不能下結論。
+- 使用者 10-06 回報**沒有收到**（回報的確切時間沒有記錄），垃圾郵件裡也沒有。~~仍在 48 小時的等待期內，尚不能下結論。~~
+- **同日發現：`c77-notify-test` 不存在**。使用者截取 Budgets & alerts 列表，只有 `finpo-monthly` 一列（$0.03 / $300.00，Includes −$1.34 savings，和 10-05 相同），沒有 `c77-notify-test`。**沒收到信的原因就是這個，和通知路徑無關**；所以到目前為止，通知送達仍然完全沒有被測到。
+  - 是當初沒有存成功（例如最後一步沒有按下建立）、建立後被刪除，還是建在別的帳單帳戶下，**無法分辨**。10-05 只有使用者回報「已經建好」，沒有截圖核對，這正是上面「還沒有截圖核對」那一條留下的缺口。
+  - 想以 `gcloud billing budgets list` 唯讀交叉確認，但專案沒有啟用 Cloud Billing Budget API，指令被拒（`SERVICE_DISABLED`）。啟用 API 會改動專案設定，所以沒有啟用，只以主控台截圖為準。
+  - **使用者決定重建**，設定照原樣；這次建好後要截圖核對列表上確實有這一列。48 小時的等待期從重建的時間重新起算。
+  - **重建完成**：使用者回報 10-06 **09:15（台北）**建立，時間是使用者看時鐘報的，沒有更精確的記錄。列表截圖上現在有兩列：
+
+    | Budget name | Budget period | Budget type | Applies to | Trigger alerts at | Spend and budget amount |
+    |---|---|---|---|---|---|
+    | `c77-notify-test` | Monthly | Specified amount | This billing account | **1%** | **$0.03 / $1.00**，Includes −$1.34 savings |
+    | `finpo-monthly` | Monthly | Specified amount | This billing account | 50% and 100% | $0.03 / $300.00，Includes −$1.34 savings |
+
+  - **預算這一端已經超過門檻**：0.03 / 1.00 = 3%，大於 1%。所以從現在起若收不到信，問題就在「算到門檻之後的通知」，而不在 Billing 的資料延遲。
+  - **Scope 從列表看不出來**：「Applies to」兩列都顯示 This billing account，而 `finpo-monthly` 的 Scope 已知是 All projects，所以這一欄不能用來判斷是否只選了 `finpo-508709`，沒有點進去核對。帳戶下只有一個專案，兩種 Scope 算出的金額相同，不影響這次測試。
+  - **等待期限改為 10-08 09:15（台北）**。
 
 **待記錄**：
 - 通知信的寄件時間與主旨；
 - 從建立到送達的延遲；
 - 刪除時間。
 
-最多等到 10-07 08:56Z（48 小時）；超過就記為「通知送達未實測」。
+最多等到 ~~10-07 08:56Z~~ **10-08 01:15Z（台北 09:15，10-06 重建後重算）**（48 小時）；超過就記為「通知送達未實測」。
 
 ### Cloudflare Workers（最近 30 天，使用者讀出）
 
