@@ -3222,3 +3222,26 @@ SHA-256 全文：`f995e2b7b8d23165d7582dbb10a9614dea1340208e46ca11d896a67ba84833
 - 連線參數用 libpq 的環境變數（`PGHOST` 等）傳入，不放進 `sh -c` 的字串：PowerShell 5.1 把含雙引號的參數交給外部程式時會剝掉引號，這樣寫可以避開。
 - `pg_restore` 的 `--verbose` 輸出與錯誤寫到 `output/rd/rd3-restore.log`（Git 忽略），結束碼與 UTC 起訖時間寫到 `output/rd/rd3-time.txt`。密碼提示走 `/dev/tty`，所以重導 stderr 不影響輸入密碼（推論，依 libpq 的行為）。
 - **本機預演沒有做**：Claude 原本要用同樣的指令形式還原到本機拋棄式 PostgreSQL，該次 Bash 呼叫被權限拒絕，沒有重試。所以這個指令形式在使用者執行前沒有跑過。
+
+### `RD-3` 第 1 次：連線失敗，沒有還原（10-06 06:39:47–06:40:03Z，使用者執行）
+
+- `rd3-time.txt`：`exit=1`，起訖 16 秒（含輸入密碼）。
+- `rd3-restore.log` 只有一次連線嘗試：`FATAL:  (EAUTHQUERY) user not found in the database`，來自 session pooler（Supavisor）。**`pg_restore` 沒有連上，演練專案沒有寫入任何東西**。
+- 判讀（推論，未確認）：Supavisor 把 `postgres.<ref>` 拆成資料庫使用者與專案 ref。這個錯誤表示 ref 對到了某個專案，但前段的使用者名稱在那個資料庫裡找不到。`postgres` 在每個 Supabase 專案都存在，所以最可能是 `PGUSER` 填寫有誤（空白、殘留的 `<` `>`、拼字）。成因待使用者核對 Connect 頁面上的值後補記。
+- 兩個檔案另存為 `output/rd/rd3-attempt1-*`（Git 忽略），因為下一次執行會覆寫。
+
+**同時發現的缺陷：第 1 次的指令沒有防止還原到正式專案**。`PGUSER` 的 ref 若誤填成正式專案的，連線會成功，`pg_restore` 會直接寫進正式資料庫：既有物件會報錯，但沒有唯一限制的表可能被重複寫入資料。這次是因為連線失敗才沒有發生。成因是 Claude 撰寫指令時只靠「使用者自己確認 ref」把關。
+
+### `RD-3` 的修正：還原前先確認是演練專案（10-06 14:40 前後，Claude）
+
+- 新增 [`rd-restore.sh`](rd-restore.sh) 與 [`rd-restore-preflight.sql`](rd-restore-preflight.sql)。腳本先讀入一次密碼（只存在容器的行程環境），以同一組連線參數查詢「伺服器版本｜`dashboard`、`app` 已存在的數目｜`finpo_app` 是否存在」，**必須等於 `17.11|0|1` 才執行 `pg_restore`**，否則中止。正式專案是 17.6，而且兩個 schema 都存在，所以兩個條件都會擋下。
+- 腳本與 SQL 以檔案掛進容器，`sh -c` 的字串裡不再有引號，PowerShell 5.1 的引號問題也一併避開。
+- **本機測試**（拋棄式 `postgres:17-alpine` 17.10；dump 用 Claude 現做的假資料，一個 schema、一張兩列的表，不是真的備份檔）：
+
+| 情境 | 結果 |
+|---|---|
+| A：預期版本 17.11，伺服器 17.10 | 中止：`預期 17.11\|0\|1，實際 17.10\|0\|1`，結束碼 3，沒有呼叫 `pg_restore` |
+| B：預期版本 17.10，schema 不存在 | 檢查通過，`restore_exit=0`，假資料的兩列都還原 |
+| C：B 之後再跑一次 | 中止：`實際 17.10\|1\|1`，結束碼 3 |
+
+- **界線**：本機測試沒有 TLS、沒有 pooler，密碼由 stdin 管線送入而非 tty，所以 `stty` 隱藏輸入的效果沒有測到。真正的 dump 沒有在這個腳本下還原過。假資料的測試檔留在 `output/rd-test/`（Git 忽略）。
