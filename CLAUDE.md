@@ -14,7 +14,7 @@ session 開始時先核對今天的日期，到了就**在第一則回覆的開�
 
 | 從哪天起提醒 | 事項 | 期限 |
 |---|---|---|
-| 2026-10-07 | 執行清單更新 `finpo-catalog-refresh`（由使用者執行，指令見 `docs/cloud-C7-evidence.md`「清單更新：`ljtrf`」節）。建議晚上跑，可順便檢驗 TPEx 在上班時間較慢的猜測。跑完由 Claude 唯讀核對執行紀錄、日誌與新一代的到期時間 | 2026-10-09 10:55（台北），清單在這之後過期 |
+| 2026-10-11 | 執行清單更新 `finpo-catalog-refresh`（由使用者執行，指令與核對方式見 `docs/cloud-C7-evidence.md`「清單更新：`dftcz`」節）。建議晚上跑，可順便檢驗 TPEx 在上班時間較慢的猜測（目前只有一個晚上的樣本）。執行期間不要按「更新報價」，兩者搶同一把鎖。跑完由 Claude 唯讀核對執行紀錄、日誌與新一代的到期時間 | 2026-10-13 11:28（台北），清單在這之後過期 |
 
 ## 這個專案對「驗證過」的定義很嚴格
 
@@ -45,6 +45,6 @@ session 開始時先核對今天的日期，到了就**在第一則回覆的開�
 ## 不要做的事
 
 - **部署 `finpo` Cloudflare Worker 時不要省略 Access 的核對。** 一律用 `npx --yes wrangler@4.145.0`；每次部署後都要不登入打 `/`，確認回 302 導向 Access。`C7-8` 之後，Worker 只替 JWT 驗證通過、`email` 在 secret `ACCESS_ALLOWED_EMAILS` 內的請求簽章；部署前先 `npm ci --prefix worker`。**要放行新的人，Access policy 與 `ACCESS_ALLOWED_EMAILS` 兩處都要加**，少一處就進不來；這兩處是僅有的兩道關卡。Google 的 Test users 也照樣加上，但**不能依賴它把關**：09-17（`C1-6`）有名單外的帳號被 Google 擋下，10-02（`C7-3-3`）卻有名單外的帳號通過 Google、由 Access 擋下，差異的原因未查。要改 Access 的設定前，先讀計畫書的 `C7-8`。程序見 `docs/cloud-C7-evidence.md`「`C7-1`／`C7-2` 首次分段部署」節，現行的回滾目標見同檔「`C7-8` 第 0 步」節的第 4 步。
-- **推送程式變更前，先把 `finpo-catalog-refresh` 改指向服務現用的映像**，並以 `describe` 核對只有映像改變。Artifact Registry 只保留 3 版，每次建置擠掉最舊的一版；10-06 時 Job 仍用 `a1fb03ff680d`，是最舊的那一版。純 `docs/`、`**.md` 的推送不會觸發建置。
+- **推送程式變更前，先把 `finpo-catalog-refresh` 改指向服務現用的映像**，並以 `describe` 核對只有映像改變。Artifact Registry 只保留 3 版，每次建置擠掉最舊的一版。10-06 起 Job 與服務都用 `35743d47289f`，下一次建置擠掉的是沒人用的 `a1fb03ff680d`；但部署新映像到服務後，Job 要跟著改，否則再下一次建置就會擠掉 Job 的映像。純 `docs/`、`**.md` 的推送不會觸發建置。
 - **不要在 `deploy/cloud.toml` 調高 `refresh_deadline_seconds`**，除非重新量過 Cloudflare 的邊緣上限。該檔內有完整算式。
 - **不要把常駐 monitor 的概念帶回雲端設計。** 第一階段明文不納入常駐 monitor、七天觀測與固定排程抓價；抓價改為在使用者請求內完成（`D3`）。

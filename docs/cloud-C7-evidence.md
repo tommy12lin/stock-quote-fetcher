@@ -1644,6 +1644,56 @@ generation 由使用者在 SQL Editor 以唯讀 `SELECT` 讀出（官方清單�
 - **對使用沒有影響**：清單更新在請求外（`refresh_in_request = false`），沒有 125 秒的邊緣上限。若 TPEx 在某次慢到 Job 的 task timeout，結果是更新失敗、沿用舊一代清單，舊一代在到期前仍有效。這是讀程式推得的，沒有實測。
 - **下一次清單更新須在 10-09 10:55（台北）前執行**。建議避開台股盤中；這只根據上面那個未驗證的猜測。
 
+### 清單更新：`dftcz`（2026-10-06 11:26 台北）
+
+第一階段完成後的第一次清單更新。使用者決定今天執行，沒有等到 10-07 的提醒。
+
+**先把 Job 改指向服務現用的映像**（Claude 執行，使用者要求）。推送程式變更前本來就要做這一步，這次先做：
+- 改指向前，以讀程式比對兩版：`a1fb03ff680d` 與 `35743d47289f` 之間只差 `842becc`（`dashboard.py` 的 `run_job`、`quoting.py` 的 `QuoteRunner`）與 `static/_headers`；`stock-web --refresh-catalog` 走 `catalog.fetch_all` 與 `Storage.save_instrument_catalog`，兩版相同。所以推定清單更新的行為不變，這是推論。
+- 以 `gcloud run jobs update finpo-catalog-refresh --image=…@sha256:a216b906893bfee5445729fee384832754afda6813182eaa92fd67f62db7aa79` 改指向，03:20:29Z，generation 3 → 4。
+- 前後 `describe` 的 YAML 全文比對：只有 `image`、`client-version`（585.0.0 → 586.0.0，這台的可攜版是 586）、nonce、`generation`／`observedGeneration`、`operation-id`、`resourceVersion`、`lastUpdatedTime` 改變。args、env、secret、資源都相同。
+- **從此 Job 與服務用同一個映像**，下一次推送程式變更不會讓 Job 失去映像。`a1fb03ff680d` 已沒有使用者，是下一次建置時會被擠掉的那一版。
+
+**執行**（使用者以可攜版 gcloud 執行 `run jobs execute finpo-catalog-refresh --region=asia-northeast1 --wait`）。執行前確認沒有其他 execution 在跑，也沒有報價更新在跑：兩者搶同一把 advisory lock，而 `acquire_lock` 搶不到時直接失敗，Job 的 `maxRetries` 是 0。
+
+| execution | 觸發 | 容器開始 | 完成 | 觸發→完成 | 映像 |
+|---|---|---|---|---|---|
+| `dftcz` | 10-06 03:26:39.966Z | 03:26:43.391Z | 03:28:16.163Z | **96.20 s** | `35743d47289f` |
+
+- **這是 `finpo-catalog-refresh` 第一次在 `35743d47289f` 上執行，成功**。上面「行為不變」的推論，至少在這一次得到佐證。
+- gcloud 的輸出：`Started deployed execution in 10.37s`，`1 / 1 complete`。
+- 日誌：03:28:13.693Z stdout 為 `Dashboard catalog refreshed.`，03:28:13.905Z 為 `Container called exit(0).`，之間沒有錯誤。
+
+generation 由使用者在 SQL Editor 以唯讀 `SELECT` 讀出：
+
+| generation | `completed_at` | `expires_at` | 列數 | 生效中 |
+|---|---|---|---|---|
+| `1d94faa1-…`（`dftcz`） | 10-06 03:28:12.998Z | **10-13 03:28:12.998Z（台北 11:28）** | 13,468 | ✅ |
+| `5a49077d-…`（`ljtrf`） | 10-02 02:55:29.591Z | 10-09 02:55:29.591Z | 13,477 | |
+| `8bdf148c-…`（`tsp9t`） | 09-30 05:51:20.259Z | 10-07 05:51:20.259Z | 13,454 | |
+
+- 到期時間與送出查詢前寫下的預測（約 10-13 03:28Z）一致。
+- 「生效中」的條件與 `load_instrument_catalog` 相同，**不是呼叫該函式本身**。
+- 列數等於五個來源 `row_count` 的總和（1,095 + 257 + 1,011 + 4,359 + 6,746）。台股 2,363 檔不變，美股 11,105 檔，比上一代少 9 檔。五個來源都是 `tls_relaxed=false`。
+
+續上方的拆解表（同一方法，單位：秒）：
+
+| 區間 | `mc22l`（09-29 22:35） | `tsp9t`（09-30 13:50） | `ljtrf`（10-02 10:53） | **`dftcz`（10-06 11:26）** |
+|---|---|---|---|---|
+| 容器開始 → `twse_companies` 完成 | 7.40 | 8.37 | 22.27 | **18.26** |
+| `twse_funds` | 0.19 | 0.97 | 2.74 | 0.34 |
+| **`tpex_isin`** | **2.79** | **18.44** | **97.28** | **69.15** |
+| `nasdaq_listed` | 0.87 | 0.84 | 1.01 | 0.86 |
+| `nasdaq_other` | 1.06 | 0.99 | 0.86 | 0.99 |
+| `completed_at` → `refreshed` 日誌 | 0.61 | 未讀 | 0.70 | 0.69 |
+
+（時間為台北時間。R1 與 `xmm8g` 的 52.75、54.62 秒見上方原表，它們的台北時間沒有對照。）
+
+- **又是 `tpex_isin` 佔大宗**：96.2 秒中 69.2 秒。
+- **時段的猜測仍未驗證**：這次在台股盤中（11:26），是慢的。台北時間已知的 4 個樣本中，晚上的 1 個最快、白天的 3 個都慢，方向和猜測一致。但晚上只有一個樣本，白天的 3 個之間也相差 5 倍，**不足以下結論**。
+- 「容器開始 → `twse_companies` 完成」也和 `ljtrf` 一樣偏慢（18.26 秒，前兩次 7–8 秒）。這一段包含 Python 啟動，分不出是誰慢。
+- **下一次清單更新須在 10-13 11:28（台北）前執行**。
+
 ### R4 參考資料（2026-09-25 取得，R4 尚未執行）
 
 這是 R4 的比對基準，不是 R4 的結果。取得時間為 2026-09-25 05:33:46Z（台北 13:33），網路為本機，不是 GCP；依計畫書，參考資料從哪個網路取得都可以。原始回應存於本機 `output/c76/r4-reference/`（Git 忽略）。
