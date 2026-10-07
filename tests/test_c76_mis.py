@@ -104,6 +104,26 @@ def test_record_writes_every_poll_including_failures_and_stops_on_time():
     assert calls[0] == 'tse_2330.tw|tse_2317.tw|tse_0050.tw|otc_6488.tw|otc_3529.tw|otc_006201.tw'
 
 
+def test_record_with_channels_keeps_every_mis_field(tmp_path, monkeypatch):
+    # The 10-07 intraday check needs volume, high and low; R2's 7-field record dropped them.
+    snapshot = {'c': '6488', 'ex': 'otc', 'd': '20261007', 't': '10:00:05', 'tlong': '1791338405000',
+                'z': '950.0000', 'tv': '2', 'v': '1234', 'h': '960.0000', 'l': '940.0000',
+                'a': '951.0000_952.0000_', 'b': '950.0000_949.0000_'}
+    calls = []
+
+    def handler(request):
+        calls.append(request.url.params['ex_ch'])
+        return httpx.Response(200, json={'rtcode': '0000', 'msgArray': [snapshot]})
+
+    real_client = httpx.Client
+    monkeypatch.setattr(httpx, 'Client', lambda **k: real_client(transport=httpx.MockTransport(handler)))
+    out = tmp_path / 'x.jsonl'
+    main(['record', '--out', str(out), '--minutes', '0.05', '--channels', 'tse_2330, otc_6488'])
+    lines = [json.loads(l) for l in out.read_text(encoding='utf-8').splitlines()]
+    assert calls[0] == 'tse_2330.tw|otc_6488.tw'
+    assert lines[0]['quotes'] == [snapshot]
+
+
 def test_record_refuses_polling_faster_than_mis_itself(tmp_path, monkeypatch):
     # pytest.fail is a BaseException: if the guard is gone, this fails at once instead of polling MIS.
     monkeypatch.setattr(c76_mis, 'record', lambda *a, **k: pytest.fail('record ran despite --interval 1'))

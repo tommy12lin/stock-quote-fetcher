@@ -30,11 +30,16 @@ MIS_URL = 'https://mis.twse.com.tw/stock/api/getStockInfo.jsp'
 KEEP = ('c', 'ex', 'd', 't', 'tlong', 'z', 'y')
 
 
-def record(out, *, minutes, interval, client=None, clock=time.monotonic, sleep=time.sleep):
-    """One line per poll. Errors are recorded and polling goes on: a gap is evidence too."""
+def record(out, *, minutes, interval, client=None, clock=time.monotonic, sleep=time.sleep,
+           channels=None, keep=KEEP):
+    """One line per poll. Errors are recorded and polling goes on: a gap is evidence too.
+
+    channels defaults to the R2 fixed list. keep=None writes every MIS field (volume, high,
+    low, bid/ask), which the 2026-10-07 intraday check needs and R2 did not record.
+    """
     import httpx
     client = client or httpx.Client(timeout=10, headers={'User-Agent': 'Mozilla/5.0'})
-    channels = '|'.join(f'{ex}_{code}.tw' for code, (ex, _) in TW_FIXED.items())
+    channels = '|'.join(channels or (f'{ex}_{code}.tw' for code, (ex, _) in TW_FIXED.items()))
     end = clock() + minutes * 60
     while True:
         line = {'fetched_at': datetime.now(UTC).isoformat()}
@@ -43,7 +48,8 @@ def record(out, *, minutes, interval, client=None, clock=time.monotonic, sleep=t
             line['http_status'] = response.status_code
             body = response.json()
             line['rtcode'] = body.get('rtcode')
-            line['quotes'] = [{k: m.get(k) for k in KEEP} for m in body.get('msgArray', [])]
+            line['quotes'] = [m if keep is None else {k: m.get(k) for k in keep}
+                              for m in body.get('msgArray', [])]
         except Exception as exc:  # noqa: BLE001 - every failure is written down, none stops the record
             line['error'] = f'{type(exc).__name__}: {exc}'
         out.write(json.dumps(line, ensure_ascii=False) + '\n')
@@ -121,6 +127,8 @@ def main(argv=None, out=sys.stdout):
     rec.add_argument('--minutes', type=float, required=True)
     # MIS's own page polls every 5 s (userDelay 5000); going faster risks a block.
     rec.add_argument('--interval', type=float, default=5)
+    # e.g. tse_2330,otc_6488. Given, every MIS field is kept (see record).
+    rec.add_argument('--channels')
     cmp_ = sub.add_parser('compare')
     cmp_.add_argument('--probe', required=True)
     cmp_.add_argument('--mis', required=True)
@@ -129,7 +137,11 @@ def main(argv=None, out=sys.stdout):
         if args.interval < 5:
             parser.error('--interval 不得小於 5 秒。')
         with open(args.out, 'a', encoding='utf-8') as f:
-            record(f, minutes=args.minutes, interval=args.interval)
+            if args.channels:
+                channels = [f'{c.strip()}.tw' for c in args.channels.split(',') if c.strip()]
+                record(f, minutes=args.minutes, interval=args.interval, channels=channels, keep=None)
+            else:
+                record(f, minutes=args.minutes, interval=args.interval)
         return 0
     for result in compare(_jsonl(args.probe), _jsonl(args.mis)):
         out.write(json.dumps(result, ensure_ascii=False) + '\n')
