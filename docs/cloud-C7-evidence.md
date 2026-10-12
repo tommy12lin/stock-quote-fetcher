@@ -3165,6 +3165,18 @@ SHA-256 全文：`f995e2b7b8d23165d7582dbb10a9614dea1340208e46ca11d896a67ba84833
 | 檔名 | 時機 | 大小（bytes） | SHA-256 | TOC／`TABLE DATA` | 異地 |
 |---|---|---|---|---|---|
 | `finpo-20261006-0940.dump` | `C7-7-5` 的匯出（10-06 01:40Z），10-06 03:44Z 由 Claude 從 `output/c77/` 複製過來，雜湊與原檔相同 | 1,772,671 | `f995e2b7…a848334e` | 124／14（`C7-7-5` 讀出） | ~~未複製~~ 已複製（使用者 10-06 11:48 台北前回報；Claude 核對不到） |
+| `finpo-20261012-2237.dump` | 清單更新 `dkqr6` 之後（新一代 `6da69e98` 已生效），檔頭的建立時間 10-12 14:38:42Z，在 `KH-LAPTOP` 上匯出 | 2,478,985 | `81496aa3…2c43ff4d05` | 124／14 | 未複製 |
+
+**10-12 的匯出：第一次照範本執行**（使用者執行，Claude 核對）
+
+- **指令**：與上方範本只差檔名，改由 `$name = "finpo-$(Get-Date -Format yyyyMMdd-HHmm).dump"` 產生，再以 `-f "/out/$name"` 帶入。host、使用者名稱、密碼由使用者自理，沒有經過 Claude。匯出前 Claude 先建好 `output/backups/`（`.gitignore:38` 的 `output/` 涵蓋）並拉取 `postgres:17-alpine`，**這時已是 pg_dump 17.11**（10-06 為 17.10）。
+- **範本可用，以結果佐證**：檔案存在、`pg_restore --list` 讀取成功（exit 0）。**使用者沒有貼出 `pg_dump` 的輸出**，所以輸出中有沒有警告，沒有核對。
+- **檔頭**：`Dumped from database version: 17.6`、`Dumped by pg_dump version: 17.11`、`TOC Entries: 124`、gzip、CUSTOM。
+- **TOC 與 10-06 基準逐類相同**：列出 117 項，schema 2、domain 2、表 14、表資料 14、RLS 14、policy 14、ACL 15、約束 24、外鍵 13、索引 5。和檔頭 124 項相差的 7 項，與 10-06 相同，見「`RD-3` 第 3 次」節的說明（推定為檔頭類項目，沒有逐一查證）。14 項 `TABLE DATA` 都在 `dashboard` 底下，與基準相同。
+- **包含新一代清單、連到的是正式專案**：以 `pg_restore --data-only -t instrument_catalog_generations` 讀出 7 代，最新一代為 `6da69e98`，`completed_at`／`expires_at` 與使用者在 SQL Editor 從正式專案讀出的值逐字相同。演練專案已於 10-06 刪除，這份資料只可能來自正式專案。程序第 1 步「新一代生效之後才匯出」由此核對。
+- **大小比 10-06 多約 0.7 MB**：推測來自新增的清單代（`dkqr6`，13,476 列）與 10-07 盤中驗證寫入的報價，**沒有逐表核對**。
+- **這只證明檔案完整、讀得出來，不是還原演練。**
+- **輪替與筆電上的份數**：10-06 那份（`finpo-20261006-0940.dump`）不在 `KH-LAPTOP` 上，這台在匯出前沒有 `output/backups/`。所以「筆電留最近 4 份」目前分在兩台電腦，這台只有 1 份。暫不刪除任何一份。
 
 ### Supabase Free 的備份：官方文件查證（2026-10-06 11:50 台北，Claude）
 
