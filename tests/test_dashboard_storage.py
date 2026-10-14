@@ -25,8 +25,25 @@ def service(db, monkeypatch):
     s.instance = 'instance-a'
     entries = (CatalogInstrument('us:NASDAQ:AAPL','AAPL','US','USD','NASDAQ','stock','Apple',{'yahoo':'AAPL'}),)
     monkeypatch.setattr(s, 'catalog', lambda: entries)
+    # No test reaches Yahoo for a rate; tests about rates replace this with their own.
+    rates(monkeypatch, '30')
     s.initialize()
     return s
+
+
+def rates(monkeypatch, *values, calls=None):
+    """Each fetch returns the next value, or fails with None. Records each timeout asked for."""
+    from stock_quote_fetcher import fx
+    queue = list(values)
+    def fetch(base, quote, timeout):
+        if calls is not None:
+            calls.append((base, quote, timeout))
+        value = queue.pop(0) if len(queue) > 1 else queue[0]
+        if value is None:
+            return None, 'network_error'
+        stamp = datetime.now(UTC)
+        return fx.FxRate(base, quote, Decimal(value), 'yahoo', f'{quote}=X', stamp, stamp), None
+    monkeypatch.setattr(fx, 'fetch', fetch)
 
 
 @pytest.fixture
@@ -141,6 +158,95 @@ def test_empty_and_missing_fx(service):
     value = service.valuation()
     assert value['needs_fx'] and value['total'] is None
     assert service.save({'revision':saved['revision'],'rows':[],'fx':None})['rows'] == []
+
+
+# U5: the rate is fetched with the quotes and kept as history; nobody types it in.
+
+def fx_rows(service):
+    with Storage(service.db) as s:
+        return s.conn.execute(sql.SQL('SELECT * FROM {} ORDER BY received_at').format(s.table('fx_rates'))).fetchall()
+
+
+def again(service):
+    """Step past the 60 s cooldown so a second refresh can run."""
+    with Storage(service.db) as s:
+        s.conn.execute(sql.SQL('UPDATE {} SET document=jsonb_set(document,%s,to_jsonb(%s::text))').format(
+            s.table('refresh_jobs')), (['created_at'], stamp(-600)))
+
+
+def test_a_manual_rate_is_neither_kept_nor_used(service):
+    """A page loaded before U5 still sends 'fx'. Before the change it was saved and valued with."""
+    saved = service.save(body())
+    assert 'fx' not in saved and 'fx' not in service.get()
+    value = service.valuation()
+    assert value['needs_fx'] and value['fx'] is None and value['total'] is None
+
+
+def test_every_fetched_rate_is_kept_and_the_newest_is_used(service, monkeypatch):
+    service.save(body())
+    fetched_quote(monkeypatch)
+    rates(monkeypatch, '30', '31')
+    first = service.refresh()
+    again(service)
+    second = service.refresh()
+    assert first['status'] == second['status'] == 'succeeded'
+    rows = fx_rows(service)
+    assert [r['rate'] for r in rows] == [Decimal('30'), Decimal('31')]
+    assert [r['job_id'] for r in rows] == [first['job_id'], second['job_id']]
+    assert {(r['base_currency'], r['quote_currency'], r['provider'], r['rate_kind']) for r in rows} == {('USD','TWD','yahoo','market')}
+    value = service.valuation()
+    # 2 AAPL at 10 USD, at the newest rate.
+    assert value['fx'] == '31' and value['fx_source'] == 'yahoo' and value['total'] == '620.00'
+    assert value['fx_received_at'] == rows[-1]['received_at'].isoformat()
+
+
+def test_a_failed_rate_keeps_the_last_one_and_says_so(service, monkeypatch):
+    service.save(body())
+    fetched_quote(monkeypatch)
+    rates(monkeypatch, '30', None)
+    service.refresh()
+    again(service)
+    job = service.refresh()
+    # Prices all arrived; a rate alone never fails a refresh.
+    assert job['status'] == 'succeeded' and 'USD/TWD 匯率未更新，沿用' in job['message']
+    assert len(fx_rows(service)) == 1 and service.valuation()['fx'] == '30'
+
+
+def test_no_rate_at_all_leaves_the_refresh_partial(service, monkeypatch):
+    service.save(body())
+    fetched_quote(monkeypatch)
+    rates(monkeypatch, None)
+    job = service.refresh()
+    assert job['status'] == 'partial' and 'USD/TWD 匯率未取得' in job['message']
+    assert fx_rows(service) == [] and service.valuation()['needs_fx']
+
+
+def test_taiwan_only_holdings_fetch_no_rate(service, monkeypatch):
+    tw = CatalogInstrument('tw:TWSE:2330','2330','TW','TWD','TWSE','stock','台積電',{'yahoo':'2330.TW'})
+    monkeypatch.setattr(service, 'catalog', lambda: (tw,))
+    service.save({'revision':0,'rows':[{'ticker':'2330','quantity':'1','buy_price':'500'}]})
+    fetched_quote(monkeypatch)
+    calls = []
+    rates(monkeypatch, '30', calls=calls)
+    assert service.refresh()['status'] == 'succeeded'
+    assert calls == [] and fx_rows(service) == []
+
+
+def test_the_rate_is_fetched_inside_the_refresh_deadline(service, monkeypatch):
+    """The rate call spends the same 110 s the quote batches do (refresh_deadline_seconds)."""
+    service.save(body())
+    clock = slow_provider(service, monkeypatch, deadline=5)
+    from stock_quote_fetcher import fx
+    calls = []
+    def fetch(base, quote, timeout):
+        calls.append(timeout)
+        clock.sleep(timeout)  # spends its whole allowance, then fails
+        return None, 'timeout'
+    monkeypatch.setattr(fx, 'fetch', fetch)
+    job = service.refresh()
+    # Capped at what was left (5 s), not the 10 s operation timeout; nothing left for AAPL.
+    assert calls == [5]
+    assert '1 檔未在時限內處理' in job['message'] and 'USD/TWD 匯率未取得' in job['message']
 
 
 def test_save_does_not_require_collector_lock(service):
@@ -258,6 +364,7 @@ def slow_provider(service, monkeypatch, *, deadline):
     monkeypatch.setattr(dashboard, 'QuoteRunner', lambda storage, config: quoting.QuoteRunner(
         storage, config, fetch=fetch, monotonic=clock.now, sleep=clock.sleep))
     service.refresh_config = RefreshConfig(deadline_seconds=deadline)
+    return clock
 
 
 def test_attempts_the_deadline_cut_short_are_named(service, monkeypatch):

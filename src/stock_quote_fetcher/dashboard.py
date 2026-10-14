@@ -10,12 +10,13 @@ from uuid import uuid4
 from psycopg import sql
 from psycopg.types.json import Jsonb
 
+from stock_quote_fetcher import fx
 from stock_quote_fetcher.config import (load_database_config, load_quote_config, load_instrument_catalog_config,
                                         load_refresh_config)
 from stock_quote_fetcher.instruments import resolve_holdings
 from stock_quote_fetcher.otc_catalog import supplement
-from stock_quote_fetcher.models import Instrument, QualityFlag as F
-from stock_quote_fetcher.quality import assess
+from stock_quote_fetcher.models import Instrument, Market, QualityFlag as F
+from stock_quote_fetcher.quality import assess, timezone
 from stock_quote_fetcher.quoting import QuoteRunner, public_config
 from stock_quote_fetcher.storage import Storage, StorageError, lock_key
 from stock_quote_fetcher.valuation import value_holdings, exact_product, exact_sum, display_amount
@@ -29,6 +30,8 @@ BATCH_SIZE = 5
 # reclaim a job that is still running.
 LEASE_GRACE_SECONDS = 30
 LOST_MESSAGE = '更新未在時限內完成或服務已中斷；既有價格保留，請重新更新。'
+# Every value is converted into this currency. Only TWD and USD exist in this project.
+HOME_CURRENCY = 'TWD'
 
 
 def now():
@@ -114,7 +117,7 @@ class Dashboard:
             with s.transaction():
                 s.conn.execute(sql.SQL('CREATE TABLE IF NOT EXISTS {} (id integer PRIMARY KEY CHECK(id=1), document jsonb NOT NULL)').format(s.table('portfolio')))
                 s.conn.execute(sql.SQL('INSERT INTO {} VALUES (1,%s) ON CONFLICT DO NOTHING').format(s.table('portfolio')),
-                               (Jsonb({'revision': 0, 'rows': [], 'fx': None, 'fx_updated_at': None}),))
+                               (Jsonb({'revision': 0, 'rows': []}),))
                 s.conn.execute(sql.SQL('CREATE TABLE IF NOT EXISTS {} (id text PRIMARY KEY, document jsonb NOT NULL)').format(s.table('refresh_jobs')))
 
     def get(self):
@@ -149,20 +152,8 @@ class Dashboard:
             resolved, names = self.resolve(holdings)
         else:
             resolved, names = {}, {}
-        fx = body.get('fx')
-        if fx in ('', None):
-            fx = None
-        else:
-            from stock_quote_fetcher.input import positive_decimal
-            if not isinstance(fx, str) or len(fx) > 24:
-                raise WebError('匯率格式錯誤。')
-            try:
-                n = positive_decimal(fx, 'USD/TWD')
-                if n > 10000 or n.as_tuple().exponent < -8:
-                    raise ValueError('匯率最多 8 位小數且不得超過 10000。')
-                fx = str(n)
-            except ValueError as exc:
-                raise WebError(str(exc)) from None
+        # U5: there is no manual exchange rate any more. A page loaded before this change
+        # still sends 'fx'; it is ignored, so neither the old value nor a new one is kept.
         with Storage(self.db) as s, s.conn.transaction():
             old = s.conn.execute(sql.SQL('SELECT document FROM {} WHERE id=1 FOR UPDATE').format(s.table('portfolio'))).fetchone()['document']
             if body['revision'] != old['revision']:
@@ -171,8 +162,7 @@ class Dashboard:
                         'instruments': {ticker: {'instrument_id': i.instrument_id, 'ticker': i.ticker,
                             'market': i.market.value, 'currency': i.currency, 'provider_symbols': dict(i.provider_symbols),
                             'exchange': i.exchange, 'asset_type': i.asset_type} for ticker, i in resolved.items()},
-                        'fx': fx, 'fx_source': 'manual' if fx else None,
-                        'fx_updated_at': now() if fx != old['fx'] else old.get('fx_updated_at'), 'saved_at': now()}
+                        'saved_at': now()}
             s.conn.execute(sql.SQL('UPDATE {} SET document=%s WHERE id=1').format(s.table('portfolio')), (Jsonb(document),))
         return document
 
@@ -203,9 +193,18 @@ class Dashboard:
             except (StorageError, WebError) as exc:
                 warning = str(exc)
             quotes = {ticker: max(items, key=lambda q: q.received_at) for ticker, items in candidates.items()}
-        result = calculate(holdings, quotes, Decimal(p['fx']) if p['fx'] else None, p.get('names'), market)
+        rate = None
+        try:
+            with Storage(self.db) as s:
+                rate = s.latest_fx_rate('USD', HOME_CURRENCY)
+        except StorageError as exc:
+            warning = warning or str(exc)
+        result = calculate(holdings, quotes, rate.rate if rate else None, p.get('names'), market)
+        # Only the time is shown, never a stale flag: no new rate on a weekend is normal (U5).
         result.update(portfolio_revision=p['revision'], valuation_id=str(uuid4()), computed_at=now(), market=market,
-                      fx=p['fx'], fx_source=p.get('fx_source'), fx_updated_at=p.get('fx_updated_at'), warning=warning)
+                      fx=str(rate.rate) if rate else None, fx_source=rate.provider if rate else None,
+                      fx_quote_time=rate.quote_time.isoformat() if rate and rate.quote_time else None,
+                      fx_received_at=rate.received_at.isoformat() if rate else None, warning=warning)
         return result
 
     @property
@@ -322,6 +321,33 @@ class Dashboard:
         unquoted = datetime.min.replace(tzinfo=UTC)
         return sorted(holdings, key=lambda h: latest.get(resolved[h.ticker].instrument_id) or unquoted)
 
+    def refresh_fx(self, job, holdings, s, deadline):
+        """U5: rates are fetched with the quotes, before them, so a deadline that cuts the
+        quote batches never leaves the valuation without a rate. The call counts against
+        the same deadline. A failure is reported, not fatal: the newest stored rate stays
+        in use, and a refresh is never failed for a rate alone.
+
+        Returns (notes for the job message, whether some pair has no rate at all).
+        """
+        notes, missing = [], False
+        for currency in sorted({h.currency for h in holdings} - {HOME_CURRENCY}):
+            remaining = deadline - monotonic()
+            if remaining > 1:
+                self.progress(job, f'正在取得 {currency}/{HOME_CURRENCY} 匯率')
+                rate, _ = fx.fetch(currency, HOME_CURRENCY,
+                                   max(1, min(self.quote_config.operation_timeout_seconds, int(remaining))))
+                if rate:
+                    s.save_fx_rate(rate, job_id=job['job_id'])
+                    continue
+            prior = s.latest_fx_rate(currency, HOME_CURRENCY)
+            if prior:
+                taipei = prior.received_at.astimezone(timezone(Market.TW)).strftime('%m-%d %H:%M')
+                notes.append(f'{currency}/{HOME_CURRENCY} 匯率未更新，沿用 {taipei} 取得的匯率')
+            else:
+                missing = True
+                notes.append(f'{currency}/{HOME_CURRENCY} 匯率未取得，{currency} 持股暫時無法換算')
+        return notes, missing
+
     def run_job(self, job, p):
         deadline = monotonic() + self.refresh_config.deadline_seconds
         try:
@@ -359,6 +385,7 @@ class Dashboard:
             with Storage(self.db) as s:
                 s.acquire_lock()
                 s.recover_incomplete()
+                fx_notes, fx_missing = self.refresh_fx(job, holdings, s, deadline)
                 # Stalest first, so what a deadline or cap leaves out is what the next
                 # refresh starts with. Slicing a fixed order instead would refetch the
                 # same leading tickers every time and never reach the tail.
@@ -427,7 +454,11 @@ class Dashboard:
                     message += f'。未處理的 {len(untouched)} 檔都保留先前的報價'
                 elif older:
                     message += f'。未處理的 {len(untouched)} 檔中，{older} 檔保留先前的報價'
-            job.update(status='succeeded' if count == len(holdings) else 'partial' if count else 'failed', message=message)
+            if fx_notes:
+                message += '；' + '、'.join(fx_notes)
+            status = 'succeeded' if count == len(holdings) else 'partial' if count else 'failed'
+            # Every price arrived, but with no rate at all the USD positions cannot be valued.
+            job.update(status='partial' if status == 'succeeded' and fx_missing else status, message=message)
         except StorageError:
             job.update(status='failed', message='報價程序忙碌或資料庫暫不可用；保留既有價格，請稍後重試。')
         except Exception:

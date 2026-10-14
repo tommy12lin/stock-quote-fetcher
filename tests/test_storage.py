@@ -114,7 +114,7 @@ def test_migrate_idempotent_schema_and_locks(db):
     cfg, _ = db
     with Storage(cfg) as a, Storage(cfg) as b:
         assert a.check_permissions(migration=True)['username'] == cfg.user
-        assert a.migrate() == ['0001_initial.sql','0002_instrument_catalog.sql','0003_quote_asset_type.sql']
+        assert a.migrate() == ['0001_initial.sql','0002_instrument_catalog.sql','0003_quote_asset_type.sql','0004_fx_rates.sql']
         assert a.migrate() == []
         a.check_schema()
         with pytest.raises(StorageError, match='另一個'):

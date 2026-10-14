@@ -27,7 +27,7 @@ class StorageError(RuntimeError):
 
 
 TABLES = ('campaigns', 'scheduled_cycles', 'runs', 'holdings', 'cycles', 'fetch_attempts', 'quotes', 'valuations', 'valuation_totals',
-          'instrument_catalog_generations', 'catalog_instruments')
+          'instrument_catalog_generations', 'catalog_instruments', 'fx_rates')
 
 
 def now():
@@ -385,6 +385,24 @@ class Storage:
                 WHERE provider=%s AND instrument_id = ANY(%s) GROUP BY instrument_id""").format(self.table('quotes')),
                 (provider, ids)).fetchall()
         return {row['instrument_id']: row['latest'] for row in rows}
+
+    def save_fx_rate(self, rate, *, job_id=None):
+        """Append only: every fetched rate is kept, so history is never overwritten."""
+        if not self.locked:
+            raise StorageError('寫入前必須取得收集程序鎖。')
+        with self.transaction():
+            self._insert('fx_rates', dict(id=uuid4(), base_currency=rate.base_currency, quote_currency=rate.quote_currency,
+                rate=rate.rate, rate_kind=rate.rate_kind, provider=rate.provider, provider_symbol=rate.provider_symbol,
+                quote_time=rate.quote_time, received_at=rate.received_at, job_id=job_id))
+
+    def latest_fx_rate(self, base, quote):
+        """Newest rate received for the pair, or None when none was ever fetched."""
+        from stock_quote_fetcher.fx import FxRate
+        with self.transaction(writer=False, readonly=True):
+            row = self.conn.execute(sql.SQL('''SELECT * FROM {} WHERE base_currency=%s AND quote_currency=%s
+                AND received_at<=%s ORDER BY received_at DESC,id DESC LIMIT 1''').format(self.table('fx_rates')),
+                (base, quote, now())).fetchone()
+        return None if row is None else FxRate(**{key: row[key] for key in FxRate.__dataclass_fields__})
 
     def cached_quotes(self, instrument, provider):
         """Candidate history is revalidated by the caller against today's calendar."""

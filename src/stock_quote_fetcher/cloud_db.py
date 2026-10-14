@@ -54,7 +54,7 @@ def bootstrap_sql(schema='dashboard', runtime='finpo_app'):
                                       body=sql.SQL(body).format(schema=ns)))
     lines.extend([
         sql.SQL('CREATE TABLE IF NOT EXISTS {}.portfolio (id integer PRIMARY KEY CHECK(id=1), document jsonb NOT NULL);').format(ns),
-        sql.SQL("INSERT INTO {}.portfolio VALUES (1,'{{\"revision\":0,\"rows\":[],\"fx\":null,\"fx_updated_at\":null}}') ON CONFLICT DO NOTHING;").format(ns),
+        sql.SQL("INSERT INTO {}.portfolio VALUES (1,'{{\"revision\":0,\"rows\":[]}}') ON CONFLICT DO NOTHING;").format(ns),
         sql.SQL('CREATE TABLE IF NOT EXISTS {}.refresh_jobs (id text PRIMARY KEY, document jsonb NOT NULL);').format(ns),
         sql.SQL('ALTER SCHEMA {} OWNER TO CURRENT_USER;').format(ns),
         sql.SQL('REVOKE ALL ON SCHEMA {} FROM PUBLIC, {};').format(ns, role),

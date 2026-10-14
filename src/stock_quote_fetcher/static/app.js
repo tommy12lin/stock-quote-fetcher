@@ -15,7 +15,7 @@ function resumeLogin() {
   if(loginRedirecting) throw new Error('正在重新登入。');
   const last = Number(sessionStorage.getItem('portfolio-login-at') || 0);
   if(Date.now()-last < 60000) throw new Error('連線失敗，請確認網路後重新整理；未保存內容仍保留。');
-  if(dirty) sessionStorage.setItem('portfolio-login-draft', JSON.stringify({rows:draft,fx:$('fx').value,revision:saved?.revision}));
+  if(dirty) sessionStorage.setItem('portfolio-login-draft', JSON.stringify({rows:draft,revision:saved?.revision}));
   sessionStorage.setItem('portfolio-login-at', String(Date.now()));
   loginRedirecting = true;
   window.location.reload();
@@ -59,15 +59,17 @@ function draftRender() {
   if(!draft.length){const tr=el('tr'),td=el('td','尚無持股。上傳 Excel 或點選「新增持股」。','empty-cell');td.colSpan=4;tr.append(td);$('draft').append(tr);}
 }
 function add(){if(!saved)return;draft.push({ticker:'',quantity:'',buy_price:''});setDirty();draftRender();$('editor').scrollIntoView({behavior:'smooth'});$('draft').lastElementChild.querySelector('input').focus();}
-function savedRender(){ $('version').textContent=`已保存版本 ${saved.revision}`; $('fx-time').textContent=saved.fx?`手動匯率 ${saved.fx} · 輸入時間 ${date(saved.fx_updated_at)}`:'尚未設定美元匯率'; }
+function savedRender(){ $('version').textContent=`已保存版本 ${saved.revision}`; }
 async function loadValuation(){ const sequence=++valuationSequence; const v=await api('/api/portfolio/valuation?market='+$('market').value); if(sequence!==valuationSequence||!saved||v.portfolio_revision!==saved.revision)return; valuation=v;render(); }
 function render(){
   const v=valuation, scope=$('market').selectedOptions[0].textContent;
   $('total-label').textContent=(v.total==null&&v.known_total!=null?'已知持股市值（非完整總額）':'持股總市值')+($('market').value==='ALL'?'':` · ${scope}`);
   $('total').textContent=fmt(v.total??v.known_total);$('cost').textContent=fmt(v.cost);$('profit').textContent=v.profit==null?'—':(v.profit.startsWith('-')?'':'+')+fmt(v.profit);
   $('profit').className='metric '+(v.profit?.startsWith('-')?'negative':'positive');$('return').textContent=v.return_pct==null?'完整報價與匯率齊全後顯示':`${signed(v.profit)} · 報酬率 ${v.return_pct.startsWith('-')?'':'+'}${v.return_pct}%`;
-  $('total-note').textContent=v.needs_fx?'待輸入匯率：請在下方設定 USD / TWD':v.count?'TWD · 股票與 ETF 市值，不含現金':'上傳或新增持股，開始查看市值';
-  $('coverage').textContent=`報價涵蓋 ${v.coverage} / ${v.count} 檔`;$('quality').textContent={complete:'可用估值',partial:'部分估值 · 缺價不計為零',degraded:'降級估值 · 請參閱逐股品質',unavailable:v.needs_fx?'待輸入匯率':'尚無可用估值'}[v.status];
+  $('total-note').textContent=v.needs_fx?'待取得匯率：請按「更新報價」取得 USD / TWD':v.count?'TWD · 股票與 ETF 市值，不含現金':'上傳或新增持股，開始查看市值';
+  $('coverage').textContent=`報價涵蓋 ${v.coverage} / ${v.count} 檔`;$('quality').textContent={complete:'可用估值',partial:'部分估值 · 缺價不計為零',degraded:'降級估值 · 請參閱逐股品質',unavailable:v.needs_fx?'待取得匯率':'尚無可用估值'}[v.status];
+  // Only the rate's time is shown, never a stale flag: no new rate on a weekend is normal.
+  $('fx-time').textContent=v.fx?`USD / TWD ${v.fx} · 來源 Yahoo · 報價時間 ${date(v.fx_quote_time)} · 取得時間 ${date(v.fx_received_at)}`:'尚未取得 USD / TWD 匯率；按「更新報價」時會一併取得';
   $('subtotals').textContent=v.summaries.map(s=>`${s.currency} ${s.total==null?'已知市值':'市值'} ${fmt(s.known_subtotal_display)}（${s.valued_count}/${s.holding_count} 檔）`).join('　／　');
   let times=$('market-times');if(!times){times=el('p',null,'muted');times.id='market-times';$('subtotals').after(times);}times.textContent=['TW','US'].map(m=>{const stamps=v.rows.filter(r=>r.market===m&&r.quote_time).map(r=>r.quote_time).sort();return stamps.length?`${m==='TW'?'台股':'美股'}報價時間：${date(stamps[0])} ～ ${date(stamps.at(-1))}`:'';}).filter(Boolean).join('　／　');
   $('count').textContent=`${v.count} 檔`;
@@ -77,7 +79,7 @@ function render(){
 }
 function renderChart(){
   const v=valuation;$('chart').replaceChildren();$('legend').replaceChildren();
-  if(!v.chart.length){$('chart').className='chart-empty';$('chart').append(el('div','◔','empty-icon'),el('h3',v.needs_fx?'請先輸入美元匯率':v.count?'等待可用報價':'你的配置，從第一筆持股開始'),el('p',v.count?'完整價格與匯率齊全後，便可查看配置。':'上傳 Excel 或在下方手動新增持股。'));return;}
+  if(!v.chart.length){$('chart').className='chart-empty';$('chart').append(el('div','◔','empty-icon'),el('h3',v.needs_fx?'等待取得美元匯率':v.count?'等待可用報價':'你的配置，從第一筆持股開始'),el('p',v.count?'完整價格與匯率齊全後，便可查看配置。':'上傳 Excel 或在下方手動新增持股。'));return;}
   $('chart').className='';
   const donut=el('div',null,'donut'),center=el('div',null,'donut-center');
   center.append(el('span',v.total==null?'已知市值 · TWD':'持股市值 · TWD'),el('strong',fmt(v.known_total)));
@@ -116,7 +118,7 @@ function renderDetails(){
   if(!rows.length){const tr=el('tr'),td=el('td','尚無持股資料','empty-cell');td.colSpan=11;tr.append(td);$('details').append(tr);}
 }
 function saveStatus(text, error=false) { const status=$('save-status'); status.hidden=false; status.textContent=text; status.style.color=error?'#ad3e4a':'#237057'; status.style.whiteSpace='pre-line'; }
-async function save(fxOnly=false){if(loading||!saved)return;loading=true;saveStatus('儲存中…');$('save').textContent='儲存中…';$('save').disabled=true;$('apply-fx').disabled=true;try{const fx=$('fx').value.trim(); const editing=JSON.stringify(draft);const p=await api('/api/portfolio','PUT',{revision:recoveredRevision??saved.revision,rows:fxOnly?saved.rows:draft.map(r=>({...r})),fx});saved=p;recoveredRevision=null;saveStatus(fxOnly?'匯率已保存。':'持股已保存。');if(!fxOnly&&editing===JSON.stringify(draft)) {draft=structuredClone(p.rows);dirty=$('fx').value.trim()!==fx;draftRender();}else if(fxOnly){dirty=JSON.stringify(draft)!==JSON.stringify(p.rows)||$('fx').value.trim()!==fx;}$('draft-state').textContent=dirty?'有未保存的修改 · 總覽仍使用已保存清單':'已保存 · 總覽使用此版本';$('draft-state').className=dirty?'dirty':'';savedRender();await loadValuation();message(fxOnly?'匯率已套用，已使用既有價格重新換算。':'持股已保存。可按「更新報價」取得新價格。',true);if(!fxOnly&&valuation&&valuation.coverage<valuation.count)refresh();}catch(e){saveStatus('儲存失敗，草稿仍保留。'+String.fromCharCode(10)+e.message,true);message(e.message);}finally{loading=false;$('save').textContent='儲存持股';$('save').disabled=false;$('apply-fx').disabled=false;}}
+async function save(){if(loading||!saved)return;loading=true;saveStatus('儲存中…');$('save').textContent='儲存中…';$('save').disabled=true;try{const editing=JSON.stringify(draft);const p=await api('/api/portfolio','PUT',{revision:recoveredRevision??saved.revision,rows:draft.map(r=>({...r}))});saved=p;recoveredRevision=null;saveStatus('持股已保存。');if(editing===JSON.stringify(draft)) {draft=structuredClone(p.rows);dirty=false;draftRender();}$('draft-state').textContent=dirty?'有未保存的修改 · 總覽仍使用已保存清單':'已保存 · 總覽使用此版本';$('draft-state').className=dirty?'dirty':'';savedRender();await loadValuation();message('持股已保存。可按「更新報價」取得新價格。',true);if(valuation&&(valuation.coverage<valuation.count||valuation.needs_fx))refresh();}catch(e){saveStatus('儲存失敗，草稿仍保留。'+String.fromCharCode(10)+e.message,true);message(e.message);}finally{loading=false;$('save').textContent='儲存持股';$('save').disabled=false;}}
 async function upload(sheet){if(!file)return;const current=file;$('confirm-import').disabled=true;try{const result=await api('/api/imports/preview','POST',current,true,true,sheet?{'X-Upload-Sheet':encodeURIComponent(sheet)}:{});if(file!==current)return;preview=result;$('filename').textContent=current.name;$('sheets').replaceChildren(...preview.sheets.map(name=>{const o=el('option',name);o.value=name;return o;}));$('sheets').value=preview.sheet;$('preview').replaceChildren();preview.rows.forEach((r,i)=>{const tr=el('tr');[String(i+2),r.ticker,r.quantity,r.buy_price].forEach(x=>tr.append(el('td',x)));$('preview').append(tr);});$('import-errors').textContent=preview.issues.map(x=>`第 ${x.row} 列 ${fieldLabel(x.field)}：${x.message}`).join('\n');const old=new Set(draft.map(r=>r.ticker.trim().toUpperCase())),next=new Set(preview.rows.map(r=>r.ticker));$('replace-note').textContent=`確認後將取代整份草稿：新增 ${[...next].filter(x=>!old.has(x)).length} 檔、移除 ${[...old].filter(x=>!next.has(x)).length} 檔。仍需點「儲存持股」才會保存。`;$('confirm-import').disabled=preview.issues.length>0;if(!$('import-dialog').open)$('import-dialog').showModal();}catch(e){message(e.message);}}
 // The work now runs inside this request (D3), so the wait is the request itself. A job
 // still comes back queued/running in one case: another instance holds a live lease, and
@@ -124,10 +126,10 @@ async function upload(sheet){if(!file)return;const current=file;$('confirm-impor
 async function refresh(catalogOnly=false){if(!saved)return;$('refresh').disabled=true;$('job').textContent=catalogOnly?'正在更新官方股票清單，請保持分頁開啟…':'正在更新報價，請保持分頁開啟；工作在這個請求內完成，關閉分頁會中斷。';try{const job=await api(catalogOnly?'/api/catalog/refresh':'/api/portfolio/refresh','POST',{},true,false);if(['queued','running'].includes(job.status))return await watch(job.job_id);await settle(job);}catch(e){$('job').textContent='';$('refresh').disabled=false;message(e.message);}}
 async function settle(job){$('job').textContent=job.message;$('refresh').disabled=false;if(job.portfolio_revision===saved.revision)await loadValuation();else message('先前版本的報價工作已完成；目前清單維持新版本，請再次更新報價。');}
 async function watch(id){try{const job=await api('/api/jobs/'+id);if(['queued','running'].includes(job.status)){$('job').textContent=job.message;poll=setTimeout(()=>watch(id),1800);return;}await settle(job);}catch(e){$('refresh').disabled=false;message(e.message);}}
-$('add').onclick=$('start-add').onclick=add;$('save').onclick=()=>save();$('apply-fx').onclick=()=>save(true);$('fx').oninput=setDirty;$('market').onchange=()=>loadValuation().catch(e=>message(e.message));$('sort').onchange=()=>valuation&&renderDetails();$('refresh').onclick=()=>refresh();
+$('add').onclick=$('start-add').onclick=add;$('save').onclick=()=>save();$('market').onchange=()=>loadValuation().catch(e=>message(e.message));$('sort').onchange=()=>valuation&&renderDetails();$('refresh').onclick=()=>refresh();
 const catalogButton=el('button','更新股票清單','ghost');catalogButton.onclick=()=>refresh(true);$('editor').querySelector('.actions').prepend(catalogButton);
 $('upload').onclick=()=>{if(saved)$('file').click();};$('file').onchange=()=>{file=$('file').files[0];if(!file)return;if(!file.name.toLowerCase().endsWith('.xlsx')||file.size>5*1024*1024){message('請選擇不超過 5 MiB 的 .xlsx 檔案。');return;}upload();};$('sheets').onchange=()=>upload($('sheets').value);
 function closeImport(){$('import-dialog').close();file=null;preview=null;$('file').value='';}
 $('cancel-import').onclick=$('close-import').onclick=closeImport;$('import-dialog').addEventListener('cancel',closeImport);$('confirm-import').onclick=()=>{if(!preview||preview.issues.length)return;draft=structuredClone(preview.rows);setDirty();draftRender();closeImport();$('editor').scrollIntoView({behavior:'smooth'});};
 window.addEventListener('beforeunload',e=>{if(dirty&&!loginRedirecting){e.preventDefault();e.returnValue='';}});
-(async()=>{try{token=(await api('/api/session')).token;saved=await api('/api/portfolio');draft=structuredClone(saved.rows);$('fx').value=saved.fx||'';savedRender();draftRender();const recovery=sessionStorage.getItem('portfolio-login-draft');if(recovery){const recovered=JSON.parse(recovery);draft=recovered.rows;recoveredRevision=recovered.revision;$('fx').value=recovered.fx;setDirty();draftRender();sessionStorage.removeItem('portfolio-login-draft');message(recovered.revision===saved.revision?'已恢復登入前的草稿，請確認後儲存。':'已恢復草稿，但已保存版本有變動；請核對內容後再儲存。');}await loadValuation();}catch(e){message(e.message+' 請重新整理頁面重試。');}})();
+(async()=>{try{token=(await api('/api/session')).token;saved=await api('/api/portfolio');draft=structuredClone(saved.rows);savedRender();draftRender();const recovery=sessionStorage.getItem('portfolio-login-draft');if(recovery){const recovered=JSON.parse(recovery);draft=recovered.rows;recoveredRevision=recovered.revision;setDirty();draftRender();sessionStorage.removeItem('portfolio-login-draft');message(recovered.revision===saved.revision?'已恢復登入前的草稿，請確認後儲存。':'已恢復草稿，但已保存版本有變動；請核對內容後再儲存。');}await loadValuation();}catch(e){message(e.message+' 請重新整理頁面重試。');}})();
