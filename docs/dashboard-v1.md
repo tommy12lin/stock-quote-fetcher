@@ -54,6 +54,8 @@ docker compose -f compose.web.yaml run --rm web --config /input/config.toml --sc
 | PUT `/api/portfolio` | JSON `{revision, rows:[{ticker,quantity,buy_price}], fx}`；數值輸入字串；衝突 409 |
 | POST `/api/imports/preview?filename=...xlsx&sheet=...` | body 為原始 XLSX bytes，回傳 sheets/sheet/rows/issues；不保存 |
 | GET `/api/portfolio/valuation?market=ALL` | ALL/TW/US，合計、成本、損益、占比、品質與時間 |
+
+（2026-10-13 補記，U5，尚未部署）手動匯率已移除：GET `/api/portfolio` 不再回傳 `fx`、`fx_source`、`fx_updated_at`，PUT 送來的 `fx` 會被忽略。匯率改在更新報價時自動抓取，由 valuation 回傳 `fx`、`fx_source`、`fx_quote_time`、`fx_received_at`。見 `docs/u5-fx-evidence.md`。
 | POST `/api/portfolio/refresh` | 排入／合併工作；202 + job_id |
 | POST `/api/catalog/refresh` | 背景更新官方清單；202 + job_id |
 | GET `/api/jobs/{id}` | queued/running/succeeded/partial/failed |
